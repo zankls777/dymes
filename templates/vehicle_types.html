@@ -1,0 +1,3248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>车种管理</title>
+    <!-- 引入Bootstrap CSS -->
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <!-- 引入Font Awesome -->
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+</head>
+<body>
+    <div class="container-fluid mt-4">
+        <!-- 导航栏 -->
+        {% include '_navbar.html' %}
+
+        <!-- 闪现消息 -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 主内容区域 -->
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="card-title mb-0">车种管理</h5>
+                            <div class="d-flex gap-2">
+                                {% set permissions = session.get('user_permissions', {}) %}
+                                {% if session.get('is_admin') or permissions.get('can_vehicle_types_add') %}
+                                <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addVehicleTypeModal">
+                                    <i class="fa fa-plus mr-1"></i> 添加车种
+                                </button>
+                                {% endif %}
+                                {% if session.get('is_admin') or permissions.get('can_vehicle_types_batch_add') %}
+                                <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#batchAddModal">
+                                    <i class="fa fa-plus mr-1"></i> 批量添加
+                                </button>
+                                {% endif %}
+                                {% if session.get('is_admin') or permissions.get('can_vehicle_types_import_excel') or permissions.get('can_vehicle_types_import') %}
+                                <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#uploadExcelModal">
+                                    <i class="fa fa-upload mr-1"></i> Excel导入
+                                </button>
+                                {% endif %}
+                                {% if session.get('is_admin') or permissions.get('can_vehicle_types_download') %}
+                                <button type="button" class="btn btn-warning" onclick="downloadVehicleTypes()">
+                                    <i class="fa fa-download mr-1"></i> 下载数据
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- 筛选表单 -->
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <form id="filterForm" class="row g-3">
+                                    <div class="col-md-2">
+                                        <label for="filterPartNumber" class="form-label">品番</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="filterPartNumber" name="part_number" placeholder="搜索品番">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearField('filterPartNumber')">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label for="filterVehicleName" class="form-label">车种</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="filterVehicleName" name="vehicle_name" placeholder="搜索车种">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearField('filterVehicleName')">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label for="filterItem" class="form-label">ITEAM</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="filterItem" name="item" placeholder="搜索ITEAM">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearField('filterItem')">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label for="filterVehicleItemSystemVersion" class="form-label">车种_ITEAM__系统版</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="filterVehicleItemSystemVersion" name="vehicle_item_system_version" placeholder="搜索系统版">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearField('filterVehicleItemSystemVersion')">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label for="filterEo" class="form-label">EO编号</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="filterEo" name="eo" placeholder="搜索EO编号">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearField('filterEo')">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label for="filterEoStatus" class="form-label">EO状态</label>
+                                        <div class="input-group">
+                                            <select class="form-select" id="filterEoStatus" name="eo_status">
+                                                <option value="">全部状态</option>
+                                                <option value="normal">正常</option>
+                                                <option value="override">EO覆盖</option>
+                                                <option value="attention">EO注意</option>
+                                            </select>
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearField('filterEoStatus')">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="d-flex gap-2 align-items-center justify-content-between">
+                                            <div class="d-flex gap-2 align-items-center">
+                                                <button type="submit" class="btn btn-primary">
+                                                    <i class="fa fa-search"></i> 搜索
+                                                </button>
+                                                <button type="button" class="btn btn-secondary" onclick="clearFilter()">
+                                                    <i class="fa fa-times"></i> 清空
+                                                </button>
+                                                <span class="text-muted ms-3">
+                                                    共 <strong id="totalCount">{{ pagination.total if pagination else 0 }}</strong> 条
+                                                </span>
+                                            </div>
+                                            <div class="d-flex gap-2 align-items-center">
+                                                {% set permissions = session.get('user_permissions', {}) %}
+                                                {% set can_vehicle_types_batch_delete = session.get('is_admin') or permissions.get('can_vehicle_types_batch_delete') %}
+                                                <button type="button" class="btn btn-outline-danger btn-sm" id="batchDeleteBtn" style="{% if not can_vehicle_types_batch_delete %}display: none;{% endif %}">
+                                                    <i class="fa fa-trash me-1"></i>批量删除
+                                                </button>
+                                                <button type="button" class="btn btn-outline-secondary btn-sm" id="cancelBatchBtn" style="display: none;">
+                                                    <i class="fa fa-times me-1"></i>取消
+                                                </button>
+                                                <button type="button" class="btn btn-outline-primary btn-sm" id="selectAllDataBtn" style="display: none;">
+                                                    <i class="fa fa-check-double me-1"></i>全选所有数据
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                        
+
+                        
+
+                        
+                        <!-- 车种列表 -->
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="vehicleTypesTable">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 50px; display: none;" class="checkbox-column">
+                                            <input type="checkbox" class="form-check-input" id="selectAllCheckbox">
+                                        </th>
+                                        <th>序号</th>
+                                        <th>品番</th>
+                                        <th>车种</th>
+                                        <th>ITEAM</th>
+                                        <th>车种_ITEAM__系统版</th>
+                                        <th>EO编号</th>
+                                        <th>EO状态</th>
+                                        <th>描述</th>
+                                        <th>数据来源</th>
+                                        <th>操作人</th>
+                                        <th>创建时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% if vehicle_types %}
+                                        {% for vehicle in vehicle_types %}
+                                            <tr data-vehicle-id="{{ vehicle.id }}">
+                                                <td class="checkbox-column" style="display: none;">
+                                                    <input type="checkbox" class="form-check-input vehicle-checkbox" value="{{ vehicle.id }}">
+                                                </td>
+                                                <td>{{ (current_page - 1) * per_page + loop.index }}</td>
+                                                <td>{{ vehicle.part_number }}</td>
+                                                <td>{{ vehicle.vehicle_name or '-' }}</td>
+                                                <td>{{ vehicle.item or '-' }}</td>
+                                                <td>{{ vehicle.vehicle_item_system_version or '-' }}</td>
+                                                <td>
+                                                    {% if vehicle.eo_override and vehicle.usage_eo %}
+                                                        <span class="text-warning" title="EO被强制覆盖：输入EO(UsageList EO)">
+                                                            {{ vehicle.eo }}({{ vehicle.usage_eo }})
+                                                        </span>
+                                                    {% elif vehicle.eo_override and not vehicle.usage_eo %}
+                                                        <span class="text-warning" title="EO被强制覆盖：输入EO(无)">
+                                                            {{ vehicle.eo }}(无)
+                                                        </span>
+                                                    {% elif vehicle.needs_eo_attention and vehicle.usage_eo %}
+                                                        <span class="text-info" title="需要EO注意：UsageList中有EO但未输入">
+                                                            需要EO({{ vehicle.usage_eo }})
+                                                        </span>
+                                                    {% else %}
+                                                        {{ vehicle.eo or '-' }}
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if vehicle.eo_override %}
+                                                        <span class="badge bg-warning" title="EO被强制覆盖">
+                                                            <i class="fa fa-exclamation-triangle"></i> EO覆盖
+                                                        </span>
+                                                    {% elif vehicle.needs_eo_attention %}
+                                                        <span class="badge bg-info" title="需要EO注意">
+                                                            <i class="fa fa-info-circle"></i> EO注意
+                                                        </span>
+                                                    {% else %}
+                                                        <span class="badge bg-success" title="EO正常">
+                                                            <i class="fa fa-check"></i> 正常
+                                                        </span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>{{ vehicle.description or '-' }}</td>
+                                                <td>
+                                                    <span class="badge bg-{{ 'primary' if vehicle.source == 'manual' else 'success' }}">
+                                                        {{ '手动添加' if vehicle.source == 'manual' else 'Excel导入' }}
+                                                    </span>
+                                                </td>
+                                                <td>{{ vehicle.modifier.username if vehicle.modifier else '未知' }}</td>
+                                                <td>{{ vehicle.create_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                                <td>
+                                                    {% set permissions = session.get('user_permissions', {}) %}
+                                                    {% if session.get('is_admin') or permissions.get('can_vehicle_types_edit') %}
+                                                    <button class="btn btn-sm btn-primary" onclick="editVehicle({{ vehicle.id }})">
+                                                        <i class="fa fa-edit"></i> 编辑
+                                                    </button>
+                                                    {% endif %}
+                                                    {% if session.get('is_admin') or permissions.get('can_vehicle_types_delete') %}
+                                                    <button class="btn btn-sm btn-danger" onclick="deleteVehicle({{ vehicle.id }})">
+                                                        <i class="fa fa-trash"></i> 删除
+                                                    </button>
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    {% else %}
+                                        <tr>
+                                            <td colspan="11" class="text-center">暂无车种数据</td>
+                                        </tr>
+                                    {% endif %}
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- 分页控件 -->
+                        <nav aria-label="分页导航" class="mt-3">
+                            <!-- 第一行：所有分页控件水平排列 -->
+                            <div class="d-flex justify-content-center align-items-center mb-3" style="height: 38px;">
+                                <!-- 每页数量选择 -->
+                                <div class="d-flex align-items-center me-4">
+                                    <label class="me-2 mb-0">每页显示:</label>
+                                    <select class="form-select form-select-sm" id="perPageSelect" style="width: 80px;" onchange="changePerPage(this.value)">
+                                        <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+                                        <option value="20" {% if per_page == 20 %}selected{% endif %}>20</option>
+                                        <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                                        <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+                                    </select>
+                                </div>
+
+                                <!-- 页码导航 -->
+                                {% if pagination %}
+                                <div class="d-flex align-items-center me-4">
+                                    <ul class="pagination pagination-sm mb-0" style="margin: 0; line-height: 1;">
+                                        <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                                            <a class="page-link" href="{{ url_for('main.vehicle_types', page=pagination.prev_num, per_page=per_page) }}"
+                                               aria-label="上一页" style="padding: 0.375rem 0.75rem;">
+                                                <span aria-hidden="true">&laquo;</span>
+                                            </a>
+                                        </li>
+                                        {% for page_num in pagination.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+                                            {% if page_num %}
+                                                <li class="page-item {% if pagination.page == page_num %}active{% endif %}">
+                                                    <a class="page-link" href="{{ url_for('main.vehicle_types', page=page_num, per_page=per_page) }}" style="padding: 0.375rem 0.75rem;">{{ page_num }}</a>
+                                                </li>
+                                            {% else %}
+                                                <li class="page-item disabled"><span class="page-link" style="padding: 0.375rem 0.75rem;">...</span></li>
+                                            {% endif %}
+                                        {% endfor %}
+                                        <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                                            <a class="page-link" href="{{ url_for('main.vehicle_types', page=pagination.next_num, per_page=per_page) }}"
+                                               aria-label="下一页" style="padding: 0.375rem 0.75rem;">
+                                                <span aria-hidden="true">&raquo;</span>
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                                {% endif %}
+
+                                <!-- 页码跳转 -->
+                                <div class="d-flex align-items-center">
+                                    <label class="me-2 mb-0">跳转至:</label>
+                                    <input type="number" class="form-control form-control-sm" id="jumpToPage"
+                                           min="1" max="{{ pagination.pages if pagination else 1 }}" value="{{ current_page }}" style="width: 60px;">
+                                    <button class="btn btn-sm btn-primary" onclick="jumpToPage()">前往</button>
+                                </div>
+                            </div>
+                            
+                            <!-- 第二行：记录信息 -->
+                            {% if pagination %}
+                            <div class="text-muted text-center small mt-2">
+                                共 {{ pagination.total }} 条记录，当前第 {{ pagination.page }} 页 / 共 {{ pagination.pages }} 页
+                            </div>
+                            {% endif %}
+                        </nav>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加车种模态框 -->
+    <div class="modal fade" id="addVehicleTypeModal" tabindex="-1" aria-labelledby="addVehicleTypeModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addVehicleTypeModalLabel">添加车种</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="addVehicleForm">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="partNumber" class="form-label">品番 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="partNumber" name="partNumber" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="vehicleName" class="form-label">车种</label>
+                            <input type="text" class="form-control" id="vehicleName" name="vehicleName">
+                        </div>
+                        <div class="mb-3">
+                            <label for="item" class="form-label">ITEAM</label>
+                            <input type="text" class="form-control" id="item" name="item">
+                        </div>
+                        <div class="mb-3">
+                            <label for="vehicleItemSystemVersion" class="form-label">车种_ITEAM__系统版</label>
+                            <input type="text" class="form-control" id="vehicleItemSystemVersion" name="vehicleItemSystemVersion">
+                        </div>
+                        <div class="mb-3">
+                            <label for="eo" class="form-label">EO编号</label>
+                            <input type="text" class="form-control" id="eo" name="eo">
+                            <div class="form-text">
+                                <i class="fa fa-info-circle"></i> 如果EO与UsageList不一致，系统会显示为"输入EO(UsageList EO)"格式
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="vehicleDescription" class="form-label">描述</label>
+                            <textarea class="form-control" id="vehicleDescription" name="description" rows="3"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">添加车种</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量添加模态框 -->
+    <div class="modal fade" id="batchAddModal" tabindex="-1" aria-labelledby="batchAddModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="batchAddModalLabel">批量添加车种</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="batchAddForm">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">车种数据（每行一个，格式：品番,车种,ITEAM,车种_ITEAM__系统版,EO）</label>
+                            <textarea class="form-control" id="batchData" rows="10" placeholder="示例：&#10;91840-AA010,CN7,FEM,CN7-FEM,b3&#10;916D3-ES690,KA4_PE,FRDR_DRI,KA4_PE-FRDR_DRI,b9"></textarea>
+                        </div>
+                        <!-- <div class="alert alert-info">
+                            <i class="fa fa-info-circle"></i> 提示：每行数据用逗号分隔，品番为必填项，其他字段可为空
+                        </div> -->
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">批量添加</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Excel上传模态框 -->
+    <div class="modal fade" id="uploadExcelModal" tabindex="-1" aria-labelledby="uploadExcelModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="uploadExcelModalLabel">Excel导入车种数据</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="uploadExcelForm" enctype="multipart/form-data">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="excelFile" class="form-label">选择Excel文件</label>
+                            <input type="file" class="form-control" id="excelFile" name="file" accept=".xlsx,.xls" required>
+                        </div>
+                        <div class="alert alert-warning">
+                            <i class="fa fa-exclamation-triangle"></i> 注意：上传将覆盖所有现有数据！
+                        </div>
+                        <div id="validationResults" style="display: none;">
+                            <h6 class="mb-3">
+                                <i class="fa fa-check-circle text-success me-2"></i>数据验证结果
+                            </h6>
+                            <div id="validationContent"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-warning" id="validateBtn">验证数据</button>
+                        <button type="submit" class="btn btn-primary" id="uploadBtn" style="display: none;">确认上传</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑车种模态框 -->
+    <div class="modal fade" id="editVehicleTypeModal" tabindex="-1" aria-labelledby="editVehicleTypeModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editVehicleTypeModalLabel">编辑车种</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="editVehicleForm">
+                    <input type="hidden" id="editVehicleId" name="vehicleId">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="editPartNumber" class="form-label">品番 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editPartNumber" name="partNumber" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editVehicleName" class="form-label">车种</label>
+                            <input type="text" class="form-control" id="editVehicleName" name="vehicleName">
+                        </div>
+                        <div class="mb-3">
+                            <label for="editItem" class="form-label">ITEAM</label>
+                            <input type="text" class="form-control" id="editItem" name="item">
+                        </div>
+                        <div class="mb-3">
+                            <label for="editVehicleItemSystemVersion" class="form-label">车种_ITEAM__系统版</label>
+                            <input type="text" class="form-control" id="editVehicleItemSystemVersion" name="vehicleItemSystemVersion">
+                        </div>
+                        <div class="mb-3">
+                            <label for="editEo" class="form-label">EO编号</label>
+                            <input type="text" class="form-control" id="editEo" name="eo">
+                            <div class="form-text">
+                                <i class="fa fa-info-circle"></i> 如果EO与UsageList不一致，系统会显示为"输入EO(UsageList EO)"格式
+                            </div>
+                        </div>
+                        <div class="mb-3" id="editEoStatusDiv" style="display: none;">
+                            <label class="form-label">当前EO状态</label>
+                            <div id="editEoStatus" class="alert alert-warning">
+                                <i class="fa fa-exclamation-triangle"></i> EO已被强制覆盖
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editVehicleDescription" class="form-label">描述</label>
+                            <textarea class="form-control" id="editVehicleDescription" name="description" rows="3"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">保存修改</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 单个车种EO冲突处理模态框 -->
+    <div class="modal fade" id="singleConflictModal" tabindex="-1" aria-labelledby="singleConflictModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="singleConflictModalLabel">EO冲突处理</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fa fa-exclamation-triangle"></i> <span id="singleConflictMessage"></span>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6>UsageList数据</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>品番:</strong> <span id="usagePartNumber"></span></p>
+                                    <p><strong>EO编号:</strong> <span id="usageEo"></span></p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6>输入数据</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>品番:</strong> <span id="inputPartNumber"></span></p>
+                                    <p><strong>EO编号:</strong> <span id="inputEo"></span></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label">请选择使用的EO编号：</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="singleConflictChoice" id="singleUsageChoice" value="usage" checked>
+                            <label class="form-check-label" for="singleUsageChoice">
+                                使用UsageList中的EO编号
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="singleConflictChoice" id="singleInputChoice" value="input">
+                            <label class="form-check-label" for="singleInputChoice">
+                                强制使用输入的EO编号 <span class="text-warning">(将显示为"输入EO(UsageList EO)"格式)</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="resolveSingleConflictBtn">确认</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量EO冲突处理模态框 -->
+    <div class="modal fade" id="batchConflictModal" tabindex="-1" aria-labelledby="batchConflictModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="batchConflictModalLabel">批量EO冲突处理</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fa fa-exclamation-triangle"></i> <span id="batchConflictMessage"></span>
+                    </div>
+                    <div class="alert alert-info">
+                        <i class="fa fa-info-circle"></i> 选择"强制使用输入EO"后，系统将显示为"输入EO(UsageList EO)"格式，以提醒用户EO已被强制覆盖
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>行号</th>
+                                    <th>品番</th>
+                                    <th>UsageList EO</th>
+                                    <th>输入 EO</th>
+                                    <th>选择 <small class="text-muted">(强制使用输入EO将显示为"输入EO(UsageList EO)"格式)</small></th>
+                                </tr>
+                            </thead>
+                            <tbody id="batchConflictTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="resolveBatchConflictBtn">确认处理</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Excel内部重复品番处理模态框 -->
+    <div class="modal fade" id="excelDuplicateModal" tabindex="-1" aria-labelledby="excelDuplicateModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-fullscreen-xl-down" style="max-width: 95%; width: 95%;">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title" id="excelDuplicateModalLabel">
+                        <i class="fa fa-exclamation-triangle me-2"></i>Excel数据处理
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- 说明信息 -->
+                    <div class="alert alert-info border-0 shadow-sm mb-3">
+                        <div class="d-flex align-items-start">
+                            <i class="fa fa-info-circle fa-2x text-info me-3 mt-1"></i>
+                            <div>
+                                <h6 class="alert-heading mb-2">处理说明</h6>
+                                <p class="mb-1">• 系统检测到Excel文件中存在重复的品番和/或数据冲突，请统一处理</p>
+                                <p class="mb-1">• 对于重复品番：选择要导入的数据行，或选择"不导入"跳过</p>
+                                <p class="mb-1">• 对于数据冲突：如果选择的行的EO与UsageList不一致，请在EO选择列中选择使用的EO值</p>
+                                <p class="mb-0">• 所有问题处理完成后，系统将统一导入数据</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 统计信息 -->
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <div class="card border-warning">
+                                <div class="card-body text-center">
+                                    <h5 class="text-warning mb-1" id="duplicateCount">0</h5>
+                                    <small class="text-muted">重复品番</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border-danger">
+                                <div class="card-body text-center">
+                                    <h5 class="text-danger mb-1" id="conflictCount">0</h5>
+                                    <small class="text-muted">数据冲突</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border-info">
+                                <div class="card-body text-center">
+                                    <h5 class="text-info mb-1" id="differenceCount">0</h5>
+                                    <small class="text-muted">数据差异</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 重复品番处理表格 -->
+                    <div class="card border-0 shadow-sm mb-3" id="duplicateSection" style="display: none;">
+                        <div class="card-header bg-light">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">
+                                    <i class="fa fa-copy me-2"></i>重复品番和冲突处理
+                                </h6>
+                                <span class="text-muted small">
+                                    <i class="fa fa-list-ol me-1"></i>
+                                    共发现 <span class="text-warning fw-bold" id="duplicateCountHeader">0</span> 个品番需要处理
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-barcode me-1"></i>品番
+                                            </th>
+                                            <th class="border-0 text-center" style="width: 10%;">
+                                                <i class="fa fa-list me-1"></i>重复行数
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-check-square me-1"></i>选择导入行
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-exclamation-triangle me-1"></i>EO状态
+                                            </th>
+                                            <th class="border-0" style="width: 25%;">
+                                                <i class="fa fa-cog me-1"></i>EO选择
+                                            </th>
+                                            <th class="border-0 text-center" style="width: 15%;">
+                                                <i class="fa fa-trash me-1"></i>操作
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="excelDuplicateTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 数据冲突处理表格 -->
+                    <div class="card border-0 shadow-sm mb-3" id="conflictSection" style="display: none;">
+                        <div class="card-header bg-light">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">
+                                    <i class="fa fa-exclamation-triangle me-2"></i>数据冲突处理
+                                </h6>
+                                <span class="text-muted small">
+                                    <i class="fa fa-list-ol me-1"></i>
+                                    共发现 <span class="text-danger fw-bold" id="conflictCountHeader">0</span> 个数据冲突需要处理
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th class="border-0" style="width: 10%;">
+                                                <i class="fa fa-list me-1"></i>行号
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-barcode me-1"></i>品番
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-car me-1"></i>车种
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-cog me-1"></i>ITEAM
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-exclamation-triangle me-1"></i>冲突类型
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-cog me-1"></i>EO选择
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="conflictTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 数据差异显示 -->
+                    <div class="card border-0 shadow-sm mb-3" id="differenceSection" style="display: none;">
+                        <div class="card-header bg-light">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">
+                                    <i class="fa fa-info-circle me-2"></i>数据差异信息
+                                </h6>
+                                <span class="text-muted small">
+                                    <i class="fa fa-list-ol me-1"></i>
+                                    共发现 <span class="text-info fw-bold" id="differenceCountHeader">0</span> 个数据差异
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th class="border-0" style="width: 10%;">
+                                                <i class="fa fa-list me-1"></i>行号
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-barcode me-1"></i>品番
+                                            </th>
+                                            <th class="border-0" style="width: 70%;">
+                                                <i class="fa fa-exchange-alt me-1"></i>差异详情
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="differenceTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <div class="d-flex justify-content-between align-items-center w-100">
+                        <div class="text-muted">
+                            <small>
+                                <i class="fa fa-clock me-1"></i>
+                                请仔细检查所有问题，处理完成后将统一导入数据
+                            </small>
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">
+                                <i class="fa fa-times me-1"></i>取消
+                            </button>
+                            <button type="button" class="btn btn-primary" id="resolveExcelDuplicateBtn">
+                                <i class="fa fa-check me-1"></i>确认导入
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 数据冲突处理模态框 -->
+    <div class="modal fade" id="conflictModal" tabindex="-1" aria-labelledby="conflictModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="conflictModalLabel">数据冲突处理</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="conflictContent"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="resolveConflictsBtn">确认处理</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自定义样式 -->
+    <style>
+        /* 确保模态框显示在最上层 */
+        .modal {
+            z-index: 1050 !important;
+        }
+        .modal-backdrop {
+            z-index: 1040 !important;
+        }
+        /* 冲突处理模态框需要更高的层级 */
+        #singleConflictModal,
+        #batchConflictModal,
+        #conflictModal,
+        #excelDuplicateModal {
+            z-index: 1060 !important;
+        }
+        #singleConflictModal .modal-backdrop,
+        #batchConflictModal .modal-backdrop,
+        #conflictModal .modal-backdrop,
+        #excelDuplicateModal .modal-backdrop {
+            z-index: 1055 !important;
+        }
+        /* 确保模态框内容在遮罩之上 */
+        .modal-dialog {
+            z-index: 1065 !important;
+        }
+        
+        /* 搜索框清除按钮样式 */
+        .input-group .btn-outline-secondary {
+            border-left: 0;
+            border-top-left-radius: 0;
+            border-bottom-left-radius: 0;
+        }
+        
+        .input-group .btn-outline-secondary:hover {
+            background-color: #6c757d;
+            border-color: #6c757d;
+            color: white;
+        }
+
+        /* Excel导入弹窗样式优化 */
+        #excelDuplicateModal .modal-content {
+            border: none;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        #excelDuplicateModal .modal-header {
+            border-bottom: 2px solid #ffc107;
+        }
+
+        #excelDuplicateModal .card {
+            transition: all 0.3s ease;
+        }
+
+        #excelDuplicateModal .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        #excelDuplicateModal .table th {
+            font-weight: 600;
+            color: #495057;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background-color: #f8f9fa;
+        }
+        
+        #excelDuplicateModal .table-responsive {
+            scrollbar-width: thin;
+            scrollbar-color: #adb5bd #f8f9fa;
+        }
+        
+        #excelDuplicateModal .table-responsive::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        #excelDuplicateModal .table-responsive::-webkit-scrollbar-track {
+            background: #f8f9fa;
+        }
+        
+        #excelDuplicateModal .table-responsive::-webkit-scrollbar-thumb {
+            background: #adb5bd;
+            border-radius: 4px;
+        }
+        
+        #excelDuplicateModal .table-responsive::-webkit-scrollbar-thumb:hover {
+            background: #6c757d;
+        }
+        
+        /* Excel导入验证结果样式优化 - 紧凑版 */
+        #validationResults {
+            margin-top: 1rem;
+        }
+        
+        #validationResults .badge {
+            font-size: 0.875rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+        }
+        
+        #validationResults .table {
+            font-size: 0.875rem;
+        }
+        
+        #validationResults .table th {
+            padding: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+        
+        #validationResults .table td {
+            padding: 0.5rem;
+            vertical-align: middle;
+        }
+        
+        #validationResults .table-responsive {
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+        }
+        
+        #validationResults .table thead th {
+            background-color: #f8f9fa;
+            border-bottom: 2px solid #dee2e6;
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        #validationResults .table-info {
+            background-color: #d1ecf1 !important;
+            color: #0c5460 !important;
+        }
+        
+        #validationResults .table tbody tr:hover {
+            background-color: #f8f9fa;
+        }
+        
+        #validationResults .badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+        }
+        
+        #validationResults h6 {
+            font-size: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        #excelDuplicateModal .table td {
+            vertical-align: middle;
+        }
+
+        #excelDuplicateModal .badge {
+            font-size: 0.75rem;
+        }
+
+        #excelDuplicateModal .form-select {
+            border-radius: 6px;
+            border: 1px solid #ced4da;
+        }
+
+        #excelDuplicateModal .form-select:focus {
+            border-color: #80bdff;
+            box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+        }
+
+        #excelDuplicateModal .btn-outline-danger:hover {
+            background-color: #dc3545;
+            border-color: #dc3545;
+            color: white;
+        }
+        
+        /* 重复品番详情容器的滚动条样式 */
+        .duplicate-details-container::-webkit-scrollbar {
+            width: 10px;
+        }
+        
+        .duplicate-details-container::-webkit-scrollbar-track {
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .duplicate-details-container::-webkit-scrollbar-thumb {
+            background: #6c757d;
+            border-radius: 6px;
+            border: 1px solid #f8f9fa;
+        }
+        
+        .duplicate-details-container::-webkit-scrollbar-thumb:hover {
+            background: #495057;
+        }
+        
+        /* 当内容较少时隐藏滚动条 */
+        .duplicate-details-container:not(:hover)::-webkit-scrollbar-thumb {
+            background: transparent;
+        }
+        
+        .duplicate-details-container:hover::-webkit-scrollbar-thumb {
+            background: #6c757d;
+        }
+
+        /* 动画效果 */
+        #excelDuplicateModal .modal-dialog {
+            animation: slideInDown 0.3s ease-out;
+            max-width: 95% !important;
+            width: 95% !important;
+        }
+
+        /* 响应式宽度调整 */
+        @media (min-width: 1200px) {
+            #excelDuplicateModal .modal-dialog {
+                max-width: 1400px !important;
+                width: 1400px !important;
+            }
+        }
+
+        @media (min-width: 1600px) {
+            #excelDuplicateModal .modal-dialog {
+                max-width: 1600px !important;
+                width: 1600px !important;
+            }
+        }
+
+        @media (max-width: 1199px) {
+            #excelDuplicateModal .modal-dialog {
+                max-width: 95% !important;
+                width: 95% !important;
+                margin: 1rem auto;
+            }
+        }
+
+        @keyframes slideInDown {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        /* 表格行悬停效果 - 优化：移除缩放效果，避免跳动 */
+        #excelDuplicateModal .table-hover tbody tr:hover {
+            background-color: #f8f9fa;
+            transition: background-color 0.2s ease;
+        }
+        
+        /* 确保表格行高稳定 */
+        #excelDuplicateModal .table tbody tr {
+            height: auto;
+            min-height: 48px;
+            transition: background-color 0.2s ease;
+        }
+        
+        /* 表格单元格内容垂直居中 */
+        #excelDuplicateModal .table td {
+            vertical-align: middle;
+            padding: 0.75rem 0.5rem;
+        }
+        
+        /* 避免表格内容动态变化时的跳动 */
+        #excelDuplicateModal .table .badge {
+            display: inline-block;
+            min-width: 60px;
+            text-align: center;
+        }
+        
+        /* 固定EO选择列宽度，避免内容变化时的列宽跳动 */
+        #excelDuplicateModal .table th:nth-child(5),
+        #excelDuplicateModal .table td:nth-child(5) {
+            min-width: 200px;
+            max-width: 250px;
+        }
+        
+        /* 固定操作列宽度 */
+        #excelDuplicateModal .table th:last-child,
+        #excelDuplicateModal .table td:last-child {
+            width: 100px;
+            min-width: 100px;
+        }
+        
+        .input-group .form-control:focus + .btn-outline-secondary {
+            border-color: #86b7fe;
+        }
+        
+        /* 确保输入框和按钮高度一致 */
+        .input-group .form-control,
+        .input-group .form-select,
+        .input-group .btn {
+            height: 38px;
+        }
+    </style>
+
+    <!-- 引入Bootstrap JS -->
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 清空添加车种表单
+        function clearAddVehicleForm() {
+            document.getElementById('eo').value = '';
+            document.getElementById('partNumber').value = '';
+            document.getElementById('vehicleName').value = '';
+            document.getElementById('item').value = '';
+            document.getElementById('vehicleItemSystemVersion').value = '';
+            document.getElementById('vehicleDescription').value = '';
+        }
+        
+        // 添加车种模态框显示时清空表单
+        document.getElementById('addVehicleTypeModal').addEventListener('show.bs.modal', function() {
+            clearAddVehicleForm();
+        });
+        
+        // 添加车种模态框隐藏时清空表单
+        document.getElementById('addVehicleTypeModal').addEventListener('hidden.bs.modal', function() {
+            clearAddVehicleForm();
+        });
+        
+        // 添加车种表单提交
+        document.getElementById('addVehicleForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                eo: document.getElementById('eo').value.trim(),
+                part_number: document.getElementById('partNumber').value.trim(),
+                vehicle_name: document.getElementById('vehicleName').value.trim(),
+                item: document.getElementById('item').value.trim(),
+                vehicle_item_system_version: document.getElementById('vehicleItemSystemVersion').value.trim(),
+                description: document.getElementById('vehicleDescription').value.trim()
+            };
+            
+            if (!formData.part_number) {
+                alert('品番为必填项');
+                return;
+            }
+            
+            // 验证品番格式
+            if (!/^[A-Za-z0-9_-]+$/.test(formData.part_number)) {
+                alert('品番格式不正确，只能包含字母、数字、下划线或使用英文逗号间隔');
+                return;
+            }
+            
+            // 验证EO编号格式（如果提供了EO）
+            if (formData.eo && !/^[A-Za-z0-9_-]+$/.test(formData.eo)) {
+                alert('EO编号格式不正确，只能包含字母、数字、下划线或使用英文逗号间隔');
+                return;
+            }
+            
+            fetch('/api/vehicle_types/add', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify(formData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('添加成功！');
+                    location.reload();
+                } else if (data.conflict) {
+                    // 显示EO冲突处理模态框
+                    showSingleConflictModal(data);
+                } else {
+                    alert('添加失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('添加失败');
+            });
+        });
+        
+        // 编辑车种表单提交
+        document.getElementById('editVehicleForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const vehicleId = document.getElementById('editVehicleId').value;
+            const formData = {
+                part_number: document.getElementById('editPartNumber').value.trim(),
+                vehicle_name: document.getElementById('editVehicleName').value.trim(),
+                item: document.getElementById('editItem').value.trim(),
+                vehicle_item_system_version: document.getElementById('editVehicleItemSystemVersion').value.trim(),
+                eo: document.getElementById('editEo').value.trim(),
+                description: document.getElementById('editVehicleDescription').value.trim()
+            };
+            
+            // 获取当前车种的EO覆盖状态
+            const currentVehicleId = document.getElementById('editVehicleId').value;
+            const currentVehicle = window.currentEditVehicle; // 我们需要在editVehicle函数中设置这个变量
+            
+            if (!formData.part_number) {
+                alert('品番为必填项');
+                return;
+            }
+            
+            // 验证品番格式
+            if (!/^[A-Za-z0-9_-]+$/.test(formData.part_number)) {
+                alert('品番格式不正确，只能包含字母、数字、下划线或使用英文逗号间隔');
+                return;
+            }
+            
+            // 验证EO编号格式（如果提供了EO）
+            if (formData.eo && !/^[A-Za-z0-9_-]+$/.test(formData.eo)) {
+                alert('EO编号格式不正确，只能包含字母、数字、下划线或使用英文逗号间隔');
+                return;
+            }
+            
+            // 不再传递旧的EO覆盖状态信息，让后端重新计算
+            // 这样可以确保当EO改为与UsageList一致时，状态能正确更新
+            
+            fetch(`/api/vehicle_types/${vehicleId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify(formData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('更新成功！');
+                    location.reload();
+                } else {
+                    alert('更新失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('更新失败');
+            });
+        });
+        
+        // 清空批量添加表单
+        function clearBatchAddForm() {
+            document.getElementById('batchData').value = '';
+        }
+        
+        // 批量添加模态框显示时清空表单
+        document.getElementById('batchAddModal').addEventListener('show.bs.modal', function() {
+            clearBatchAddForm();
+        });
+        
+        // 批量添加模态框隐藏时清空表单
+        document.getElementById('batchAddModal').addEventListener('hidden.bs.modal', function() {
+            clearBatchAddForm();
+        });
+        
+        // 缓存UsageList数据
+        let usageListData = null;
+        
+        // 获取UsageList数据
+        function loadUsageListData() {
+            if (usageListData) {
+                return Promise.resolve(usageListData);
+            }
+            
+            return fetch('/api/usage_list/data', {
+                method: 'GET',
+                headers: {
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    usageListData = data.data;
+                    return usageListData;
+                } else {
+                    throw new Error(data.error || '获取UsageList数据失败');
+                }
+            });
+        }
+        
+        // 批量添加表单提交
+        document.getElementById('batchAddForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const batchData = document.getElementById('batchData').value.trim();
+            if (!batchData) {
+                alert('请输入车种数据');
+                return;
+            }
+            
+            const lines = batchData.split('\n').filter(line => line.trim());
+            if (lines.length === 0) {
+                alert('请输入有效的车种数据');
+                return;
+            }
+            
+            const vehicles = [];
+            const validationErrors = [];
+            
+            for (let i = 0; i < lines.length; i++) {
+                const lineNumber = i + 1;
+                const parts = lines[i].split(',');
+                
+                // 检查数据格式
+                if (parts.length < 1) {
+                    validationErrors.push(`第${lineNumber}行：数据格式错误，至少需要品番`);
+                    continue;
+                }
+                
+                const part_number = parts[0].trim();
+                const vehicle_name = parts[1] ? parts[1].trim() : '';
+                const item = parts[2] ? parts[2].trim() : '';
+                const vehicle_item_system_version = parts[3] ? parts[3].trim() : '';
+                const eo = parts[4] ? parts[4].trim() : '';
+                
+                // 验证品番
+                if (!part_number) {
+                    validationErrors.push(`第${lineNumber}行：品番不能为空`);
+                    continue;
+                }
+                
+                // 验证品番格式（可以根据需要调整）
+                if (part_number.length < 2) {
+                    validationErrors.push(`第${lineNumber}行：品番长度不能少于2个字符`);
+                    continue;
+                }
+                
+                // 验证EO编号格式（如果提供了EO）
+                if (eo && eo.length < 2) {
+                    validationErrors.push(`第${lineNumber}行：EO编号长度不能少于2个字符`);
+                    continue;
+                }
+                
+                // 验证EO编号格式（基本格式检查）
+                if (eo && !/^[A-Za-z0-9_-]+$/.test(eo)) {
+                    validationErrors.push(`第${lineNumber}行：EO编号格式不正确，只能包含字母、数字、下划线或使用英文逗号间隔`);
+                    continue;
+                }
+                
+                // 验证品番格式（基本格式检查）
+                if (!/^[A-Za-z0-9_-]+$/.test(part_number)) {
+                    validationErrors.push(`第${lineNumber}行：品番格式不正确，只能包含字母、数字、下划线或使用英文逗号间隔`);
+                    continue;
+                }
+                
+                // 检查是否有重复的品番（在同一批数据中）
+                const duplicateIndex = vehicles.findIndex(v => v.part_number === part_number);
+                if (duplicateIndex !== -1) {
+                    validationErrors.push(`第${lineNumber}行：品番 ${part_number} 与第${duplicateIndex + 1}行重复`);
+                    continue;
+                }
+                
+                vehicles.push({
+                    part_number: part_number,
+                    vehicle_name: vehicle_name,
+                    item: item,
+                    vehicle_item_system_version: vehicle_item_system_version,
+                    eo: eo,
+                    description: ''
+                });
+            }
+            
+            // 如果有验证错误，显示错误信息
+            if (validationErrors.length > 0) {
+                const errorMessage = '数据验证失败：\n' + validationErrors.join('\n');
+                alert(errorMessage);
+                return;
+            }
+            
+            // 如果没有有效数据，提示用户
+            if (vehicles.length === 0) {
+                alert('没有有效的车种数据可添加');
+                return;
+            }
+            
+            // 第一步：检查品番是否已存在于数据库中
+            const allPartNumbers = vehicles.map(v => v.part_number);
+            
+            fetch('/api/vehicle_types/check_existing', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({ part_numbers: allPartNumbers })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const existingPartNumbers = new Set(data.existing_part_numbers);
+                    const filteredVehicles = [];
+                    const duplicateErrors = [];
+                    
+                    // 过滤掉已存在的品番
+                    vehicles.forEach((vehicle, index) => {
+                        if (existingPartNumbers.has(vehicle.part_number)) {
+                            duplicateErrors.push(`第${index + 1}行：品番 ${vehicle.part_number} 已存在`);
+                        } else {
+                            filteredVehicles.push(vehicle);
+                        }
+                    });
+                    
+                    // 如果有重复品番，显示提示
+                    if (duplicateErrors.length > 0) {
+                        const duplicateMessage = '以下品番已存在，已自动过滤：\n' + duplicateErrors.join('\n');
+                        if (filteredVehicles.length === 0) {
+                            alert(duplicateMessage + '\n\n没有有效数据可添加');
+                            return;
+                        } else {
+                            alert(duplicateMessage + '\n\n继续处理剩余数据...');
+                        }
+                    }
+                    
+                    // 第二步：加载UsageList数据并进行验证
+                    return loadUsageListData().then(usageData => {
+                        const usageValidationErrors = [];
+                        const eoConflicts = [];
+                        const validVehicles = [];
+                        
+                        // 检查每个车种数据与UsageList的一致性
+                        filteredVehicles.forEach((vehicle, index) => {
+                            const lineNumber = index + 1;
+                            
+                            // 查找UsageList中是否存在该品番
+                            const usageItem = usageData.find(item => item.part_number === vehicle.part_number);
+                            
+                            if (usageItem) {
+                                // 品番存在，检查EO是否一致
+                                if (vehicle.eo && usageItem.eo !== vehicle.eo) {
+                                    // EO不一致的冲突
+                                    eoConflicts.push({
+                                        row: lineNumber,
+                                        part_number: vehicle.part_number,
+                                        input_eo: vehicle.eo,
+                                        usage_eo: usageItem.eo,
+                                        vehicle_data: vehicle,
+                                        conflict_type: 'eo_mismatch'
+                                    });
+                                } else if (!vehicle.eo && usageItem.eo) {
+                                    // 输入数据没有EO，但UsageList中有EO
+                                    eoConflicts.push({
+                                        row: lineNumber,
+                                        part_number: vehicle.part_number,
+                                        input_eo: '',
+                                        usage_eo: usageItem.eo,
+                                        vehicle_data: vehicle,
+                                        conflict_type: 'eo_missing'
+                                    });
+                                } else {
+                                    // EO一致或都没有EO，添加到有效数据
+                                    validVehicles.push(vehicle);
+                                }
+                            } else {
+                                // 品番在UsageList中不存在
+                                usageValidationErrors.push(`第${lineNumber}行：品番 ${vehicle.part_number} 在UsageList中不存在`);
+                            }
+                        });
+                        
+                        // 如果有UsageList验证错误，显示错误信息
+                        if (usageValidationErrors.length > 0) {
+                            const errorMessage = 'UsageList验证失败：\n' + usageValidationErrors.join('\n');
+                            alert(errorMessage);
+                            return;
+                        }
+                        
+                        // 如果有EO冲突，显示冲突处理界面
+                        if (eoConflicts.length > 0) {
+                            const conflictData = {
+                                success: false,
+                                conflict: true,
+                                message: `发现 ${eoConflicts.length} 个EO冲突，请选择处理方式`,
+                                conflicts: eoConflicts
+                            };
+                            showBatchConflictModal(conflictData);
+                            return;
+                        }
+                        
+                        // 所有验证通过，发送批量添加请求
+                        sendBatchAddRequest(validVehicles);
+                    });
+                } else {
+                    alert('检查品番是否存在时发生错误：' + data.error);
+                }
+            })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('验证失败：' + error.message);
+                });
+        });
+        
+        // 发送批量添加请求
+        function sendBatchAddRequest(vehicles, isResolvedConflicts = false) {
+            const requestData = {
+                vehicles: vehicles
+            };
+            
+            // 如果是已处理的冲突数据，添加标记
+            if (isResolvedConflicts) {
+                requestData.is_resolved_conflicts = true;
+            }
+            
+            fetch('/api/vehicle_types/batch_add', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('批量添加成功！');
+                    location.reload();
+                } else if (data.conflict) {
+                    // 显示批量EO冲突处理模态框
+                    showBatchConflictModal(data);
+                } else {
+                    // 显示详细的验证错误信息
+                    const errorMessage = data.error.replace(/\n/g, '\n');
+                    alert('批量添加失败：\n' + errorMessage);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('批量添加失败');
+            });
+        }
+        
+        // 格式化验证消息，使其更紧凑直观
+        function formatValidationMessage(message) {
+            // 后端已经生成了完整的HTML表格，直接返回即可
+            return message;
+        }
+        
+        // 清空Excel上传表单
+        function clearExcelUploadForm() {
+            document.getElementById('excelFile').value = '';
+            document.getElementById('validationResults').style.display = 'none';
+            document.getElementById('validationContent').innerHTML = '';
+            document.getElementById('uploadBtn').style.display = 'none';
+        }
+        
+        // Excel上传模态框显示时清空表单
+        document.getElementById('uploadExcelModal').addEventListener('show.bs.modal', function() {
+            clearExcelUploadForm();
+        });
+        
+        // Excel上传模态框隐藏时清空表单
+        document.getElementById('uploadExcelModal').addEventListener('hidden.bs.modal', function() {
+            clearExcelUploadForm();
+        });
+        
+        // Excel文件验证
+        document.getElementById('validateBtn').addEventListener('click', function() {
+            const fileInput = document.getElementById('excelFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('请选择Excel文件');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('action', 'validate');
+            
+            fetch('/api/vehicle_types/upload_excel', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 保存所有Excel数据供后续处理使用
+                    if (data.all_excel_data) {
+                        window.allExcelData = data.all_excel_data;
+                    }
+                    document.getElementById('validationResults').style.display = 'block';
+                    
+                    // 优化验证结果的展示
+                    const formattedMessage = formatValidationMessage(data.message);
+                    document.getElementById('validationContent').innerHTML = formattedMessage;
+                    
+                    document.getElementById('uploadBtn').style.display = 'inline-block';
+                } else {
+                    alert('验证失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('验证失败');
+            });
+        });
+        
+        // Excel文件上传
+        document.getElementById('uploadExcelForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('excelFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('请选择Excel文件');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('action', 'upload');
+            
+            fetch('/api/vehicle_types/upload_excel', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 保存所有Excel数据供后续处理使用
+                    if (data.all_excel_data) {
+                        window.allExcelData = data.all_excel_data;
+                    }
+                    
+                    // 检查是否有需要处理的数据（重复品番、冲突或差异）
+                    if ((data.excel_duplicates && data.excel_duplicates.length > 0) || 
+                        (data.conflicts && data.conflicts.length > 0) || 
+                        (data.data_differences && data.data_differences.length > 0)) {
+                        // 显示Excel数据处理模态框（统一处理重复品番、数据冲突和数据差异）
+                        showExcelDuplicateModal(data);
+                    } else {
+                        // 显示上传成功信息
+                        alert(data.message || '上传成功！');
+                        location.reload();
+                    }
+                } else {
+                    alert('上传失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('上传失败');
+            });
+        });
+        
+        // 显示单个EO冲突处理模态框
+        function showSingleConflictModal(data) {
+            document.getElementById('singleConflictMessage').textContent = data.message;
+            document.getElementById('usageEo').textContent = data.usage_data.eo || '无';
+            document.getElementById('usagePartNumber').textContent = data.usage_data.part_number;
+            document.getElementById('inputEo').textContent = data.input_data.eo || '无';
+            document.getElementById('inputPartNumber').textContent = data.input_data.part_number;
+            
+            // 根据冲突类型更新选项标签
+            const usageChoiceLabel = document.querySelector('label[for="singleUsageChoice"]');
+            const inputChoiceLabel = document.querySelector('label[for="singleInputChoice"]');
+            
+            if (data.conflict_type === 'eo_missing') {
+                // EO缺失的情况
+                usageChoiceLabel.textContent = `使用UsageList中的EO编号 (${data.usage_data.eo})`;
+                inputChoiceLabel.textContent = `不设置EO编号 - 将显示为"无(${data.usage_data.eo})"`;
+            } else {
+                // EO不一致的情况
+                usageChoiceLabel.textContent = `使用UsageList中的EO编号 (${data.usage_data.eo})`;
+                inputChoiceLabel.textContent = `强制使用输入的EO编号 (${data.input_data.eo}) - 将显示为"${data.input_data.eo}(${data.usage_data.eo})"`;
+            }
+            
+            // 存储冲突数据
+            window.singleConflictData = data;
+            
+            // 关闭可能打开的其他模态框
+            const existingModals = document.querySelectorAll('.modal.show');
+            existingModals.forEach(modal => {
+                const bsModal = bootstrap.Modal.getInstance(modal);
+                if (bsModal) {
+                    bsModal.hide();
+                }
+            });
+            
+            // 显示冲突模态框
+            const modal = new bootstrap.Modal(document.getElementById('singleConflictModal'));
+            modal.show();
+        }
+        
+        // 处理单个EO冲突
+        document.getElementById('resolveSingleConflictBtn').addEventListener('click', function() {
+            const choice = document.querySelector('input[name="singleConflictChoice"]:checked').value;
+            const data = window.singleConflictData;
+            
+            // 根据用户选择设置EO覆盖状态
+            let eo_override = false;
+            let usage_eo = data.usage_data.eo;
+            
+            if (choice === 'usage') {
+                eo_override = false;
+            } else if (choice === 'input') {
+                eo_override = true;
+            }
+            
+            // 更新vehicle_data，添加eo_override和usage_eo字段
+            const updatedVehicleData = {
+                ...data,
+                eo_override: eo_override,
+                usage_eo: usage_eo
+            };
+            
+            fetch('/api/vehicle_types/resolve_single_conflict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({
+                    choice: choice,
+                    vehicle_data: updatedVehicleData
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('添加成功！');
+                    location.reload();
+                } else {
+                    alert('添加失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('添加失败');
+            });
+        });
+        
+        // 显示批量EO冲突处理模态框
+        function showBatchConflictModal(data) {
+            document.getElementById('batchConflictMessage').textContent = data.message;
+            
+            const tbody = document.getElementById('batchConflictTableBody');
+            tbody.innerHTML = '';
+            
+            // 性能优化：用 DocumentFragment 缓存所有冲突行，避免逐行写真实 DOM
+            const conflictFrag = document.createDocumentFragment();
+            data.conflicts.forEach((conflict, index) => {
+                const row = document.createElement('tr');
+                
+                // 根据冲突类型显示不同的处理选项
+                let choiceOptions = '';
+                if (conflict.conflict_type === 'eo_mismatch') {
+                    // EO不一致的冲突
+                    choiceOptions = `
+                        <option value="usage">使用UsageList EO (${conflict.usage_eo})</option>
+                        <option value="input">强制使用输入 EO (${conflict.input_eo}) - 将显示为"${conflict.input_eo}(${conflict.usage_eo})"</option>
+                    `;
+                } else if (conflict.conflict_type === 'eo_missing') {
+                    // 输入数据没有EO，但UsageList中有EO
+                    choiceOptions = `
+                        <option value="usage">使用UsageList EO (${conflict.usage_eo})</option>
+                        <option value="input">不设置EO - 将显示为"无(${conflict.usage_eo})"</option>
+                    `;
+                }
+                
+                row.innerHTML = `
+                    <td>${conflict.row}</td>
+                    <td>${conflict.part_number}</td>
+                    <td>${conflict.usage_eo || '无'}</td>
+                    <td>${conflict.input_eo || '无'}</td>
+                    <td>
+                        <select class="form-select conflict-choice" data-index="${index}">
+                            ${choiceOptions}
+                        </select>
+                    </td>
+                `;
+                conflictFrag.appendChild(row);
+            });
+            tbody.appendChild(conflictFrag);
+            
+            // 存储冲突数据
+            window.batchConflictData = data;
+            
+            // 关闭可能打开的其他模态框
+            const existingModals = document.querySelectorAll('.modal.show');
+            existingModals.forEach(modal => {
+                const bsModal = bootstrap.Modal.getInstance(modal);
+                if (bsModal) {
+                    bsModal.hide();
+                }
+            });
+            
+            // 显示冲突模态框
+            const modal = new bootstrap.Modal(document.getElementById('batchConflictModal'));
+            modal.show();
+        }
+        
+        // 处理批量EO冲突
+        document.getElementById('resolveBatchConflictBtn').addEventListener('click', function() {
+            const choices = Array.from(document.querySelectorAll('.conflict-choice')).map(select => {
+                const conflictIndex = parseInt(select.dataset.index);
+                const conflict = window.batchConflictData.conflicts[conflictIndex];
+                
+                return {
+                    row: conflict.row,
+                    choice: select.value,
+                    vehicle_data: conflict.vehicle_data,
+                    usage_eo: conflict.usage_eo,
+                    input_eo: conflict.input_eo,
+                    conflict_type: conflict.conflict_type
+                };
+            });
+            
+            // 根据用户选择构建最终的车辆数据
+            const resolvedVehicles = choices.map(choice => {
+                let finalEo = '';
+                let eo_override = false;
+                let usage_eo = choice.usage_eo;
+                
+                if (choice.choice === 'usage') {
+                    // 使用UsageList的EO
+                    finalEo = choice.usage_eo;
+                    eo_override = false;
+                } else if (choice.choice === 'input') {
+                    // 使用输入的EO（如果有的话）
+                    finalEo = choice.input_eo || '';
+                    eo_override = true;
+                }
+                
+                const resolvedVehicle = {
+                    ...choice.vehicle_data,
+                    eo: finalEo,
+                    eo_override: eo_override,
+                    usage_eo: usage_eo
+                };
+                
+                // 调试信息
+                console.log(`行 ${choice.row}: 选择 ${choice.choice}, 最终EO: "${finalEo}", EO覆盖: ${eo_override}`, resolvedVehicle);
+                
+                return resolvedVehicle;
+            });
+            
+            console.log('最终解析的车辆数据:', resolvedVehicles);
+            
+            // 直接发送到批量添加API
+            sendBatchAddRequest(resolvedVehicles, true); // 标记为已处理冲突
+        });
+        
+        // 显示冲突处理模态框
+        function showConflictModal(conflicts) {
+            const content = document.getElementById('conflictContent');
+            let html = '<div class="table-responsive"><table class="table table-striped">';
+            html += '<thead><tr><th>EO编号</th><th>品番</th><th>Excel数据</th><th>UsageList数据</th><th>选择</th></tr></thead><tbody>';
+            
+            conflicts.forEach((conflict, index) => {
+                html += `<tr>
+                    <td>${conflict.eo}</td>
+                    <td>${conflict.part_number}</td>
+                    <td>${conflict.excel_data}</td>
+                    <td>${conflict.usage_data}</td>
+                    <td>
+                        <select class="form-select conflict-choice" data-index="${index}">
+                            <option value="excel">使用Excel数据</option>
+                            <option value="usage">使用UsageList数据</option>
+                            <option value="delete">删除</option>
+                        </select>
+                    </td>
+                </tr>`;
+            });
+            
+            html += '</tbody></table></div>';
+            content.innerHTML = html;
+            
+            const modal = new bootstrap.Modal(document.getElementById('conflictModal'));
+            modal.show();
+        }
+        
+        // 处理冲突
+        document.getElementById('resolveConflictsBtn').addEventListener('click', function() {
+            const choices = Array.from(document.querySelectorAll('.conflict-choice')).map(select => ({
+                index: parseInt(select.dataset.index),
+                choice: select.value
+            }));
+            
+            fetch('/api/vehicle_types/resolve_conflicts', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({ choices: choices })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('冲突处理完成！');
+                    location.reload();
+                } else {
+                    alert('冲突处理失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('冲突处理失败');
+            });
+        });
+        
+        // 清空编辑车种表单
+        function clearEditVehicleForm() {
+            document.getElementById('editVehicleId').value = '';
+            document.getElementById('editPartNumber').value = '';
+            document.getElementById('editVehicleName').value = '';
+            document.getElementById('editItem').value = '';
+            document.getElementById('editVehicleItemSystemVersion').value = '';
+            document.getElementById('editEo').value = '';
+            document.getElementById('editVehicleDescription').value = '';
+            document.getElementById('editEoStatusDiv').style.display = 'none';
+            window.currentEditVehicle = null;
+        }
+        
+        // 编辑车种模态框隐藏时清空表单
+        document.getElementById('editVehicleTypeModal').addEventListener('hidden.bs.modal', function() {
+            clearEditVehicleForm();
+        });
+        
+        // 编辑车种
+        function editVehicle(id) {
+            // 获取车种信息
+            fetch(`/api/vehicle_types/${id}`, {
+                method: 'GET',
+                headers: {
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const vehicle = data.vehicle;
+                    
+                    // 填充表单
+                    document.getElementById('editVehicleId').value = vehicle.id;
+                    document.getElementById('editPartNumber').value = vehicle.part_number;
+                    document.getElementById('editVehicleName').value = vehicle.vehicle_name || '';
+                    document.getElementById('editItem').value = vehicle.item || '';
+                    document.getElementById('editVehicleItemSystemVersion').value = vehicle.vehicle_item_system_version || '';
+                    document.getElementById('editEo').value = vehicle.eo || '';
+                    document.getElementById('editVehicleDescription').value = vehicle.description || '';
+                    
+                    // 显示EO覆盖状态
+                    const eoStatusDiv = document.getElementById('editEoStatusDiv');
+                    const eoStatus = document.getElementById('editEoStatus');
+                    
+                    if (vehicle.eo_override) {
+                        if (vehicle.usage_eo) {
+                            eoStatus.innerHTML = `<i class="fa fa-exclamation-triangle"></i> EO已被强制覆盖，UsageList中的EO为: ${vehicle.usage_eo}`;
+                        } else {
+                            eoStatus.innerHTML = `<i class="fa fa-exclamation-triangle"></i> EO已被强制覆盖，UsageList中无EO`;
+                        }
+                        eoStatusDiv.style.display = 'block';
+                    } else {
+                        eoStatusDiv.style.display = 'none';
+                    }
+                    
+                    // 存储当前编辑的车种数据，供表单提交时使用
+                    window.currentEditVehicle = vehicle;
+                    
+                    // 显示模态框
+                    const modal = new bootstrap.Modal(document.getElementById('editVehicleTypeModal'));
+                    modal.show();
+                } else {
+                    alert('获取车种信息失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('获取车种信息失败');
+            });
+        }
+        
+        // 删除车种
+        function deleteVehicle(id) {
+            if (confirm('确定要删除这个车种吗？')) {
+                fetch(`/api/vehicle_types/${id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('删除成功！');
+                        location.reload();
+                    } else {
+                        alert('删除失败：' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('删除失败');
+                });
+            }
+        }
+        
+        // 下载车种数据
+        function downloadVehicleTypes() {
+            // 显示下载中提示
+            const downloadBtn = event.target.closest('button');
+            const originalText = downloadBtn.innerHTML;
+            downloadBtn.innerHTML = '<i class="fa fa-spinner fa-spin mr-1"></i> 下载中...';
+            downloadBtn.disabled = true;
+            
+            // 创建AbortController用于超时控制
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+            
+            // 发起下载请求
+            fetch('/api/vehicle_types/download', {
+                method: 'GET',
+                headers: {
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                signal: controller.signal
+            })
+            .then(response => {
+                clearTimeout(timeoutId);
+                if (response.ok) {
+                    // 获取文件名
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = '车种数据.xlsx';
+                    if (contentDisposition) {
+                        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+                        if (filenameMatch) {
+                            filename = filenameMatch[1];
+                        }
+                    }
+                    
+                    // 创建下载链接
+                    return response.blob().then(blob => {
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                        
+                        // 恢复按钮状态
+                        downloadBtn.innerHTML = originalText;
+                        downloadBtn.disabled = false;
+                        
+                        // 显示成功提示
+                        alert('下载成功！文件已保存为: ' + filename);
+                    });
+                } else {
+                    throw new Error(`下载失败: HTTP ${response.status}`);
+                }
+            })
+            .catch(error => {
+                clearTimeout(timeoutId);
+                console.error('Download error:', error);
+                
+                // 恢复按钮状态
+                downloadBtn.innerHTML = originalText;
+                downloadBtn.disabled = false;
+                
+                let errorMessage = '下载失败';
+                if (error.name === 'AbortError') {
+                    errorMessage = '下载超时，请重试';
+                } else if (error.message) {
+                    errorMessage = error.message;
+                }
+                
+                alert(errorMessage);
+            });
+        }
+
+        // 动态更新EO选择显示
+        function updateEoChoice(partNumber, selectedValue, allRows) {
+            const eoChoiceCell = document.getElementById(`eo_choice_${partNumber}`);
+            
+            if (selectedValue === 'no_import') {
+                // 选择不导入，隐藏EO选择
+                eoChoiceCell.innerHTML = '<span class="text-muted">已选择不导入</span>';
+                return;
+            }
+            
+            // 用户选择了具体的数据行
+            const selectedIndex = parseInt(selectedValue);
+            const selectedRow = allRows[selectedIndex];
+            
+            if (!selectedRow) return;
+            
+            let eoChoiceHtml = '';
+            
+            if (selectedRow.eo_conflict && selectedRow.usage_eo) {
+                // 有EO冲突且UsageList中有数据，提供选择
+                eoChoiceHtml = `
+                    <div class="mb-2">
+                        <small class="text-warning">第${selectedRow.index}行 - EO冲突:</small><br>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="eo_choice_${partNumber}" value="excel" checked>
+                            <label class="form-check-label">Excel EO (${selectedRow.input_eo})</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="eo_choice_${partNumber}" value="usage">
+                            <label class="form-check-label">UsageList EO (${selectedRow.usage_eo})</label>
+                        </div>
+
+                    </div>
+                `;
+            } else if (selectedRow.eo_conflict && !selectedRow.usage_eo) {
+                // 有EO冲突但UsageList中无数据
+                eoChoiceHtml = `
+                    <div class="mb-2">
+                        <small class="text-danger">第${selectedRow.index}行 - 品番不存在:</small><br>
+                        <span class="text-danger">使用Excel EO (${selectedRow.input_eo})</span>
+                        <small class="text-info">将显示为"${selectedRow.input_eo}(无)"格式</small>
+                    </div>
+                `;
+            } else {
+                // 无EO冲突
+                eoChoiceHtml = `
+                    <div class="mb-2">
+                        <small class="text-success">第${selectedRow.index}行 - EO一致:</small><br>
+                        <span class="text-success">EO: ${selectedRow.eo}</span>
+                    </div>
+                `;
+            }
+            
+            eoChoiceCell.innerHTML = eoChoiceHtml;
+        }
+
+        // 显示Excel内部重复品番处理模态框
+        function showExcelDuplicateModal(data) {
+            const { excel_duplicates, conflicts, data_differences, all_excel_data } = data;
+            
+            // 隐藏其他可能打开的模态框
+            const modals = document.querySelectorAll('.modal');
+            modals.forEach(modal => {
+                const modalInstance = bootstrap.Modal.getInstance(modal);
+                if (modalInstance) {
+                    modalInstance.hide();
+                }
+            });
+
+            // 更新统计信息显示
+            document.getElementById('duplicateCount').textContent = excel_duplicates ? excel_duplicates.length : 0;
+            document.getElementById('conflictCount').textContent = conflicts ? conflicts.length : 0;
+            document.getElementById('differenceCount').textContent = data_differences ? data_differences.length : 0;
+            
+            // 显示/隐藏相应的处理区域
+            const duplicateSection = document.getElementById('duplicateSection');
+            const conflictSection = document.getElementById('conflictSection');
+            const differenceSection = document.getElementById('differenceSection');
+            
+            // 如果有重复品番或冲突，显示重复处理区域（集成处理）
+            if ((excel_duplicates && excel_duplicates.length > 0) || (conflicts && conflicts.length > 0)) {
+                duplicateSection.style.display = 'block';
+                const totalItems = (excel_duplicates ? excel_duplicates.length : 0) + (conflicts ? conflicts.length : 0);
+                document.getElementById('duplicateCountHeader').textContent = totalItems;
+                
+                // 将冲突数据转换为重复品番格式，以便统一处理
+                const integratedData = integrateConflictsWithDuplicates(excel_duplicates || [], conflicts || []);
+                
+                // 存储集成后的数据供后续处理使用
+                window.excelDuplicatesData = integratedData;
+                window.conflictsData = conflicts || [];
+                window.dataDifferencesData = data_differences || [];
+                window.allExcelData = all_excel_data || [];
+                
+                buildDuplicateTable(integratedData);
+            } else {
+                duplicateSection.style.display = 'none';
+            }
+            
+            // 隐藏冲突处理区域，因为已经集成到重复处理中
+            conflictSection.style.display = 'none';
+            
+            if (data_differences && data_differences.length > 0) {
+                differenceSection.style.display = 'block';
+                document.getElementById('differenceCountHeader').textContent = data_differences.length;
+                buildDifferenceTable(data_differences);
+            } else {
+                differenceSection.style.display = 'none';
+            }
+
+            // 显示模态框
+            const modal = new bootstrap.Modal(document.getElementById('excelDuplicateModal'));
+            modal.show();
+        }
+
+        // 处理Excel内部重复品番
+        document.getElementById('resolveExcelDuplicateBtn').addEventListener('click', function() {
+            const choices = [];
+            
+            // 处理所有品番的选择（包括重复品番和独立冲突）
+            const selects = document.querySelectorAll('#excelDuplicateTableBody select');
+            selects.forEach(select => {
+                const partNumber = select.getAttribute('data-part-number');
+                const selectedValue = select.value;
+                const duplicate = window.excelDuplicatesData.find(d => d.part_number === partNumber);
+                
+                if (duplicate && selectedValue !== 'no_import') {
+                    // 用户选择了具体的数据行，不是"不导入"
+                    const selectedIndex = parseInt(selectedValue);
+                    if (duplicate.rows[selectedIndex]) {
+                        const selectedRow = duplicate.rows[selectedIndex];
+                        
+                        // 检查选择的这一行是否有EO冲突，并根据用户选择决定使用哪个EO
+                        let finalEo = selectedRow.eo;
+                        let eo_override = false;
+                        let usage_eo = selectedRow.usage_eo;
+                        
+                        if (selectedRow.eo_conflict && selectedRow.usage_eo) {
+                            // 有EO冲突且UsageList中有数据，检查用户的选择
+                            const selectedEoChoice = document.querySelector(`input[name="eo_choice_${partNumber}"]:checked`);
+                            
+                            if (selectedEoChoice) {
+                                if (selectedEoChoice.value === 'usage') {
+                                    // 用户选择使用UsageList的EO
+                                    finalEo = selectedRow.usage_eo;
+                                    eo_override = false;
+                                } else {
+                                    // 用户选择使用Excel的EO
+                                    finalEo = selectedRow.input_eo || selectedRow.eo;
+                                    eo_override = true;
+                                }
+                            } else {
+                                // 默认使用Excel的EO
+                                finalEo = selectedRow.input_eo || selectedRow.eo;
+                                eo_override = true;
+                            }
+                        } else if (selectedRow.eo_conflict && !selectedRow.usage_eo) {
+                            // 有EO冲突但UsageList中无数据，使用Excel的EO
+                            finalEo = selectedRow.input_eo || selectedRow.eo;
+                            eo_override = true;
+                        }
+                        
+                        choices.push({
+                            part_number: partNumber,
+                            selected_row: {
+                                ...selectedRow,
+                                eo: finalEo,
+                                eo_override: eo_override,
+                                usage_eo: usage_eo
+                            }
+                        });
+                    }
+                }
+                // 如果选择的是"no_import"，则跳过该品番
+            });
+
+            // 检查是否所有品番都已经做出选择（包括"不导入"）
+            const allItemsSelected = window.excelDuplicatesData.every(duplicate => {
+                const select = document.querySelector(`select[data-part-number="${duplicate.part_number}"]`);
+                return select && select.value !== '';
+            });
+            
+            if (!allItemsSelected) {
+                // 有品番没有选择
+                alert('请为所有品番选择要导入的数据行，或选择"不导入"跳过某些品番');
+                return;
+            }
+            
+            // 检查是否所有品番都选择了"不导入"
+            const allItemsNoImport = window.excelDuplicatesData.every(duplicate => {
+                const select = document.querySelector(`select[data-part-number="${duplicate.part_number}"]`);
+                return select && select.value === 'no_import';
+            });
+            
+            // 检查是否有数据需要导入
+            const hasDataToImport = choices.length > 0 || 
+                                  (allItemsNoImport && window.allExcelData && window.allExcelData.length > 0);
+            
+            if (!hasDataToImport) {
+                alert('没有数据需要导入，请检查您的选择');
+                return;
+            }
+
+            // 发送选择到后端，包含所有Excel数据和用户选择
+            fetch('/api/vehicle_types/resolve_excel_duplicates', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({ 
+                    choices: choices,
+                    all_excel_data: window.allExcelData || [],  // 传递所有Excel数据
+                    all_duplicates_no_import: allItemsNoImport  // 标记是否所有品番都选择不导入
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('导入成功！');
+                    location.reload();
+                } else {
+                    alert('导入失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('导入失败');
+            });
+        });
+
+        // 筛选功能
+        document.getElementById('filterForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            applyFilter();
+        });
+
+        // 全局变量存储分页状态
+        let currentPage = 1;
+        let currentPerPage = {{ per_page }};
+        let isFiltered = false;
+        let currentFilterParams = {};
+
+        // 应用筛选
+        function applyFilter(page = 1) {
+            const formData = new FormData(document.getElementById('filterForm'));
+            const filterParams = {};
+            
+            // 收集筛选参数
+            for (let [key, value] of formData.entries()) {
+                if (value.trim()) {
+                    filterParams[key] = value.trim();
+                }
+            }
+            
+            // 添加分页参数
+            filterParams.page = page;
+            filterParams.per_page = currentPerPage;
+            
+            // 保存当前筛选参数
+            currentFilterParams = filterParams;
+            currentPage = page;
+            isFiltered = true;
+            
+            // 发送筛选请求
+            fetch('/api/vehicle_types/filter', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify(filterParams)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    updateTableWithFilteredData(data.vehicles, data);
+                    updatePaginationInfo(data);
+                } else {
+                    alert('筛选失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('筛选失败');
+            });
+        }
+
+        // 更新表格显示筛选后的数据
+        function updateTableWithFilteredData(vehicles, paginationData) {
+            const tbody = document.querySelector('#vehicleTypesTable tbody');
+            tbody.innerHTML = '';
+            
+            if (vehicles && vehicles.length > 0) {
+                // 性能优化：先在内存 DocumentFragment 中构建所有行，循环结束后一次性挂载，
+                // 避免每行都直接 appendChild 到真实 DOM 触发多次重排。
+                const frag = document.createDocumentFragment();
+                const startIndex = (paginationData.current_page - 1) * paginationData.per_page;
+                vehicles.forEach((vehicle, index) => {
+                    const row = document.createElement('tr');
+                    
+                    // 序号（考虑分页）
+                    const indexCell = document.createElement('td');
+                    indexCell.textContent = startIndex + index + 1;
+                    row.appendChild(indexCell);
+                    
+                    // 品番
+                    const partNumberCell = document.createElement('td');
+                    partNumberCell.textContent = vehicle.part_number;
+                    row.appendChild(partNumberCell);
+                    
+                    // 车种
+                    const vehicleNameCell = document.createElement('td');
+                    vehicleNameCell.textContent = vehicle.vehicle_name || '-';
+                    row.appendChild(vehicleNameCell);
+                    
+                    // ITEAM
+                    const itemCell = document.createElement('td');
+                    itemCell.textContent = vehicle.item || '-';
+                    row.appendChild(itemCell);
+                    
+                    // 车种_ITEAM__系统版
+                    const systemVersionCell = document.createElement('td');
+                    systemVersionCell.textContent = vehicle.vehicle_item_system_version || '-';
+                    row.appendChild(systemVersionCell);
+                    
+                    // EO编号
+                    const eoCell = document.createElement('td');
+                    if (vehicle.eo_override && vehicle.usage_eo) {
+                        eoCell.innerHTML = `<span class="text-warning" title="EO被强制覆盖：输入EO(UsageList EO)">${vehicle.eo}(${vehicle.usage_eo})</span>`;
+                    } else if (vehicle.eo_override && !vehicle.usage_eo) {
+                        eoCell.innerHTML = `<span class="text-warning" title="EO被强制覆盖：输入EO(无)">${vehicle.eo}(无)</span>`;
+                    } else if (vehicle.needs_eo_attention && vehicle.usage_eo) {
+                        eoCell.innerHTML = `<span class="text-info" title="需要EO注意：UsageList中有EO但未输入">需要EO(${vehicle.usage_eo})</span>`;
+                    } else {
+                        eoCell.textContent = vehicle.eo || '-';
+                    }
+                    row.appendChild(eoCell);
+                    
+                    // EO状态
+                    const eoStatusCell = document.createElement('td');
+                    if (vehicle.eo_override) {
+                        eoStatusCell.innerHTML = `<span class="badge bg-warning" title="EO被强制覆盖"><i class="fa fa-exclamation-triangle"></i> EO覆盖</span>`;
+                    } else if (vehicle.needs_eo_attention) {
+                        eoStatusCell.innerHTML = `<span class="badge bg-info" title="需要EO注意"><i class="fa fa-info-circle"></i> EO注意</span>`;
+                    } else {
+                        eoStatusCell.innerHTML = `<span class="badge bg-success" title="EO正常"><i class="fa fa-check"></i> 正常</span>`;
+                    }
+                    row.appendChild(eoStatusCell);
+                    
+                    // 描述
+                    const descriptionCell = document.createElement('td');
+                    descriptionCell.textContent = vehicle.description || '-';
+                    row.appendChild(descriptionCell);
+                    
+                    // 数据来源
+                    const sourceCell = document.createElement('td');
+                    const sourceBadge = vehicle.source === 'manual' ? 'primary' : 'success';
+                    const sourceText = vehicle.source === 'manual' ? '手动添加' : 'Excel导入';
+                    sourceCell.innerHTML = `<span class="badge bg-${sourceBadge}">${sourceText}</span>`;
+                    row.appendChild(sourceCell);
+                    
+                    // 创建时间
+                    const createTimeCell = document.createElement('td');
+                    createTimeCell.textContent = vehicle.create_time || '-';
+                    row.appendChild(createTimeCell);
+                    
+                    // 操作
+                    const actionCell = document.createElement('td');
+                    actionCell.innerHTML = `
+                        <button class="btn btn-sm btn-primary" onclick="editVehicle(${vehicle.id})">
+                            <i class="fa fa-edit"></i> 编辑
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteVehicle(${vehicle.id})">
+                            <i class="fa fa-trash"></i> 删除
+                        </button>
+                    `;
+                    row.appendChild(actionCell);
+                    
+                    frag.appendChild(row);
+                });
+                // 循环结束后一次性插入真实 DOM（单次重排）
+                tbody.appendChild(frag);
+            } else {
+                tbody.innerHTML = '<tr><td colspan="11" class="text-center">没有找到匹配的数据</td></tr>';
+            }
+        }
+
+        // 清空筛选
+        function clearFilter() {
+            document.getElementById('filterForm').reset();
+            // 重新加载页面显示所有数据
+            location.reload();
+        }
+
+        // 清空单个字段
+        function clearField(fieldId) {
+            const field = document.getElementById(fieldId);
+            if (field.tagName === 'SELECT') {
+                // 如果是select元素，设置为第一个选项（通常是"全部"或空值）
+                field.selectedIndex = 0;
+            } else {
+                // 如果是input元素，清空值
+                field.value = '';
+            }
+            // 可选：自动触发筛选，显示清空该字段后的结果
+            // applyFilter();
+        }
+
+        // 分页相关函数
+        function changePerPage(perPage) {
+            currentPerPage = parseInt(perPage);
+            currentPage = 1; // 重置到第一页
+            
+            if (isFiltered) {
+                // 如果有筛选条件，重新应用筛选
+                applyFilter(1);
+            } else {
+                // 否则重新加载页面
+                const url = new URL(window.location);
+                url.searchParams.set('per_page', currentPerPage);
+                url.searchParams.set('page', 1);
+                window.location.href = url.toString();
+            }
+        }
+
+        function jumpToPage() {
+            const jumpInput = document.getElementById('jumpToPage');
+            const targetPage = parseInt(jumpInput.value);
+            
+            if (isNaN(targetPage) || targetPage < 1) {
+                alert('请输入有效的页码');
+                return;
+            }
+            
+            if (isFiltered) {
+                // 如果有筛选条件，使用筛选API
+                applyFilter(targetPage);
+            } else {
+                // 否则使用页面跳转
+                const url = new URL(window.location);
+                url.searchParams.set('page', targetPage);
+                window.location.href = url.toString();
+            }
+        }
+
+        function updatePaginationInfo(data) {
+            // 更新跳转页码的最大值
+            const jumpInput = document.getElementById('jumpToPage');
+            if (jumpInput) {
+                jumpInput.max = data.pages;
+                jumpInput.value = data.current_page;
+            }
+            
+            // 更新每页显示数量选择器
+            const perPageSelect = document.getElementById('perPageSelect');
+            if (perPageSelect) {
+                perPageSelect.value = data.per_page;
+            }
+            
+            // 更新分页导航（如果存在）
+            updatePaginationNav(data);
+        }
+
+        function updatePaginationNav(data) {
+            // 由于使用了标准的Bootstrap分页样式，不需要动态更新
+            // 分页导航会通过页面刷新自动更新
+            console.log('分页信息已更新:', data);
+        }
+
+        // 修改清空筛选函数，重置分页状态
+        function clearFilter() {
+            document.getElementById('filterForm').reset();
+            isFiltered = false;
+            currentFilterParams = {};
+            currentPage = 1;
+            // 重新加载页面显示所有数据
+            location.reload();
+        }
+
+        // 将冲突数据转换为重复品番格式，以便统一处理
+        function integrateConflictsWithDuplicates(excelDuplicates, conflicts) {
+            const integratedData = [...excelDuplicates];
+            
+            // 处理独立冲突（非重复品番的冲突）
+            conflicts.forEach(conflict => {
+                // 检查这个冲突是否已经在重复品番中
+                const isAlreadyInDuplicates = excelDuplicates.some(duplicate => 
+                    duplicate.part_number === conflict.part_number
+                );
+                
+                if (!isAlreadyInDuplicates) {
+                    // 这是一个独立冲突，转换为"重复品番"格式
+                    const conflictAsDuplicate = {
+                        part_number: conflict.part_number,
+                        rows: [{
+                            index: conflict.row,
+                            vehicle_name: conflict.vehicle_name || '',
+                            item: conflict.item || '',
+                            eo: conflict.eo || '', // 使用conflict.eo作为默认EO
+                            input_eo: conflict.eo || '', // 确保input_eo字段存在
+                            eo_conflict: true,
+                            usage_eo: conflict.usage_eo,
+                            conflict_message: conflict.usage_eo ? 
+                                `EO不一致: Excel(${conflict.eo}) vs UsageList(${conflict.usage_eo})` :
+                                '品番在UsageList中不存在',
+                            is_conflict_only: true // 标记这是独立冲突
+                        }]
+                    };
+                    integratedData.push(conflictAsDuplicate);
+                }
+            });
+            
+            return integratedData;
+        }
+
+        // 构建重复品番处理表格
+        function buildDuplicateTable(excelDuplicates) {
+            const tableBody = document.getElementById('excelDuplicateTableBody');
+            tableBody.innerHTML = '';
+
+            excelDuplicates.forEach((duplicate, duplicateIndex) => {
+                const row = document.createElement('tr');
+                row.setAttribute('data-duplicate-index', duplicateIndex);
+                row.className = 'align-middle';
+                
+                // 品番列
+                const partNumberCell = document.createElement('td');
+                partNumberCell.className = 'fw-bold text-primary';
+                partNumberCell.innerHTML = `<i class="fa fa-barcode me-1"></i>${duplicate.part_number}`;
+                row.appendChild(partNumberCell);
+
+                // 重复行数列
+                const rowCountCell = document.createElement('td');
+                rowCountCell.className = 'text-center';
+                rowCountCell.innerHTML = `<span class="badge bg-warning text-dark">${duplicate.rows.length} 行</span>`;
+                row.appendChild(rowCountCell);
+
+                // 选择导入行列
+                const selectCell = document.createElement('td');
+                const select = document.createElement('select');
+                select.className = 'form-select form-select-sm';
+                select.setAttribute('data-part-number', duplicate.part_number);
+                
+                // 添加"不导入"选项
+                const noImportOption = document.createElement('option');
+                noImportOption.value = 'no_import';
+                noImportOption.textContent = '❌ 不导入此品番';
+                select.appendChild(noImportOption);
+                
+                // 计算默认选择的行（优先选择有数据的行）
+                let defaultSelectedIndex = 0;
+                for (let i = 0; i < duplicate.rows.length; i++) {
+                    const rd = duplicate.rows[i];
+                    if ((rd && (rd.vehicle_name || rd.item || rd.eo))) {
+                        defaultSelectedIndex = i;
+                        break;
+                    }
+                }
+
+                // 添加数据行选项
+                duplicate.rows.forEach((rowData, index) => {
+                    const option = document.createElement('option');
+                    option.value = index;
+                    option.textContent = `📋 第${rowData.index}行: ${rowData.vehicle_name} | ${rowData.item} | EO:${rowData.eo || '无'}`;
+                    if (index === defaultSelectedIndex) {
+                        option.selected = true;
+                    }
+                    select.appendChild(option);
+                });
+
+                selectCell.appendChild(select);
+                row.appendChild(selectCell);
+
+                // EO状态列 - 优化：减少DOM更新频率
+                const eoStatusCell = document.createElement('td');
+                eoStatusCell.className = 'eo-status-cell';
+                eoStatusCell.setAttribute('data-part-number', duplicate.part_number);
+                
+                // 预渲染所有状态，避免动态更新时的跳动
+                let eoStatusHtml = '';
+                duplicate.rows.forEach((rowData, index) => {
+                    const statusClass = rowData.eo_conflict 
+                        ? (rowData.usage_eo ? 'bg-warning text-dark' : 'bg-danger')
+                        : 'bg-success';
+                    const statusIcon = rowData.eo_conflict 
+                        ? (rowData.usage_eo ? 'fa-exclamation-triangle' : 'fa-times')
+                        : 'fa-check';
+                    const statusText = rowData.eo_conflict 
+                        ? (rowData.usage_eo ? `第${rowData.index}行: ${rowData.conflict_message}` : `第${rowData.index}行: ${rowData.conflict_message}`)
+                        : `第${rowData.index}行: ${rowData.conflict_message || 'EO一致'}`;
+                    
+                    eoStatusHtml += `<div class="badge ${statusClass} mb-1" data-row-index="${index}"><i class="fa ${statusIcon} me-1"></i>${statusText}</div>`;
+                });
+                
+                eoStatusCell.innerHTML = eoStatusHtml;
+                row.appendChild(eoStatusCell);
+
+                // EO选择列 - 优化：减少动态更新，预渲染所有可能的状态
+                const eoChoiceCell = document.createElement('td');
+                eoChoiceCell.className = 'eo-choice-cell';
+                eoChoiceCell.setAttribute('data-part-number', duplicate.part_number);
+                
+                // 检查是否是独立冲突（只有一行且标记为冲突）
+                if (duplicate.rows.length === 1 && duplicate.rows[0].is_conflict_only) {
+                    const rowData = duplicate.rows[0];
+                    if (rowData.usage_eo) {
+                        // 有UsageList EO，提供选择
+                        eoChoiceCell.innerHTML = `
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="eo_choice_${duplicate.part_number}" value="excel">
+                                <label class="form-check-label small">Excel EO</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="eo_choice_${duplicate.part_number}" value="usage" checked>
+                                <label class="form-check-label small">UsageList EO</label>
+                            </div>
+                        `;
+                    } else {
+                        // 没有UsageList EO，只能使用Excel EO
+                        eoChoiceCell.innerHTML = '<span class="text-muted">使用Excel EO</span>';
+                    }
+                } else {
+                    // 重复品番，预渲染所有行的EO选择状态，避免动态更新
+                    let eoChoiceHtml = '';
+                    duplicate.rows.forEach((rowData, index) => {
+                        const isVisible = index === defaultSelectedIndex ? 'd-block' : 'd-none'; // 默认显示有数据的行
+                        const rowId = `eo_choice_row_${duplicate.part_number}_${index}`;
+                        
+                        if (rowData.usage_eo) {
+                            eoChoiceHtml += `
+                                <div class="eo-choice-row ${isVisible}" id="${rowId}" data-row-index="${index}">
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="radio" name="eo_choice_${duplicate.part_number}" value="excel">
+                                        <label class="form-check-label small">Excel EO</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="radio" name="eo_choice_${duplicate.part_number}" value="usage" checked>
+                                        <label class="form-check-label small">UsageList EO</label>
+                                    </div>
+                                </div>
+                            `;
+                        } else {
+                            eoChoiceHtml += `
+                                <div class="eo-choice-row ${isVisible}" id="${rowId}" data-row-index="${index}">
+                                    <span class="text-muted">使用Excel EO</span>
+                                </div>
+                            `;
+                        }
+                    });
+                    eoChoiceCell.innerHTML = eoChoiceHtml;
+                }
+                
+                row.appendChild(eoChoiceCell);
+                
+                // 为选择框添加change事件，优化：使用防抖减少频繁更新
+                if (duplicate.rows.length > 1) {
+                    let updateTimeout;
+                    select.addEventListener('change', function() {
+                        // 清除之前的定时器，实现防抖
+                        clearTimeout(updateTimeout);
+                        updateTimeout = setTimeout(() => {
+                            updateEoChoiceOptimized(duplicate.part_number, this.value, duplicate.rows);
+                        }, 100); // 100ms防抖
+                    });
+                }
+
+                // 设置默认可见行与高亮状态
+                if (duplicate.rows.length > 0) {
+                    updateEoChoiceOptimized(duplicate.part_number, String(defaultSelectedIndex), duplicate.rows);
+                }
+
+                // 操作列
+                const actionCell = document.createElement('td');
+                actionCell.className = 'text-center';
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-outline-danger btn-sm';
+                deleteBtn.innerHTML = '<i class="fa fa-trash me-1"></i>删除';
+                deleteBtn.onclick = function() {
+                    // 从表格中删除这一行
+                    row.remove();
+                    // 从数据中删除
+                    window.excelDuplicatesData.splice(duplicateIndex, 1);
+                    // 更新统计信息
+                    const remainingCount = window.excelDuplicatesData.length;
+                    document.getElementById('duplicateCount').textContent = remainingCount;
+                    document.getElementById('duplicateCountHeader').textContent = remainingCount;
+                    if (remainingCount === 0) {
+                        // 如果没有重复品番了，隐藏重复处理区域
+                        document.getElementById('duplicateSection').style.display = 'none';
+                    }
+                };
+                actionCell.appendChild(deleteBtn);
+                row.appendChild(actionCell);
+
+                tableBody.appendChild(row);
+            });
+        }
+
+        // 优化的EO选择更新函数 - 减少DOM操作，避免跳动
+        function updateEoChoiceOptimized(partNumber, selectedValue, rows) {
+            if (selectedValue === 'no_import') {
+                return; // 选择不导入时不需要更新EO选择
+            }
+
+            const eoChoiceCell = document.querySelector(`.eo-choice-cell[data-part-number="${partNumber}"]`);
+            if (!eoChoiceCell) return;
+
+            const selectedIndex = parseInt(selectedValue);
+            if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= rows.length) {
+                return;
+            }
+
+            // 使用 requestAnimationFrame 确保DOM更新在下一帧执行，减少跳动
+            requestAnimationFrame(() => {
+                // 隐藏所有EO选择行
+                const allEoChoiceRows = eoChoiceCell.querySelectorAll('.eo-choice-row');
+                allEoChoiceRows.forEach(row => {
+                    row.classList.add('d-none');
+                });
+
+                // 显示选中的行
+                const selectedRow = eoChoiceCell.querySelector(`[data-row-index="${selectedIndex}"]`);
+                if (selectedRow) {
+                    selectedRow.classList.remove('d-none');
+                }
+
+                // 高亮对应的EO状态行 - 使用CSS类而不是直接操作样式
+                const eoStatusCell = document.querySelector(`.eo-status-cell[data-part-number="${partNumber}"]`);
+                if (eoStatusCell) {
+                    const allStatusBadges = eoStatusCell.querySelectorAll('.badge');
+                    allStatusBadges.forEach((badge, index) => {
+                        if (index === selectedIndex) {
+                            badge.classList.add('border', 'border-2', 'border-primary');
+                        } else {
+                            badge.classList.remove('border', 'border-2', 'border-primary');
+                        }
+                    });
+                }
+            });
+        }
+
+        // 原有的updateEoChoice函数保留兼容性，但标记为已废弃
+        function updateEoChoice(partNumber, selectedValue, rows) {
+            console.warn('updateEoChoice is deprecated, use updateEoChoiceOptimized instead');
+            updateEoChoiceOptimized(partNumber, selectedValue, rows);
+        }
+
+        // 构建数据冲突处理表格
+        function buildConflictTable(conflicts) {
+            const tableBody = document.getElementById('conflictTableBody');
+            tableBody.innerHTML = '';
+
+            conflicts.forEach((conflict, conflictIndex) => {
+                const row = document.createElement('tr');
+                row.setAttribute('data-conflict-index', conflictIndex);
+                row.className = 'align-middle';
+                
+                // 行号列
+                const rowNumberCell = document.createElement('td');
+                rowNumberCell.className = 'text-center fw-bold';
+                rowNumberCell.innerHTML = `<span class="badge bg-secondary">${conflict.row}</span>`;
+                row.appendChild(rowNumberCell);
+
+                // 品番列
+                const partNumberCell = document.createElement('td');
+                partNumberCell.className = 'fw-bold text-primary';
+                partNumberCell.innerHTML = `<i class="fa fa-barcode me-1"></i>${conflict.part_number}`;
+                row.appendChild(partNumberCell);
+
+                // 车种列
+                const vehicleNameCell = document.createElement('td');
+                vehicleNameCell.textContent = conflict.vehicle_name || '无';
+                row.appendChild(vehicleNameCell);
+
+                // ITEAM列
+                const itemCell = document.createElement('td');
+                itemCell.textContent = conflict.item || '无';
+                row.appendChild(itemCell);
+
+                // 冲突类型列 - 优化：减少动态内容变化
+                const conflictTypeCell = document.createElement('td');
+                conflictTypeCell.className = 'conflict-type-cell';
+                if (conflict.usage_eo) {
+                    conflictTypeCell.innerHTML = `<div class="badge bg-warning text-dark"><i class="fa fa-exclamation-triangle me-1"></i>EO不一致: Excel(${conflict.input_eo}) vs UsageList(${conflict.usage_eo})</div>`;
+                } else {
+                    conflictTypeCell.innerHTML = `<div class="badge bg-danger"><i class="fa fa-times me-1"></i>品番在UsageList中不存在</div>`;
+                }
+                row.appendChild(conflictTypeCell);
+
+                // EO选择列 - 优化：预渲染，避免动态更新
+                const eoChoiceCell = document.createElement('td');
+                eoChoiceCell.className = 'conflict-eo-choice-cell';
+                eoChoiceCell.setAttribute('data-conflict-index', conflictIndex);
+                
+                if (conflict.usage_eo) {
+                    // 有UsageList EO，提供选择
+                    eoChoiceCell.innerHTML = `
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="conflict_eo_choice_${conflict.part_number}" value="excel" checked>
+                            <label class="form-check-label small">Excel EO</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="conflict_eo_choice_${conflict.part_number}" value="usage">
+                            <label class="form-check-label small">UsageList EO</label>
+                        </div>
+                    `;
+                } else {
+                    // 没有UsageList EO，只能使用Excel EO
+                    eoChoiceCell.innerHTML = '<span class="text-muted">使用Excel EO</span>';
+                }
+                row.appendChild(eoChoiceCell);
+
+                // 操作列
+                const actionCell = document.createElement('td');
+                actionCell.className = 'text-center';
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-outline-danger btn-sm';
+                deleteBtn.innerHTML = '<i class="fa fa-trash me-1"></i>删除';
+                deleteBtn.onclick = function() {
+                    // 从表格中删除这一行
+                    row.remove();
+                    // 从数据中删除
+                    if (window.conflictsData && Array.isArray(window.conflictsData)) {
+                        window.conflictsData.splice(conflictIndex, 1);
+                        // 更新统计信息
+                        const remainingCount = window.conflictsData.length;
+                        document.getElementById('conflictCount').textContent = remainingCount;
+                        document.getElementById('conflictCountHeader').textContent = remainingCount;
+                        if (remainingCount === 0) {
+                            // 如果没有冲突了，隐藏冲突处理区域
+                            document.getElementById('conflictSection').style.display = 'none';
+                        }
+                    }
+                };
+                actionCell.appendChild(deleteBtn);
+                row.appendChild(actionCell);
+
+                tableBody.appendChild(row);
+            });
+        }
+
+        // 构建数据差异显示表格
+        function buildDifferenceTable(dataDifferences) {
+            const tableBody = document.getElementById('differenceTableBody');
+            tableBody.innerHTML = '';
+
+            dataDifferences.forEach((diff, diffIndex) => {
+                const row = document.createElement('tr');
+                row.setAttribute('data-difference-index', diffIndex);
+                row.className = 'align-middle';
+                
+                // 行号列
+                const rowNumberCell = document.createElement('td');
+                rowNumberCell.className = 'text-center fw-bold';
+                rowNumberCell.innerHTML = `<span class="badge bg-secondary">${diff.row}</span>`;
+                row.appendChild(rowNumberCell);
+
+                // 品番列
+                const partNumberCell = document.createElement('td');
+                partNumberCell.className = 'fw-bold text-primary';
+                partNumberCell.innerHTML = `<i class="fa fa-barcode me-1"></i>${diff.part_number}`;
+                row.appendChild(partNumberCell);
+
+                // 差异详情列
+                const differenceCell = document.createElement('td');
+                let differenceHtml = '';
+                diff.differences.forEach(change => {
+                    differenceHtml += `<div class="badge bg-info text-dark me-1 mb-1">${change}</div>`;
+                });
+                differenceCell.innerHTML = differenceHtml;
+                row.appendChild(differenceCell);
+
+                tableBody.appendChild(row);
+            });
+        }
+
+        // 批量删除功能
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化批量删除模式标志
+            window.isBatchDeleteMode = false;
+            
+            // 初始化批量删除按钮模式
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            batchDeleteBtn.setAttribute('data-mode', 'enter');
+            
+            // 批量删除按钮事件
+            document.getElementById('batchDeleteBtn').addEventListener('click', function() {
+                const mode = this.getAttribute('data-mode');
+                if (mode === 'execute') {
+                    executeBatchDelete();
+                } else {
+                    enterBatchDeleteMode();
+                }
+            });
+
+            // 取消批量删除按钮事件
+            document.getElementById('cancelBatchBtn').addEventListener('click', function() {
+                exitBatchDeleteMode();
+            });
+
+            // 全选所有数据按钮事件
+            document.getElementById('selectAllDataBtn').addEventListener('click', function() {
+                selectAllData();
+            });
+
+            // 全选复选框事件
+            document.getElementById('selectAllCheckbox').addEventListener('change', function() {
+                const isChecked = this.checked;
+                const checkboxes = document.querySelectorAll('.vehicle-checkbox');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = isChecked;
+                });
+                updateSelectedCount();
+                updateBatchDeleteButton();
+            });
+
+            // 单个复选框事件
+            document.addEventListener('change', function(e) {
+                if (e.target.classList.contains('vehicle-checkbox')) {
+                    // 当单个复选框状态改变时，清除全局选择状态
+                    // 因为用户手动修改了选择，不再是全选状态
+                    if (window.allVehicleIds && window.allVehicleIds.length > 0) {
+                        window.allVehicleIds = null;
+                    }
+                    updateSelectedCount();
+                    updateBatchDeleteButton();
+                    updateSelectAllCheckbox();
+                }
+            });
+        });
+
+        // 进入批量删除模式
+        function enterBatchDeleteMode() {
+            // 显示复选框列
+            const checkboxColumns = document.querySelectorAll('.checkbox-column');
+            checkboxColumns.forEach(col => {
+                col.style.display = 'table-cell';
+            });
+            
+            // 显示取消按钮和全选所有数据按钮，隐藏批量删除按钮
+            document.getElementById('cancelBatchBtn').style.display = 'inline-block';
+            document.getElementById('selectAllDataBtn').style.display = 'inline-block';
+            document.getElementById('batchDeleteBtn').style.display = 'none';
+            
+            // 修改批量删除按钮为执行删除按钮
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            batchDeleteBtn.innerHTML = '<i class="fa fa-trash me-1"></i>执行删除';
+            batchDeleteBtn.className = 'btn btn-danger btn-sm';
+            batchDeleteBtn.setAttribute('data-mode', 'execute');
+            batchDeleteBtn.style.display = 'inline-block';
+            
+            // 重置选择状态
+            resetCheckboxSelection();
+            
+            // 设置批量删除模式标志
+            window.isBatchDeleteMode = true;
+        }
+
+        // 退出批量删除模式
+        function exitBatchDeleteMode() {
+            // 隐藏复选框列
+            const checkboxColumns = document.querySelectorAll('.checkbox-column');
+            checkboxColumns.forEach(col => {
+                col.style.display = 'none';
+            });
+            
+            // 隐藏取消按钮和全选所有数据按钮，显示批量删除按钮
+            document.getElementById('cancelBatchBtn').style.display = 'none';
+            document.getElementById('selectAllDataBtn').style.display = 'none';
+            
+            // 恢复批量删除按钮
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            batchDeleteBtn.innerHTML = '<i class="fa fa-trash me-1"></i>批量删除';
+            batchDeleteBtn.className = 'btn btn-outline-danger btn-sm';
+            batchDeleteBtn.setAttribute('data-mode', 'enter');
+            
+            // 重置选择状态
+            resetCheckboxSelection();
+            
+            // 清除批量删除模式标志
+            window.isBatchDeleteMode = false;
+        }
+
+        // 重置复选框选择状态
+        function resetCheckboxSelection() {
+            const checkboxes = document.querySelectorAll('.vehicle-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            document.getElementById('selectAllCheckbox').checked = false;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            
+            // 清除全选所有数据的状态
+            window.allVehicleIds = null;
+            
+            updateSelectedCount();
+        }
+
+        // 全选所有数据（不仅仅是当前页面）
+        function selectAllData() {
+            // 显示加载状态
+            const selectAllDataBtn = document.getElementById('selectAllDataBtn');
+            const originalText = selectAllDataBtn.innerHTML;
+            selectAllDataBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>加载中...';
+            selectAllDataBtn.disabled = true;
+
+            // 获取所有车种ID
+            fetch('/api/vehicle_types/all_ids', {
+                method: 'GET',
+                headers: {
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 存储所有ID到全局变量
+                    window.allVehicleIds = data.vehicle_ids;
+                    
+                    // 选中当前页面可见的复选框
+                    const visibleCheckboxes = document.querySelectorAll('.vehicle-checkbox');
+                    visibleCheckboxes.forEach(checkbox => {
+                        checkbox.checked = true;
+                    });
+                    
+                    // 更新全选复选框状态
+                    document.getElementById('selectAllCheckbox').checked = true;
+                    document.getElementById('selectAllCheckbox').indeterminate = false;
+                    
+                    // 更新计数显示
+                    updateSelectedCount();
+                    
+                    // 不显示提示弹窗，静默完成全选
+                } else {
+                    alert('获取所有数据失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('获取所有数据失败');
+            })
+            .finally(() => {
+                // 恢复按钮状态
+                selectAllDataBtn.innerHTML = originalText;
+                selectAllDataBtn.disabled = false;
+            });
+        }
+
+        // 更新选中数量
+        function updateSelectedCount() {
+            let totalCount = 0;
+            
+            // 如果已经全选所有数据，使用总数
+            if (window.allVehicleIds && window.allVehicleIds.length > 0) {
+                totalCount = window.allVehicleIds.length;
+            } else {
+                // 否则使用当前页面选中的数量
+                const selectedCheckboxes = document.querySelectorAll('.vehicle-checkbox:checked');
+                totalCount = selectedCheckboxes.length;
+            }
+            
+            // 更新批量删除按钮的文本
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            if (batchDeleteBtn.innerHTML.includes('执行删除')) {
+                batchDeleteBtn.innerHTML = `<i class="fa fa-trash me-1"></i>执行删除 (${totalCount})`;
+            }
+        }
+
+        // 更新批量删除按钮状态
+        function updateBatchDeleteButton() {
+            const selectedCount = document.querySelectorAll('.vehicle-checkbox:checked').length;
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            
+            // 只有在批量删除模式下才启用/禁用按钮
+            if (batchDeleteBtn.innerHTML.includes('执行删除')) {
+                batchDeleteBtn.disabled = selectedCount === 0;
+            }
+        }
+
+        // 更新全选复选框状态
+        function updateSelectAllCheckbox() {
+            const totalCheckboxes = document.querySelectorAll('.vehicle-checkbox');
+            const checkedCheckboxes = document.querySelectorAll('.vehicle-checkbox:checked');
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            
+            if (checkedCheckboxes.length === 0) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = false;
+            } else if (checkedCheckboxes.length === totalCheckboxes.length) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = true;
+            } else {
+                selectAllCheckbox.indeterminate = true;
+                selectAllCheckbox.checked = false;
+            }
+        }
+
+        // 获取选中的车种ID
+        function getSelectedVehicleIds() {
+            // 检查是否在批量删除模式
+            if (!window.isBatchDeleteMode) {
+                return [];
+            }
+            
+            // 如果已经全选所有数据，返回所有ID
+            if (window.allVehicleIds && window.allVehicleIds.length > 0) {
+                return window.allVehicleIds;
+            }
+            
+            // 否则返回当前页面选中的ID
+            const selectedCheckboxes = document.querySelectorAll('.vehicle-checkbox:checked');
+            return Array.from(selectedCheckboxes).map(checkbox => checkbox.value);
+        }
+
+        // 执行批量删除
+        function executeBatchDelete() {
+            // 检查是否在批量删除模式
+            if (!window.isBatchDeleteMode) {
+                alert('请先进入批量删除模式');
+                return;
+            }
+            
+            const selectedIds = getSelectedVehicleIds();
+            if (selectedIds.length === 0) {
+                alert('请选择要删除的车种');
+                return;
+            }
+
+            if (confirm(`确定要删除选中的 ${selectedIds.length} 个车种吗？此操作不可恢复！`)) {
+                batchDeleteVehicles(selectedIds);
+            }
+        }
+
+        // 批量删除车种
+        function batchDeleteVehicles(vehicleIds) {
+            // 显示加载状态
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            const originalText = batchDeleteBtn.innerHTML;
+            batchDeleteBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>删除中...';
+            batchDeleteBtn.disabled = true;
+
+            fetch('/api/vehicle_types/batch_delete', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({ vehicle_ids: vehicleIds })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`成功删除 ${data.deleted_count} 个车种`);
+                    location.reload();
+                } else {
+                    alert('批量删除失败：' + data.error);
+                    // 恢复按钮状态
+                    batchDeleteBtn.innerHTML = originalText;
+                    batchDeleteBtn.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('批量删除失败');
+                // 恢复按钮状态
+                batchDeleteBtn.innerHTML = originalText;
+                batchDeleteBtn.disabled = false;
+            });
+        }
+    </script>
+</body>
+</html>

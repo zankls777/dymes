@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>开发人员信息设置</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .settings-card { max-width: 760px; margin: 0 auto; }
+        .settings-card .card-header { background-color: #0d6efd; color: #fff; font-weight: 600; }
+        .form-label { font-weight: 600; color: #374151; }
+        .form-text { font-size: 0.8rem; }
+        .preview-box {
+            background: #f8f9fa;
+            border: 1px dashed #ced4da;
+            border-radius: 8px;
+            padding: 14px 16px;
+        }
+        .preview-box .label { color: #6b7280; }
+        .preview-box .value { color: #1f2937; font-weight: 600; }
+        .preview-box li { list-style: none; display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+
+    <div class="container-fluid mt-4">
+        <div class="settings-card">
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <i class="fa fa-cog me-1"></i> 开发人员信息设置
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        此处配置的内容将展示在首页「用户信息」卡片中，保存后立即生效。
+                    </p>
+
+                    <form id="developerSettingsForm">
+                        <div class="mb-3">
+                            <label class="form-label" for="developerName">开发人员姓名 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="developerName" name="name"
+                                   maxlength="50" value="{{ developer_info.name }}"
+                                   placeholder="请输入开发人员姓名" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="developerContact">联系方式 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="developerContact" name="contact"
+                                   maxlength="100" value="{{ developer_info.contact }}"
+                                   placeholder="如：邮箱 / 分机号 / 手机号" required>
+                            <div class="form-text text-muted">可填写邮箱、电话或工位分机等。</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="feedbackText">反馈入口文字 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="feedbackText" name="feedback_text"
+                                   maxlength="50" value="{{ developer_info.feedback_text }}"
+                                   placeholder="如：点击反馈 / 联系开发" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="feedbackUrl">反馈跳转地址 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="feedbackUrl" name="feedback_url"
+                                   maxlength="300" value="{{ developer_info.feedback_url }}"
+                                   placeholder="如：mailto:xxx@qq.com 或 https://..." required>
+                            <div class="form-text text-muted">支持 mailto: 邮箱链接或 http(s) 链接。</div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label">首页展示效果预览</label>
+                            <div class="preview-box">
+                                <ul class="mb-0 p-0">
+                                    <li><span class="label">用户名</span><span class="value">{{ session.get('username', '--') }}</span></li>
+                                    <li><span class="label">开发人员</span><span class="value" id="previewName">{{ developer_info.name }}</span></li>
+                                    <li><span class="label">联系方式</span><span class="value" id="previewContact">{{ developer_info.contact }}</span></li>
+                                    <li><span class="label">意见反馈</span><span class="value text-primary" id="previewFeedback">{{ developer_info.feedback_text }}</span></li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary" id="saveBtn">
+                                <i class="fa fa-save me-1"></i>保存设置
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="resetBtn">
+                                <i class="fa fa-undo me-1"></i>恢复为上次保存
+                            </button>
+                            <a href="{{ url_for('main.index') }}" class="btn btn-outline-primary ms-auto">
+                                <i class="fa fa-home me-1"></i>返回首页
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- 系统维护模式开关 -->
+            <div class="card shadow-sm mt-4">
+                <div class="card-header bg-warning text-dark">
+                    <i class="fa fa-wrench me-1"></i> 系统维护模式
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        开启后，普通用户访问任意页面都会被跳转到「系统维护中」提示页；管理员账号不受影响，可正常使用系统以便关闭维护。
+                    </p>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch"
+                               id="maintenanceSwitch" {% if maintenance_mode %}checked{% endif %}>
+                        <label class="form-check-label" for="maintenanceSwitch" id="maintenanceLabel">
+                            {% if maintenance_mode %}已开启{% else %}已关闭{% endif %}
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 提示弹窗 -->
+    <div class="modal fade" id="tipModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="tipModalTitle">提示</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="tipModalBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">知道了</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    <script>
+        (function () {
+            const form = document.getElementById('developerSettingsForm');
+            const saveBtn = document.getElementById('saveBtn');
+            const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+
+            // 上次保存成功的值，用于「恢复」
+            let saved = {
+                name: document.getElementById('developerName').value,
+                contact: document.getElementById('developerContact').value,
+                feedback_text: document.getElementById('feedbackText').value,
+                feedback_url: document.getElementById('feedbackUrl').value
+            };
+
+            const fields = {
+                name: document.getElementById('developerName'),
+                contact: document.getElementById('developerContact'),
+                feedback_text: document.getElementById('feedbackText'),
+                feedback_url: document.getElementById('feedbackUrl')
+            };
+
+            // 维护模式开关
+            const maintenanceSwitch = document.getElementById('maintenanceSwitch');
+            const maintenanceLabel = document.getElementById('maintenanceLabel');
+
+            function showTip(title, message) {
+                document.getElementById('tipModalTitle').textContent = title;
+                document.getElementById('tipModalBody').textContent = message;
+                new bootstrap.Modal(document.getElementById('tipModal')).show();
+            }
+
+            function updatePreview() {
+                document.getElementById('previewName').textContent = fields.name.value || '--';
+                document.getElementById('previewContact').textContent = fields.contact.value || '--';
+                document.getElementById('previewFeedback').textContent = fields.feedback_text.value || '--';
+            }
+
+            Object.values(fields).forEach(function (el) {
+                el.addEventListener('input', updatePreview);
+            });
+
+            document.getElementById('resetBtn').addEventListener('click', function () {
+                Object.keys(fields).forEach(function (key) {
+                    fields[key].value = saved[key];
+                });
+                updatePreview();
+            });
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+
+                const payload = {
+                    name: fields.name.value.trim(),
+                    contact: fields.contact.value.trim(),
+                    feedback_text: fields.feedback_text.value.trim(),
+                    feedback_url: fields.feedback_url.value.trim()
+                };
+
+                if (!payload.name || !payload.contact || !payload.feedback_text || !payload.feedback_url) {
+                    showTip('校验失败', '所有字段均为必填项，请填写完整。');
+                    return;
+                }
+
+                saveBtn.disabled = true;
+                saveBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>保存中...';
+
+                fetch('{{ url_for("main.api_developer_settings") }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify(payload)
+                })
+                .then(function (resp) { return resp.json().then(function (d) { return { ok: resp.ok, data: d }; }); })
+                .then(function (res) {
+                    if (res.ok && res.data.success) {
+                        saved = Object.assign({}, payload);
+                        showTip('保存成功', '开发人员信息已更新，首页将立即显示新内容。');
+                    } else {
+                        showTip('保存失败', res.data.error || '未知错误');
+                    }
+                })
+                .catch(function (err) {
+                    showTip('保存失败', '请求异常：' + err.message);
+                })
+                .finally(function () {
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = '<i class="fa fa-save me-1"></i>保存设置';
+                });
+            });
+
+            // 维护模式开关切换
+            if (maintenanceSwitch) {
+                maintenanceSwitch.addEventListener('change', function () {
+                    const enabled = maintenanceSwitch.checked;
+                    maintenanceSwitch.disabled = true;
+
+                    fetch('{{ url_for("main.api_maintenance_mode") }}', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': csrfToken
+                        },
+                        body: JSON.stringify({ enabled: enabled })
+                    })
+                    .then(function (resp) { return resp.json().then(function (d) { return { ok: resp.ok, data: d }; }); })
+                    .then(function (res) {
+                        if (res.ok && res.data.success) {
+                            maintenanceLabel.textContent = enabled ? '已开启' : '已关闭';
+                            if (enabled) {
+                                showTip('已开启维护', '普通用户访问将被跳转到维护提示页，管理员不受影响。');
+                            } else {
+                                showTip('已关闭维护', '系统已恢复正常访问。');
+                            }
+                        } else {
+                            // 失败回滚开关状态
+                            maintenanceSwitch.checked = !enabled;
+                            showTip('设置失败', res.data.error || '未知错误');
+                        }
+                    })
+                    .catch(function (err) {
+                        maintenanceSwitch.checked = !enabled;
+                        showTip('设置失败', '请求异常：' + err.message);
+                    })
+                    .finally(function () {
+                        maintenanceSwitch.disabled = false;
+                    });
+                });
+            }
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+下面是安装说明，使用python3.13版本开发，
+
+
+# 1. 删掉无效的 .venv，用 Python 3.13 重建
+rm -rf .venv
+python3.13 -m venv .venv
+
+# 2. 安装依赖
+.venv/bin/pip install -r requirements.txt
+
+# 3. 启动
+bash start.sh
+
+
+
+chmod +x start.sh            # 首次使用赋予执行权限
+bash start.sh                 # 一键启动
+bash start.sh --port 8080     # 指定端口
+# Windows 系统直接双击 start.bat 即可
+
+
+
+# 停止服务：查找并结束 python app.py 进程
+ps -ef | grep "app.py"
+kill -9  <对应PID>

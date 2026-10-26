@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>盘点实查 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        html, body { overflow-x: hidden; }
+        .card { margin-bottom: 14px; }
+        .form-label { font-weight: 600; }
+        .req::before { content: '*'; color: #dc3545; margin-right: 2px; }
+        .field-tip { font-size: 0.78rem; color: #6c757d; }
+        .qty-input { height: 48px; font-size: 1.15rem; font-weight: 600; text-align: right; }
+        .readonly-box {
+            height: 48px; display: flex; align-items: center; justify-content: flex-end;
+            font-size: 1.25rem; font-weight: 700; background: #f8f9fa;
+            border: 1px solid #dee2e6; border-radius: 0.25rem; padding: 0 12px;
+        }
+        .readonly-box.diff-zero { color: #198754; }
+        .readonly-box.diff-nonzero { color: #dc3545; }
+        .pno-picked { font-size: 1.05rem; font-weight: 700; color: #0d6efd; }
+        /* 品番搜索结果项 */
+        .pno-item { border: 1px solid #dee2e6; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: #fff; cursor: pointer; }
+        .pno-item:active { background: #e7f1ff; }
+        .pno-item .pno { font-weight: 700; font-size: 1rem; }
+        .pno-item .pname { font-size: 0.82rem; color: #6c757d; }
+        .btn-submit { min-height: 54px; font-size: 1.15rem; font-weight: 700; }
+        .btn-main { min-height: 46px; }
+        /* 带清除按钮的输入框 */
+        .input-clearable { position: relative; }
+        .input-clearable input { padding-right: 42px; }
+        .input-clearable .btn-clear {
+            position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+            width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%;
+            background: #e9ecef; color: #6c757d; line-height: 30px; text-align: center;
+            font-size: 0.95rem; cursor: pointer; display: none;
+        }
+        .input-clearable .btn-clear:active { background: #ced4da; color: #495057; }
+        .input-clearable .btn-clear.show { display: block; }
+        #searchWrap { max-height: 52vh; overflow: auto; }
+        @media (max-width: 767.98px) {
+            .container-fluid { padding-left: 10px; padding-right: 10px; }
+            .container-fluid.mt-4 { margin-top: 0.5rem !important; }
+            .card-body { padding: 0.75rem; }
+            .page-head { margin-bottom: 0.5rem !important; }
+            .page-head h5 { font-size: 1rem; }
+            .page-head .btn-sm { min-height: 32px; }
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+
+    <div class="container-fluid mt-4">
+        <div class="page-head d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+            <h5 class="mb-0"><i class="fa fa-check-square-o me-2"></i>盘点实查</h5>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.inventory_login') }}">
+                <i class="fa fa-pencil-square-o me-1"></i>盘点数据登录
+            </a>
+        </div>
+
+        <!-- 录入区 -->
+        <div class="card">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label req">盘点班组</label>
+                        <select class="form-select form-control" id="teamSelect" style="height:48px;">
+                            <option value="">请选择</option>
+                        </select>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">请选择品番</label>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-primary btn-main flex-fill text-start" id="btnPickPno">
+                                <i class="fa fa-search me-1"></i><span id="pnoLabel">选择数据</span>
+                            </button>
+                            {% if can_submit %}
+                            <button class="btn btn-outline-secondary btn-main flex-shrink-0 px-3" id="btnClearPno" title="清除已选品番">
+                                <i class="fa fa-times"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">资材品番</label>
+                        <input type="text" class="form-control bg-light" id="kscPno" readonly placeholder="选完自动填充">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">盘点数量（现场人员盘点结果）</label>
+                        <div class="input-clearable">
+                            <input type="number" class="form-control qty-input" id="checkQty" min="0" step="1"
+                                   inputmode="numeric" placeholder="0">
+                            <button type="button" class="btn-clear" data-clear="checkQty" tabindex="-1" title="清除">
+                                <i class="fa fa-times-circle"></i>
+                            </button>
+                        </div>
+                        <div class="field-tip">生产现场盘点数量登记，选择数据后方可编辑</div>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">仓库抽查数量（非仓库人员禁止填写）</label>
+                        <div class="input-clearable">
+                            <input type="number" class="form-control qty-input" id="sampleQty" min="0" step="1"
+                                   inputmode="numeric" placeholder="0">
+                            <button type="button" class="btn-clear" data-clear="sampleQty" tabindex="-1" title="清除">
+                                <i class="fa fa-times-circle"></i>
+                            </button>
+                        </div>
+                        <div class="field-tip">仓库人员实查数量，不是生产盘点数量，选择数据后方可编辑</div>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">差异</label>
+                        <div class="readonly-box diff-zero" id="diffBox">0</div>
+                        <div class="field-tip">根据公式自动计算（盘点数量 - 抽查数量），无需输入</div>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">备注</label>
+                        <div class="input-clearable">
+                            <textarea class="form-control" id="remark" rows="2" maxlength="500" placeholder="选填"></textarea>
+                            <button type="button" class="btn-clear" data-clear="remark" tabindex="-1" title="清除">
+                                <i class="fa fa-times-circle"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {% if can_submit %}
+                    <div class="col-12">
+                        <button class="btn btn-primary w-100 btn-submit" id="btnSubmit">
+                            <i class="fa fa-paper-plane me-1"></i>提交
+                        </button>
+                    </div>
+                    {% else %}
+                    <div class="col-12">
+                        <div class="alert alert-warning mb-0 small">您没有提交盘点实查的权限，请联系管理员。</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 当日已提交记录 -->
+        <div class="card">
+            <div class="card-header bg-light py-2 d-flex justify-content-between align-items-center">
+                <span class="small fw-bold"><i class="fa fa-list-ul me-2"></i>已提交记录（<span id="recDateLabel"></span>）</span>
+                <button class="btn btn-sm btn-outline-secondary" id="btnRefresh"><i class="fa fa-refresh"></i></button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0" id="recTable">
+                        <thead>
+                            <tr>
+                                <th class="text-center">班组</th>
+                                <th class="text-center">资材品番</th>
+                                <th class="text-center">品名</th>
+                                <th class="text-center">盘点数量</th>
+                                <th class="text-center">抽查数量</th>
+                                <th class="text-center">差异</th>
+                                <th class="text-center">备注</th>
+                                <th class="text-center">提交时间</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recBody">
+                            <tr><td colspan="8" class="text-center text-muted py-3">暂无记录</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 品番选择弹窗 -->
+    <div class="modal fade" id="pnoModal" tabindex="-1" data-bs-focus="false">
+        <div class="modal-dialog modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h6 class="modal-title"><i class="fa fa-search me-1"></i>选择资材品番</h6>
+                    <div class="ms-auto d-flex align-items-center gap-1">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSyncPno" title="从 usage_list 同步新规资材品番">
+                            <i class="fa fa-refresh me-1"></i>同步品番
+                        </button>
+                        <button type="button" class="btn-close ms-1" data-bs-dismiss="modal"></button>
+                    </div>
+                </div>
+                <div class="modal-body">
+                    <div class="input-group mb-2">
+                        <div class="input-clearable flex-grow-1">
+                            <input type="text" class="form-control" id="pnoKeyword" placeholder="输入资材品番关键字后回车" autocomplete="off">
+                            <button type="button" class="btn-clear" data-clear="pnoKeyword" data-search="1" tabindex="-1" title="清除">
+                                <i class="fa fa-times-circle"></i>
+                            </button>
+                        </div>
+                        <button class="btn btn-primary" id="btnPnoSearch"><i class="fa fa-search"></i></button>
+                    </div>
+                    <div id="searchWrap">
+                        <div class="text-center text-muted py-4 small">输入关键字搜索品番</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+    (function () {
+        var CSRFEl = document.querySelector('meta[name="csrf-token"]');
+        var CSRF = CSRFEl ? CSRFEl.getAttribute('content') : '';
+        var CAN_SUBMIT = {{ 'true' if can_submit else 'false' }};
+        var URLS = {
+            teams: '{{ url_for("main.inventory_teams") }}',
+            kscSearch: '{{ url_for("main.inventory_ksc_search") }}',
+            pnoSync: '{{ url_for("main.inventory_pno_sync") }}',
+            submit: '{{ url_for("main.inventory_check_submit") }}',
+            data: '{{ url_for("main.inventory_check_data") }}'
+        };
+        var picked = null;   // {ksc_pno}
+
+        function esc(s) {
+            return String(s === null || s === undefined ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+        function today() {
+            var d = new Date();
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+        function toast(msg, ok) {
+            var div = document.createElement('div');
+            div.className = 'alert alert-' + (ok ? 'success' : 'danger') + ' position-fixed top-0 start-50 translate-middle-x mt-3 shadow';
+            div.style.zIndex = 3000;
+            div.style.minWidth = '260px';
+            div.style.pointerEvents = 'none';
+            div.textContent = msg;
+            document.body.appendChild(div);
+            setTimeout(function () { if (div.parentNode) { div.parentNode.removeChild(div); } }, 2600);
+        }
+        function postJSON(url, payload) {
+            return fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify(payload || {})
+            }).then(function (r) { return r.json(); });
+        }
+        function getJSON(url) {
+            return fetch(url, { headers: { 'X-CSRFToken': CSRF } }).then(function (r) { return r.json(); });
+        }
+
+        // ---------- 班组（仅下拉选项，维护入口在「盘点数据登录」页面） ----------
+        function loadTeams(selectedId) {
+            return getJSON(URLS.teams).then(function (res) {
+                var sel = document.getElementById('teamSelect');
+                sel.innerHTML = '<option value="">请选择</option>';
+                if (res.success) {
+                    res.items.forEach(function (t) {
+                        var opt = document.createElement('option');
+                        opt.value = t.id;
+                        opt.textContent = t.name;
+                        sel.appendChild(opt);
+                    });
+                    if (selectedId) { sel.value = String(selectedId); }
+                }
+                return res;
+            });
+        }
+
+        // ---------- 品番选择 ----------
+        var pnoModal = new bootstrap.Modal(document.getElementById('pnoModal'));
+        function doPnoSearch() {
+            var kw = document.getElementById('pnoKeyword').value.trim();
+            var wrap = document.getElementById('searchWrap');
+            wrap.innerHTML = '<div class="text-center text-muted py-4 small">搜索中...</div>';
+            getJSON(URLS.kscSearch + '?keyword=' + encodeURIComponent(kw)).then(function (res) {
+                if (!res.success) { wrap.innerHTML = '<div class="text-center text-danger py-4 small">' + esc(res.error || '搜索失败') + '</div>'; return; }
+                if (!res.items.length) { wrap.innerHTML = '<div class="text-center text-muted py-4 small">未找到匹配品番</div>'; return; }
+                wrap.innerHTML = res.items.map(function (it) {
+                    return '<div class="pno-item" data-pno="' + esc(it.ksc_pno) + '" data-name="' + esc(it.part_name) + '">' +
+                        '<div class="pno">' + esc(it.ksc_pno) + '</div>' +
+                        '<div class="pname">' + esc(it.part_name || '—') + '</div></div>';
+                }).join('');
+            });
+        }
+        // 聚焦守卫：移动端软键盘弹出会触发 resize，Bootstrap 弹窗重算布局会抢走焦点，
+        // 这里在弹窗显示后的一段时间内持续把焦点拉回输入框，直到用户主动操作其他元素。
+        var focusGuardTimer = null;
+        function keepFocusOn(el, ms) {
+            if (focusGuardTimer) { clearInterval(focusGuardTimer); }
+            var deadline = Date.now() + (ms || 1200);
+            focusGuardTimer = setInterval(function () {
+                if (document.activeElement !== el && el.offsetParent !== null) {
+                    el.focus();
+                }
+                if (Date.now() > deadline) {
+                    clearInterval(focusGuardTimer);
+                    focusGuardTimer = null;
+                }
+            }, 100);
+        }
+
+        document.getElementById('btnPickPno').addEventListener('click', function () {
+            var kwEl = document.getElementById('pnoKeyword');
+            // 清空上次搜索关键字与结果，重新拉取默认列表
+            kwEl.value = '';
+            kwEl.dispatchEvent(new Event('input', { bubbles: true }));
+            document.getElementById('searchWrap').removeAttribute('data-loaded');
+            pnoModal.show();
+            doPnoSearch();
+            document.getElementById('searchWrap').setAttribute('data-loaded', '1');
+            // 展开后光标自动定位到输入框，并持续守住焦点（移动端软键盘/布局变化不再丢失）
+            setTimeout(function () { kwEl.focus(); }, 150);
+            keepFocusOn(kwEl, 1200);
+        });
+        // 用户点了弹窗里其他元素（如列表项、搜索按钮）时立即停止聚焦守卫
+        document.getElementById('pnoModal').addEventListener('pointerdown', function (e) {
+            if (e.target !== document.getElementById('pnoKeyword')) {
+                if (focusGuardTimer) { clearInterval(focusGuardTimer); focusGuardTimer = null; }
+            }
+        }, true);
+        // 弹窗关闭时停止守卫
+        document.getElementById('pnoModal').addEventListener('hidden.bs.modal', function () {
+            if (focusGuardTimer) { clearInterval(focusGuardTimer); focusGuardTimer = null; }
+        });
+        document.getElementById('btnPnoSearch').addEventListener('click', doPnoSearch);
+        // 手动同步品番字典（增量补入 usage_list 中的新规资材品番）
+        document.getElementById('btnSyncPno').addEventListener('click', function () {
+            var btn = this;
+            if (btn.disabled) { return; }
+            btn.disabled = true;
+            var raw = btn.innerHTML;
+            btn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>同步中';
+            postJSON(URLS.pnoSync, {}).then(function (res) {
+                btn.disabled = false;
+                btn.innerHTML = raw;
+                if (res.success) {
+                    toast(res.message || '同步完成', true);
+                    document.getElementById('searchWrap').removeAttribute('data-loaded');
+                    doPnoSearch();
+                } else {
+                    toast(res.error || '同步失败', false);
+                }
+            }).catch(function () {
+                btn.disabled = false;
+                btn.innerHTML = raw;
+                toast('同步失败，请稍后重试', false);
+            });
+        });
+        document.getElementById('pnoKeyword').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); doPnoSearch(); }
+        });
+        document.getElementById('searchWrap').addEventListener('click', function (e) {
+            var item = e.target.closest('.pno-item');
+            if (!item) { return; }
+            picked = { ksc_pno: item.getAttribute('data-pno'), part_name: item.getAttribute('data-name') };
+            document.getElementById('kscPno').value = picked.ksc_pno;
+            document.getElementById('pnoLabel').textContent = picked.ksc_pno;
+            var btn = document.getElementById('btnPickPno');
+            btn.classList.remove('btn-outline-primary'); btn.classList.add('btn-outline-success');
+            pnoModal.hide();
+        });
+        var btnClearPno = document.getElementById('btnClearPno');
+        if (btnClearPno) {
+            btnClearPno.addEventListener('click', function () {
+                picked = null;
+                document.getElementById('kscPno').value = '';
+                document.getElementById('pnoLabel').textContent = '选择数据';
+                var btn = document.getElementById('btnPickPno');
+                btn.classList.add('btn-outline-primary'); btn.classList.remove('btn-outline-success');
+            });
+        }
+
+        // ---------- 差异自动计算 ----------
+        var checkQtyEl = document.getElementById('checkQty');
+        var sampleQtyEl = document.getElementById('sampleQty');
+        function calcDiff() {
+            var c = parseInt(checkQtyEl.value, 10);
+            var s = parseInt(sampleQtyEl.value, 10);
+            c = isNaN(c) ? 0 : c;
+            s = isNaN(s) ? 0 : s;
+            var d = c - s;
+            var box = document.getElementById('diffBox');
+            box.textContent = d;
+            box.classList.toggle('diff-zero', d === 0);
+            box.classList.toggle('diff-nonzero', d !== 0);
+            return d;
+        }
+        checkQtyEl.addEventListener('input', calcDiff);
+        sampleQtyEl.addEventListener('input', calcDiff);
+
+        // ---------- 输入框清除按钮 + 回车跳转下一个 ----------
+        // 清除按钮：有值时才显示
+        function refreshClearBtn(input) {
+            var wrap = input.closest('.input-clearable');
+            if (!wrap) { return; }
+            var btn = wrap.querySelector('.btn-clear');
+            if (btn) { btn.classList.toggle('show', input.value.length > 0); }
+        }
+        document.querySelectorAll('.input-clearable input, .input-clearable textarea').forEach(function (input) {
+            refreshClearBtn(input);
+            input.addEventListener('input', function () { refreshClearBtn(input); });
+            // 回车：仅在输入项之间跳转，不触发提交（提交必须手动点击按钮）
+            input.addEventListener('keydown', function (e) {
+                if (e.key !== 'Enter' || e.shiftKey) { return; }
+                e.preventDefault();
+                var next = null;
+                if (input.id === 'checkQty') { next = document.getElementById('sampleQty'); }
+                else if (input.id === 'sampleQty') { next = document.getElementById('remark'); }
+                if (next) {
+                    next.focus();
+                    if (next.select) { next.select(); }
+                } else {
+                    input.blur();   // 末项回车仅收起键盘
+                }
+            });
+        });
+        // 清除按钮点击
+        document.querySelectorAll('.btn-clear').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var input = document.getElementById(btn.getAttribute('data-clear'));
+                if (!input) { return; }
+                input.value = '';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.focus();
+                if (btn.getAttribute('data-search')) { doPnoSearch(); }
+            });
+        });
+
+        // ---------- 提交 ----------
+        var btnSubmit = document.getElementById('btnSubmit');
+        if (btnSubmit) {
+            btnSubmit.addEventListener('click', function () {
+                var teamId = document.getElementById('teamSelect').value;
+                if (!teamId) { toast('请选择盘点班组', false); return; }
+                if (!picked) { toast('请选择资材品番', false); return; }
+                var cVal = checkQtyEl.value.trim();
+                var sVal = sampleQtyEl.value.trim();
+                if (cVal === '') { toast('请填写盘点数量', false); return; }
+                if (sVal === '') { toast('请填写抽查数量', false); return; }
+                var c = parseInt(cVal, 10), s = parseInt(sVal, 10);
+                if (isNaN(c) || c < 0) { toast('盘点数量必须为非负整数', false); return; }
+                if (isNaN(s) || s < 0) { toast('抽查数量必须为非负整数', false); return; }
+
+                var payload = {
+                    team_id: parseInt(teamId, 10),
+                    ksc_pno: picked.ksc_pno,
+                    part_name: picked.part_name,
+                    check_qty: c, sample_qty: s,
+                    remark: document.getElementById('remark').value.trim(),
+                    check_date: today()
+                };
+                btnSubmit.disabled = true;
+                postJSON(URLS.submit, payload).then(function (res) {
+                    btnSubmit.disabled = false;
+                    if (res.success) {
+                        toast('提交成功', true);
+                        // 保留班组，清空品番与数量，便于连续录入
+                        document.getElementById('remark').value = '';
+                        document.getElementById('checkQty').value = '';
+                        document.getElementById('sampleQty').value = '';
+                        if (btnClearPno) { btnClearPno.click(); }
+                        calcDiff();
+                        loadRecords();
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    } else {
+                        toast(res.error || '提交失败', false);
+                    }
+                }).catch(function () {
+                    btnSubmit.disabled = false;
+                    toast('网络异常，请重试', false);
+                });
+            });
+        }
+
+        // ---------- 已提交记录 ----------
+        function loadRecords() {
+            var d = today();
+            document.getElementById('recDateLabel').textContent = d;
+            getJSON(URLS.data + '?check_date=' + d).then(function (res) {
+                var body = document.getElementById('recBody');
+                if (!res.success || !res.items.length) {
+                    body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">暂无记录</td></tr>';
+                    return;
+                }
+                body.innerHTML = res.items.map(function (it) {
+                    var dcls = it.diff_qty === 0 ? 'text-success' : 'text-danger fw-bold';
+                    return '<tr>' +
+                        '<td class="text-center">' + esc(it.team_name) + '</td>' +
+                        '<td class="text-center">' + esc(it.ksc_pno) + '</td>' +
+                        '<td class="text-center">' + esc(it.part_name || '—') + '</td>' +
+                        '<td class="text-center">' + it.check_qty + '</td>' +
+                        '<td class="text-center">' + it.sample_qty + '</td>' +
+                        '<td class="text-center ' + dcls + '">' + it.diff_qty + '</td>' +
+                        '<td class="text-center">' + esc(it.remark || '') + '</td>' +
+                        '<td class="text-center small text-muted">' + esc(it.created_at || '') + '</td>' +
+                        '</tr>';
+                }).join('');
+            });
+        }
+        document.getElementById('btnRefresh').addEventListener('click', loadRecords);
+
+        // 初始化
+        loadTeams().then(function () { loadRecords(); });
+        calcDiff();
+    })();
+    </script>
+</body>
+</html>

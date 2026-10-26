@@ -1,0 +1,3257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>大焱资料管理系统</title>
+    <!-- 引入Bootstrap CSS -->
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <!-- 引入Font Awesome -->
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    <!-- 引入自定义样式 -->
+    {% include '_styles.html' %}
+    <style>
+        .card {
+            margin-bottom: 20px;
+        }
+        .pagination {
+            margin-top: 20px;
+        }
+        .btn {
+            margin-right: 5px;
+        }
+        .alert {
+            margin-bottom: 20px;
+        }
+        .file-item {
+            transition: all 0.2s ease;
+        }
+        .file-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .delete-modal .modal-content {
+            border-color: #dc3545;
+        }
+        .delete-modal .modal-header {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .download-progress {
+            margin-top: 10px;
+            height: 8px;
+        }
+        .spinner-border {
+            width: 1.5rem;
+            height: 1.5rem;
+        }
+        .btn-loading {
+            position: relative;
+            padding-right: 2.5rem;
+        }
+        .btn-loading::after {
+            content: "";
+            position: absolute;
+            right: 0.75rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: rotate 0.75s linear infinite;
+        }
+        @keyframes rotate {
+            0% { transform: translateY(-50%) rotate(0deg); }
+            100% { transform: translateY(-50%) rotate(360deg); }
+        }
+        .download-speed {
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+        .batch-delete-info {
+            display: none;
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .selected-row {
+            background-color: #f0f7ff;
+        }
+        .loader {
+            display: none;
+            border: 2px solid currentColor;
+            border-radius: 50%;
+            border-top: 2px solid transparent;
+            width: 1rem;
+            height: 1rem;
+            animation: spin 1s linear infinite;
+            margin-left: 5px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .input-group .btn-outline-secondary {
+            border-left: 0;
+        }
+        .input-group .btn-outline-secondary:hover {
+            background-color: #6c757d;
+            border-color: #6c757d;
+            color: white;
+        }
+        .input-group .form-control:focus + .btn-outline-secondary {
+            border-color: #86b7fe;
+        }
+        .collapsible-file-list {
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 10px;
+            background-color: #f8f9fa;
+        }
+        .collapsible-file-list .btn-link {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .collapsible-file-list .btn-link:hover {
+            color: #0056b3;
+            text-decoration: none;
+        }
+        .collapsible-file-list .btn-link:focus {
+            box-shadow: none;
+        }
+        .file-list-content {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: white;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
+    </style>
+</head>
+<body class="file-management-page">
+    <div class="container-fluid mt-4">
+            <!-- 导航栏 -->
+            {% include '_navbar.html' %}
+
+            <!-- 消息提示 -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert" id="flash-message-{{ loop.index }}">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <!-- 主内容区域 -->
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="card">
+                        <div class="card-header">
+                             <h5 class="card-title">文件管理</h5>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        <!-- 批量删除信息提示 -->
+        <div id="batch-delete-info" class="batch-delete-info">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <span id="selected-count">0</span> 个文件已选择
+                </div>
+                <button type="button" id="cancel-batch" class="btn btn-sm btn-outline-secondary">
+                    <i class="fa fa-times"></i> 取消选择
+                </button>
+            </div>
+        </div>
+
+        <!-- 上传按钮 -->
+        <div class="mb-4">
+            {% set permissions = session.get('user_permissions', {}) %}
+            {% if session.get('is_admin') or permissions.get('can_file_management_upload') or current_user.has_permission('upload') %}
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadModal">
+                <i class="fa fa-upload me-1"></i> 上传文件
+            </button>
+            {% endif %}
+            <!-- 批量删除相关按钮：默认隐藏，前端根据权限加载后决定是否显示 -->
+            <button id="batchDeleteBtn" class="btn btn-outline-danger btn-sm" data-mode="enter" style="display:none;">
+                <i class="fa fa-trash me-1"></i>批量删除
+            </button>
+            <button id="batchDeleteByFilenameBtn" class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#batchDeleteByFilenameModal" style="display:none;">
+                <i class="fa fa-trash-o me-1"></i>按文件名批量删除
+            </button>
+            <!-- 批量冻结/解冻按钮 -->
+            {% if session.get('is_admin') or permissions.get('can_file_management_freeze') %}
+            <button id="batchFreezeBtn" class="btn btn-outline-warning btn-sm" style="display:inline-block;">
+                <i class="fa fa-lock me-1"></i>批量冻结
+            </button>
+            <button id="batchThawBtn" class="btn btn-outline-success btn-sm" style="display:inline-block;">
+                <i class="fa fa-unlock me-1"></i>批量解冻
+            </button>
+            <!-- 冻结历史旧版本按钮 -->
+            <button id="freezeOldVersionsBtn" class="btn btn-sm btn-outline-danger" style="display:inline-block;">
+                <i class="fa fa-archive me-1"></i>冻结旧版本
+            </button>
+            {% endif %}
+            <button id="selectAllBtn" class="btn btn-outline-primary btn-sm" style="display: none;">
+                <i class="fa fa-check-square me-1"></i><span id="selectAllBtnText">全选</span>
+            </button>
+            <button id="cancelBatchDeleteBtn" class="btn btn-outline-secondary btn-sm" style="display: none;">
+                <i class="fa fa-times me-1"></i>取消
+            </button>
+            {% if session.get('is_admin') or permissions.get('can_file_management_export_file_list') %}
+            <button id="download-file-list" class="btn btn-success">
+                <i class="fa fa-list me-1"></i> 下载文件清单明细
+            </button>
+            {% endif %}
+        </div>
+
+        <!-- 搜索表单 -->
+        <form class="mb-4" method="GET">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="search_filename" class="form-label">文件名</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="search_filename" name="search_filename"
+                               placeholder="文件名搜索" value="{{ search_filename }}">
+                        <button class="btn btn-outline-secondary" type="button" onclick="clearSearchField('search_filename')" title="清空文件名">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label for="search_vehicle_type" class="form-label">车种</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="search_vehicle_type" name="search_vehicle_type"
+                               placeholder="车种搜索" value="{{ search_vehicle_type }}">
+                        <button class="btn btn-outline-secondary" type="button" onclick="clearSearchField('search_vehicle_type')" title="清空车种">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label for="search_eo" class="form-label">EO</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="search_eo" name="search_eo"
+                               placeholder="EO搜索" value="{{ search_eo }}">
+                        <button class="btn btn-outline-secondary" type="button" onclick="clearSearchField('search_eo')" title="清空EO">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <div class="d-flex gap-2 w-100">
+                        <button type="button" class="btn btn-primary" onclick="performSearch()">
+                            <i class="fa fa-search me-1"></i> 搜索
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="clearAllSearchFields()">
+                            <i class="fa fa-refresh me-1"></i> 重置
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </form>
+
+        <!-- 冻结文件视图切换 -->
+        <div class="mb-3 d-flex gap-2 align-items-center">
+            <div class="btn-group" role="group">
+                <a href="{{ url_for('main.file_management', show_frozen='') }}" 
+                   class="btn btn-sm {% if not show_frozen %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    <i class="fa fa-file-text me-1"></i>活跃文件
+                </a>
+                <a href="{{ url_for('main.file_management', show_frozen='true') }}" 
+                   class="btn btn-sm {% if show_frozen == 'true' %}btn-warning{% else %}btn-outline-warning{% endif %}">
+                    <i class="fa fa-lock me-1"></i>冻结文件
+                </a>
+                <a href="{{ url_for('main.file_management', show_frozen='all') }}" 
+                   class="btn btn-sm {% if show_frozen == 'all' %}btn-info{% else %}btn-outline-info{% endif %}">
+                    <i class="fa fa-list me-1"></i>全部
+                </a>
+            </div>
+            {% if show_frozen == 'true' %}
+            <span class="badge bg-warning text-dark ms-2">
+                <i class="fa fa-lock me-1"></i>
+                显示冻结文件
+            </span>
+            {% elif show_frozen == 'all' %}
+            <span class="badge bg-info text-dark ms-2">
+                显示全部文件
+            </span>
+            {% endif %}
+        </div>
+
+        <!-- 文件列表 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">文件列表</h5>
+                    <span class="text-muted" id="totalFilesText">共 {{ files.total }} 个文件</span>
+                </div>
+            </div>
+            <div class="card-body">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th class="checkbox-column" style="width: 50px; display: none;">
+                                <input type="checkbox" id="selectAllCheckbox">
+                            </th>
+                            <th>文件名</th>
+                            <th>类型</th>
+                            <th>状态</th>
+                            <th>EO</th>
+                            <th>品番</th>
+                            <th>上传时间</th>
+                            <th>文件大小</th>
+                            <th>操作人</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if files.items %}
+                            {% for file in files.items %}
+                            <tr class="file-item {% if file.is_frozen %}table-warning{% endif %}" data-fileid="{{ file.id }}" data-frozen="{{ 'true' if file.is_frozen else 'false' }}">
+                                <td class="checkbox-column" style="display: none;">
+                                    <input type="checkbox" class="file-checkbox" value="{{ file.id }}">
+                                </td>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        {% if file.is_frozen %}
+                                        <i class="fa fa-lock text-warning me-2" style="font-size: 1.2rem;" title="已冻结"></i>
+                                        {% else %}
+                                        <i class="fa fa-file-excel-o text-success me-2" style="font-size: 1.2rem;"></i>
+                                        {% endif %}
+                                        <div>
+                                            <div class="font-weight-bold {{ 'text-muted' if file.is_frozen else '' }}">{{ file.filename }}</div>
+                                            <div class="small text-muted">
+                                                上传于 {{ file.upload_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                                                {% if file.is_frozen and file.frozen_at %}
+                                                | 冻结于 {{ file.frozen_at.strftime('%Y-%m-%d %H:%M:%S') }}
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="badge bg-{{ 'primary' if file.file_type == 'SubList' else 'success' }}">
+                                        {{ file.file_type }}
+                                    </span>
+                                </td>
+                                <td class="text-center">
+                                    {% if file.is_frozen %}
+                                    <span class="badge bg-warning text-dark" title="{{ file.frozen_reason or '已冻结' }}">
+                                        <i class="fa fa-lock me-1"></i>已冻结
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-success">
+                                        <i class="fa fa-check me-1"></i>活跃
+                                    </span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if file.eo %}
+                                    <span class="badge bg-secondary">{{ file.eo }}</span>
+                                    {% else %}
+                                    <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if file.first_subpno %}
+                                    {{ file.first_subpno }}
+                                    {% else %}
+                                    <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {{ file.upload_time.strftime('%Y-%m-%d') }}
+                                </td>
+                                <td class="text-center">
+                                    {{ file.filesize|filesizeformat }}
+                                </td>
+                                <td class="text-center">
+                                    {% if file.created_by %}
+                                        {% set creator = file.creator %}
+                                        {% if creator %}
+                                            {{ creator.username }}
+                                        {% else %}
+                                            未知
+                                        {% endif %}
+                                    {% else %}
+                                        未知
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    {% if file.is_frozen %}
+                                    {% if session.get('is_admin') or permissions.get('can_file_management_freeze') %}
+                                    <button type="button" class="btn btn-sm btn-outline-success thaw-btn"
+                                            data-fileid="{{ file.id }}"
+                                            data-filename="{{ file.filename }}"
+                                            data-bs-toggle="modal" data-bs-target="#thawModal">
+                                        <i class="fa fa-unlock me-1"></i> 解冻
+                                    </button>
+                                    {% endif %}
+                                    {% else %}
+                                    <button type="button" class="btn btn-sm btn-outline-primary download-btn"
+                                            data-filename="{{ file.filename }}"
+                                            data-filesize="{{ file.filesize }}"
+                                            data-bs-toggle="modal" data-bs-target="#downloadModal">
+                                        <i class="fa fa-download me-1"></i> 下载
+                                    </button>
+                                    {% if session.get('is_admin') or permissions.get('can_file_management_freeze') %}
+                                    <button type="button" class="btn btn-sm btn-outline-warning freeze-btn"
+                                            data-fileid="{{ file.id }}"
+                                            data-filename="{{ file.filename }}"
+                                            data-bs-toggle="modal" data-bs-target="#freezeModal">
+                                        <i class="fa fa-lock me-1"></i> 冻结
+                                    </button>
+                                    {% endif %}
+                                    {% if session.get('is_admin') or permissions.get('can_file_management_delete') %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger delete-btn"
+                                            data-fileid="{{ file.id }}"
+                                            data-filename="{{ file.filename }}"
+                                            data-filetype="{{ file.file_type }}"
+                                            data-bs-toggle="modal" data-bs-target="#deleteModal">
+                                        <i class="fa fa-trash me-1"></i> 删除
+                                    </button>
+                                    {% endif %}
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="9" class="text-center text-muted py-5">
+                                    {% if show_frozen == 'true' %}
+                                    <i class="fa fa-unlock fa-4x mb-3"></i>
+                                    <p class="mb-0">没有冻结的文件</p>
+                                    <p class="text-sm">上传新版本EO文件时，旧版本将自动冻结</p>
+                                    {% else %}
+                                    <i class="fa fa-folder-open fa-4x mb-3"></i>
+                                    <p class="mb-0">没有找到文件</p>
+                                    <p class="text-sm">请上传Excel文件（.xls或.xlsx）</p>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 分页导航 -->
+        <nav class="mt-4">
+            <!-- 第一行：所有分页控件水平排列 -->
+            <div class="d-flex justify-content-center align-items-center mb-3" style="height: 38px;">
+                <!-- 每页数量选择 -->
+                <div class="d-flex align-items-center me-4">
+                    <label class="me-2 mb-0">每页显示:</label>
+                    <select class="form-select form-select-sm" style="width: 90px;" onchange="changePerPage(this.value)">
+                        <option value="5" {% if per_page == 5 %}selected{% endif %}>5</option>
+                        <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+                        <option value="20" {% if per_page == 20 %}selected{% endif %}>20</option>
+                        <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                        <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+                        <option value="200" {% if per_page == 200 %}selected{% endif %}>200</option>
+                        <option value="300" {% if per_page == 300 %}selected{% endif %}>300</option>
+                        <option value="400" {% if per_page == 400 %}selected{% endif %}>400</option>
+                        <option value="500" {% if per_page == 500 %}selected{% endif %}>500</option>
+                        <option value="600" {% if per_page == 600 %}selected{% endif %}>600</option>
+                        <option value="1000" {% if per_page == 1000 %}selected{% endif %}>1000</option>
+                    </select>
+                </div>
+
+                <!-- 页码导航 -->
+                <div class="d-flex align-items-center me-4">
+                    <ul class="pagination pagination-sm mb-0" style="margin: 0; line-height: 1;">
+                        <li class="page-item {% if not files.has_prev %}disabled{% endif %}">
+                            <a class="page-link" href="#" onclick="loadPage({{ files.prev_num }}); return false;"
+                               aria-label="上一页" style="padding: 0.375rem 0.75rem;">
+                                <span aria-hidden="true">&laquo;</span>
+                            </a>
+                        </li>
+                        {% for page_num in files.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+                            {% if page_num %}
+                                <li class="page-item {% if files.page == page_num %}active{% endif %}">
+                                    <a class="page-link" href="#" onclick="loadPage({{ page_num }}); return false;" style="padding: 0.375rem 0.75rem;">{{ page_num }}</a>
+                                </li>
+                            {% else %}
+                                <li class="page-item disabled"><span class="page-link" style="padding: 0.375rem 0.75rem;">...</span></li>
+                            {% endif %}
+                        {% endfor %}
+                        <li class="page-item {% if not files.has_next %}disabled{% endif %}">
+                            <a class="page-link" href="#" onclick="loadPage({{ files.next_num }}); return false;"
+                               aria-label="下一页" style="padding: 0.375rem 0.75rem;">
+                                <span aria-hidden="true">&raquo;</span>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- 页码跳转 -->
+                <div class="d-flex align-items-center">
+                    <label class="me-2 mb-0">跳转至:</label>
+                    <input type="number" class="form-control form-control-sm" id="jump-page"
+                           min="1" max="{{ files.pages }}" value="{{ files.page }}" style="width: 60px;">
+                    <button class="btn btn-sm btn-primary" onclick="jumpToPage()">前往</button>
+                </div>
+            </div>
+            
+            <!-- 第二行：记录信息 -->
+            <div class="text-muted text-center small mt-2" id="pageInfoText">
+                共 {{ files.total }} 条记录，当前第 {{ files.page }} 页 / 共 {{ files.pages }} 页
+            </div>
+        </nav>
+    </div>
+
+    <!-- 上传模态框 -->
+    <div class="modal fade" id="uploadModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">上传文件</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST" enctype="multipart/form-data" class="p-4" id="uploadForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <input type="file" class="form-control" name="files" id="uploadFilesInput" multiple accept=".xls, .xlsx" required>
+                        <div class="form-text">支持多文件上传，仅支持.xls和.xlsx格式</div>
+                    </div>
+                    <div id="upload-progress" class="d-none">
+                        <div class="progress mb-2">
+                            <div id="upload-progress-bar" class="progress-bar" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                        <div class="text-center small text-muted">
+                            <span id="upload-progress-text">0 / 0</span>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100" id="uploadSubmitBtn">确认上传</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 下载模态框 -->
+    <div class="modal fade" id="downloadModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">下载文件</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <p>您确定要下载文件 <span id="download-filename" class="font-weight-bold"></span> 吗？</p>
+                        <p class="text-muted">文件大小: <span id="download-filesize"></span></p>
+                    </div>
+                    <div id="download-progress-container" class="d-none">
+                        <div class="progress download-progress">
+                            <div id="download-progress-bar" class="progress-bar bg-primary" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                        <div class="text-center mt-2">
+                            <span id="download-progress-text">准备下载...</span>
+                        </div>
+                        <div class="text-center download-speed mt-1">
+                            <span id="download-speed-text">0 KB/s</span>
+                            <span id="download-eta-text" class="ml-2">--:--</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirm-download" class="btn btn-primary">
+                        <i class="fa fa-download me-1"></i> 确认下载
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function(){
+        const form = document.getElementById('uploadForm');
+        if (!form) return;
+        const fileInput = document.getElementById('uploadFilesInput');
+        const btn = document.getElementById('uploadSubmitBtn');
+        const progressWrap = document.getElementById('upload-progress');
+        const bar = document.getElementById('upload-progress-bar');
+        const txt = document.getElementById('upload-progress-text');
+        const csrf = form.querySelector('input[name="csrf_token"]').value;
+
+        const DB_IS_MYSQL = {{ db_is_mysql | tojson }};
+        let BATCH_SIZE = 40; // 每批 40 个文件（配合后端每批一次事务提交，减少 fsync 次数）
+        let MAX_CONCURRENCY = DB_IS_MYSQL ? 10 : 1; // 提升并发，追求更快（SQLite 单写者保持串行）
+
+        form.addEventListener('submit', async function(e){
+            // 所有文件上传都使用AJAX逻辑，以便显示重复文件提示
+            const files = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
+            if (!files.length) return;
+            e.preventDefault();
+
+            btn.disabled = true;
+            if (progressWrap) progressWrap.classList.remove('d-none');
+            let done = 0;
+
+            const total = files.length;
+            const chunks = [];
+            for (let i=0; i<files.length; i+=BATCH_SIZE) {
+                chunks.push(files.slice(i, i+BATCH_SIZE));
+            }
+
+            // 生成本次上传批次ID，并在前端聚合所有文件名，最后统一上报以生成一条日志
+            const batchId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const allFilenames = [];
+
+            // 收集所有批次的结果
+            let totalSuccess = 0;
+            let totalDuplicates = 0;
+            let totalFailed = 0;
+            let allSuccessFiles = [];
+            let allDuplicateFiles = [];
+            let allFailedFiles = [];
+
+            async function uploadChunk(chunk, attempt=1){
+                const fd = new FormData();
+                fd.append('csrf_token', csrf);
+                chunk.forEach(f => fd.append('files', f));
+                // 聚合本批文件名
+                try { chunk.forEach(f => { if (f && f.name) allFilenames.push(f.name); }); } catch (_) {}
+                try {
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 600000); // 600s
+                    const response = await fetch(window.location.pathname, { 
+                        method: 'POST', 
+                        body: fd, 
+                        credentials: 'same-origin', 
+                        signal: controller.signal, 
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' } 
+                    });
+                    clearTimeout(timeout);
+                    
+                    // 处理响应结果
+                    if (response.ok) {
+                        try {
+                            const result = await response.json();
+                            
+                            
+                            if (result.success) {
+                                totalSuccess += result.success_count || 0;
+                                totalDuplicates += result.duplicate_count || 0;
+                                totalFailed += result.failed_count || 0;
+                                
+                                // 收集成功文件信息
+                                if (result.success_files && result.success_files.length > 0) {
+                                    allSuccessFiles = allSuccessFiles.concat(result.success_files);
+                                }
+                                
+                                // 收集重复文件信息
+                                if (result.duplicates && result.duplicates.length > 0) {
+                                    allDuplicateFiles = allDuplicateFiles.concat(result.duplicates);
+                                }
+                                
+                                // 收集失败文件信息
+                                if (result.failed && result.failed.length > 0) {
+                                    allFailedFiles = allFailedFiles.concat(result.failed);
+                                }
+                            }
+                        } catch (e) {
+                            // JSON解析失败，忽略
+                        }
+                    } else {
+                        // HTTP 错误响应：计入失败，避免静默丢包
+                        totalFailed += chunk.length;
+                        try { chunk.forEach(f => { if (f && f.name) allFailedFiles.push(f.name); }); } catch (_) {}
+                    }
+                } catch (err) { 
+                    // 请求异常（超时/网络中断）：计入失败并提示；
+                    // 服务器可能仍在处理，页面刷新后可确认最终结果
+                    totalFailed += chunk.length;
+                    try { chunk.forEach(f => { if (f && f.name) allFailedFiles.push(f.name); }); } catch (_) {}
+                    if (txt) txt.textContent = `${done} / ${total}（批次失败，服务器可能仍在处理，请稍后刷新页面确认）`;
+                }
+                done += chunk.length;
+                if (bar) {
+                    const pct = Math.round(done*100/total);
+                    bar.style.width = pct + '%';
+                    bar.setAttribute('aria-valuenow', String(pct));
+                }
+                if (txt) txt.textContent = `${done} / ${total}`;
+            }
+
+            // 并发执行上传，限制最大并发数
+            const running = new Set();
+            let idx = 0;
+            await new Promise(resolve => {
+                function launchNext(){
+                    while (idx < chunks.length && running.size < MAX_CONCURRENCY){
+                        const c = chunks[idx++];
+                        const p = uploadChunk(c).finally(() => {
+                            running.delete(p);
+                            launchNext();
+                            if (idx >= chunks.length && running.size === 0) resolve();
+                        });
+                        running.add(p);
+                    }
+                }
+                launchNext();
+            });
+
+            // 全部完成后，调用后端统一生成一条批量上传日志和flash消息
+            try {
+                const finalizeResp = await fetch('{{ url_for('main.file_management') }}'.replace('/file_management','') + '/api/upload_logs/finalize', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrf,
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ 
+                        batch_id: batchId, 
+                        filenames: Array.from(new Set(allFilenames)), 
+                        total: total,
+                        success_count: totalSuccess,
+                        duplicate_count: totalDuplicates,
+                        failed_count: totalFailed,
+                        success_files: allSuccessFiles,
+                        duplicate_files: allDuplicateFiles,
+                        failed_files: allFailedFiles
+                    })
+                });
+                // 忽略失败，不阻塞页面刷新
+                await finalizeResp.text().catch(()=>{});
+            } catch (_) {}
+
+            // 显示上传结果统计
+            let resultMessage = '';
+            if (totalSuccess > 0) {
+                resultMessage += `成功上传 ${totalSuccess} 个文件`;
+            }
+            if (totalDuplicates > 0) {
+                if (resultMessage) resultMessage += '；';
+                if (totalDuplicates === 1) {
+                    resultMessage += `跳过重复文件：${allDuplicateFiles[0] || '未知文件'}`;
+                } else {
+                    resultMessage += `跳过重复文件：${allDuplicateFiles[0] || '未知文件'} 等${totalDuplicates}个文件`;
+                }
+            }
+            if (totalFailed > 0) {
+                if (resultMessage) resultMessage += '；';
+                resultMessage += `上传失败 ${totalFailed} 个文件`;
+            }
+            
+            // 立即刷新页面，让后端处理flash消息在顶部横幅显示
+            window.location.reload();
+        });
+    })();
+    </script>
+    <!-- 单个删除确认模态框 -->
+    <div class="modal fade delete-modal" id="deleteModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">确认删除</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning mb-3">
+                        <i class="fa fa-exclamation-triangle mr-2"></i>
+                        <strong>警告:</strong> 此操作不可撤销！
+                    </div>
+                    <p>您确定要删除文件 <span id="delete-filename" class="font-weight-bold"></span> 吗？</p>
+                    <p class="text-muted">文件类型: <span id="delete-filetype"></span></p>
+                    <p class="text-danger">删除此文件将同时删除所有相关数据记录！</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirm-delete" class="btn btn-danger">
+                        <i class="fa fa-trash me-1"></i> 确认删除
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量删除确认模态框 -->
+    <div class="modal fade delete-modal" id="batchDeleteModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">确认批量删除</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning mb-3">
+                        <i class="fa fa-exclamation-triangle mr-2"></i>
+                        <strong>警告:</strong> 此操作不可撤销！
+                    </div>
+                    <p>您确定要删除 <span id="batch-delete-count" class="font-weight-bold">0</span> 个文件吗？</p>
+                    <div id="batch-delete-files" class="mt-3 p-2 bg-light rounded">
+                        <!-- 这里会动态显示选中的文件名 -->
+                    </div>
+                    <p class="text-danger mt-3">删除这些文件将同时删除所有相关数据记录！</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirm-batch-delete" class="btn btn-danger">
+                        <i class="fa fa-trash me-1"></i> 确认删除
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 按文件名批量删除模态框 -->
+    <div class="modal fade delete-modal" id="batchDeleteByFilenameModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">按文件名批量删除</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning mb-3">
+                        <i class="fa fa-exclamation-triangle mr-2"></i>
+                        <strong>警告:</strong> 此操作不可撤销！
+                    </div>
+                    <div class="mb-3">
+                        <label for="batch-filenames" class="form-label">请输入要删除的文件名</label>
+                        <textarea class="form-control" id="batch-filenames" rows="10" placeholder="请输入或粘贴要删除的文件名，每行一个文件名
+例如：
+file1.xlsx
+file2.xls
+file3.xlsx"></textarea>
+                        <div class="form-text">支持批量输入，每行一个文件名，系统会删除所有匹配的文件</div>
+                    </div>
+                    <p class="text-danger mt-3">删除这些文件将同时删除所有相关数据记录！</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirm-batch-delete-by-filename" class="btn btn-danger">
+                        <i class="fa fa-trash me-1"></i> 确认删除
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 冻结文件模态框 -->
+    <div class="modal fade" id="freezeModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content border-warning">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title"><i class="fa fa-lock me-2"></i>冻结文件</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fa fa-exclamation-triangle me-2"></i>
+                        <strong>注意：</strong>冻结的文件将不会在活跃文件列表中显示，直到被解冻。
+                    </div>
+                    <p class="mb-2">即将冻结文件：<span id="freeze-filename" class="font-weight-bold"></span></p>
+                    <div class="mb-3">
+                        <label for="freeze-reason" class="form-label">冻结原因</label>
+                        <textarea class="form-control" id="freeze-reason" rows="3" placeholder="请输入冻结原因（可选）" maxlength="500"></textarea>
+                        <div class="form-text">默认原因：手动冻结</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirm-freeze" class="btn btn-warning">
+                        <i class="fa fa-lock me-1"></i> 确认冻结
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 解冻文件模态框 -->
+    <div class="modal fade" id="thawModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content border-success">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title"><i class="fa fa-unlock me-2"></i>解冻文件</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fa fa-info-circle me-2"></i>
+                        <strong>说明：</strong>解冻后文件将恢复为活跃状态，可以正常访问和下载。
+                    </div>
+                    <p class="mb-2">即将解冻文件：<span id="thaw-filename" class="font-weight-bold"></span></p>
+                    <div id="thaw-file-info" class="mb-3 d-none">
+                        <p class="text-muted small mb-1">冻结原因：<span id="thaw-reason"></span></p>
+                        <p class="text-muted small mb-0">冻结时间：<span id="thaw-time"></span></p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirm-thaw" class="btn btn-success">
+                        <i class="fa fa-unlock me-1"></i> 确认解冻
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量冻结模态框 -->
+    <div class="modal fade" id="batchFreezeModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content border-warning">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title"><i class="fa fa-lock me-2"></i>批量冻结文件</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fa fa-exclamation-triangle me-2"></i>
+                        <strong>注意：</strong>批量冻结的文件将不会在活跃文件列表中显示，直到被解冻。
+                    </div>
+                    <p class="mb-2">即将冻结 <span id="batch-freeze-count" class="font-weight-bold">0</span> 个文件</p>
+                    <div class="mb-3">
+                        <label for="batch-freeze-reason" class="form-label">冻结原因</label>
+                        <textarea class="form-control" id="batch-freeze-reason" rows="2" placeholder="请输入冻结原因（可选）" maxlength="500"></textarea>
+                    </div>
+                    <div id="batch-freeze-status" class="mt-2"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirm-batch-freeze" class="btn btn-warning">
+                        <i class="fa fa-lock me-1"></i> 确认批量冻结
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量解冻模态框 -->
+    <div class="modal fade" id="batchThawModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content border-success">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title"><i class="fa fa-unlock me-2"></i>批量解冻文件</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fa fa-info-circle me-2"></i>
+                        <strong>说明：</strong>批量解冻后文件将恢复为活跃状态，可以正常访问和下载。
+                    </div>
+                    <p class="mb-2">即将解冻 <span id="batch-thaw-count" class="font-weight-bold">0</span> 个文件</p>
+                    <div id="batch-thaw-status" class="mt-2"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirm-batch-thaw" class="btn btn-success">
+                        <i class="fa fa-unlock me-1"></i> 确认批量解冻
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 冻结历史旧版本模态框 -->
+    <div class="modal fade" id="freezeOldVersionsModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content border-danger">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="fa fa-archive me-2"></i>冻结历史旧版本</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fa fa-exclamation-triangle me-2"></i>
+                        <strong>操作说明：</strong>
+                        <ul class="mb-0 mt-2">
+                            <li>系统将按<strong>品番</strong>对所有活跃文件进行分组</li>
+                            <li>对每个品番组，识别出<strong>EO版本最新</strong>的文件</li>
+                            <li>自动冻结同组中<strong>EO版本较旧</strong>的文件</li>
+                            <li>冻结后旧版本文件将不会在活跃文件列表中显示</li>
+                        </ul>
+                    </div>
+                    <div id="freeze-old-versions-preview" class="mb-3">
+                        <div class="text-center text-muted">
+                            <div class="spinner-border spinner-border-sm" role="status">
+                                <span class="visually-hidden">加载中...</span>
+                            </div>
+                            正在分析文件...
+                        </div>
+                    </div>
+                    <div id="freeze-old-versions-status" class="mt-2" style="display:none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirm-freeze-old-versions" class="btn btn-danger" disabled>
+                        <i class="fa fa-archive me-1"></i> 确认冻结
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 引入Bootstrap JS -->
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <!-- 引入缓存工具 -->
+    <script defer src="../static/js/cache-utils.js"></script>
+    <!-- 引入渲染优化工具 -->
+    <script defer src="../static/js/render-optimizer.js"></script>
+
+    <script>
+        // 显示消息提示函数
+        function showMessage(message, type = 'info') {
+            // 创建消息元素
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+            alertDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 99999; min-width: 300px; max-width: 500px; background-color: #fff; border: 2px solid #ccc; box-shadow: 0 4px 8px rgba(0,0,0,0.3);';
+            alertDiv.innerHTML = `
+                <strong>${message}</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+            
+            // 添加到页面
+            document.body.appendChild(alertDiv);
+            
+            // 5秒后自动移除
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.parentNode.removeChild(alertDiv);
+                }
+            }, 5000);
+        }
+
+        // 每页数量变更
+        function changePerPage(perPage) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('per_page', perPage);
+            url.searchParams.set('page', 1); // 切换页数后重置到第一页
+            // 保持搜索参数
+            const searchFilename = document.getElementById('search_filename')?.value?.trim() || '';
+            const searchVehicleType = document.getElementById('search_vehicle_type')?.value?.trim() || '';
+            const searchEo = document.getElementById('search_eo')?.value?.trim() || '';
+            if (searchFilename) url.searchParams.set('search_filename', searchFilename);
+            if (searchVehicleType) url.searchParams.set('search_vehicle_type', searchVehicleType);
+            if (searchEo) url.searchParams.set('search_eo', searchEo);
+            loadSearchResults(url.toString());
+        }
+
+        // 加载指定页面
+        function loadPage(page) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', page);
+            // 保持搜索参数
+            const searchFilename = document.getElementById('search_filename')?.value?.trim() || '';
+            const searchVehicleType = document.getElementById('search_vehicle_type')?.value?.trim() || '';
+            const searchEo = document.getElementById('search_eo')?.value?.trim() || '';
+            if (searchFilename) url.searchParams.set('search_filename', searchFilename);
+            if (searchVehicleType) url.searchParams.set('search_vehicle_type', searchVehicleType);
+            if (searchEo) url.searchParams.set('search_eo', searchEo);
+            loadSearchResults(url.toString());
+        }
+
+        // 页码跳转
+        function jumpToPage() {
+            const pageInput = document.getElementById('jump-page');
+            const page = parseInt(pageInput.value);
+            // 总页数取最新分页信息（AJAX 切换每页条数后同步更新），兜底用模板初始值
+            const totalPages = window.currentTotalPages || {{ files.pages }};
+
+            // 验证输入的页码是否有效
+            if (isNaN(page) || page < 1 || page > totalPages) {
+                alert(`请输入有效的页码 (1-${totalPages})`);
+                pageInput.focus();
+                return;
+            }
+
+            loadPage(page);
+        }
+
+        // 格式化文件大小
+        function formatBytes(bytes, decimals = 2) {
+            if (bytes === 0) return '0 Bytes';
+
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+        }
+
+        // 格式化时间
+        function formatTime(seconds) {
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = Math.floor(seconds % 60);
+            return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+        }
+
+        // 清空单个搜索字段
+        function clearSearchField(fieldId) {
+            const field = document.getElementById(fieldId);
+            if (field) {
+                field.value = '';
+                field.focus(); // 清空后聚焦到该字段
+                // 立即执行搜索，更新URL参数
+                performSearch();
+            }
+        }
+
+        // 清空所有搜索字段
+        function clearAllSearchFields() {
+            // 清空所有字段的值
+            document.getElementById('search_filename').value = '';
+            document.getElementById('search_vehicle_type').value = '';
+            document.getElementById('search_eo').value = '';
+            
+            // 立即执行搜索，更新URL参数
+            performSearch();
+        }
+
+        // 执行搜索并更新URL（不刷新页面）
+        function performSearch() {
+            const searchFilename = document.getElementById('search_filename')?.value?.trim() || '';
+            const searchVehicleType = document.getElementById('search_vehicle_type')?.value?.trim() || '';
+            const searchEo = document.getElementById('search_eo')?.value?.trim() || '';
+            
+            // 构建新的URL
+            const url = new URL(window.location.href);
+            url.pathname = '{{ url_for("main.file_management") }}';
+            
+            // 清除所有搜索参数
+            url.searchParams.delete('search_filename');
+            url.searchParams.delete('search_vehicle_type');
+            url.searchParams.delete('search_eo');
+            url.searchParams.delete('page'); // 重置到第一页
+            
+            // 只添加非空的搜索参数
+            if (searchFilename) {
+                url.searchParams.set('search_filename', searchFilename);
+            }
+            if (searchVehicleType) {
+                url.searchParams.set('search_vehicle_type', searchVehicleType);
+            }
+            if (searchEo) {
+                url.searchParams.set('search_eo', searchEo);
+            }
+            
+            // 使用AJAX加载搜索结果，不刷新页面
+            loadSearchResults(url.toString());
+        }
+
+        // 使用AJAX加载搜索结果
+        function loadSearchResults(url) {
+            // 显示加载状态
+            showLoadingState();
+            
+            fetch(url, {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            })
+            .then(response => response.text())
+            .then(html => {
+                // 解析返回的HTML
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                
+                // 更新文件列表
+                const newTableBody = doc.querySelector('tbody');
+                const currentTableBody = document.querySelector('tbody');
+                if (newTableBody && currentTableBody) {
+                    currentTableBody.innerHTML = newTableBody.innerHTML;
+                }
+                
+                // 更新分页信息
+                const newPagination = doc.querySelector('.pagination');
+                const currentPagination = document.querySelector('.pagination');
+                if (newPagination && currentPagination) {
+                    currentPagination.innerHTML = newPagination.innerHTML;
+                }
+
+                // 更新文件总数与分页记录信息（按 id 精确定位，避免误更新其他 .text-muted 元素）
+                const newTotalFiles = doc.getElementById('totalFilesText');
+                const currentTotalFiles = document.getElementById('totalFilesText');
+                if (newTotalFiles && currentTotalFiles) {
+                    currentTotalFiles.textContent = newTotalFiles.textContent;
+                }
+                const newPageInfo = doc.getElementById('pageInfoText');
+                const currentPageInfo = document.getElementById('pageInfoText');
+                if (newPageInfo && currentPageInfo) {
+                    currentPageInfo.textContent = newPageInfo.textContent;
+                    // 同步页码跳转框的上限与当前页（切换每页条数后总页数会变化）
+                    const m = newPageInfo.textContent.match(/共\s*(\d+)\s*页/);
+                    const cur = newPageInfo.textContent.match(/当前第\s*(\d+)\s*页/);
+                    window.currentTotalPages = m ? parseInt(m[1], 10) : 0;
+                    window.currentPageNum = cur ? parseInt(cur[1], 10) : 1;
+                    const jumpInput = document.getElementById('jump-page');
+                    if (jumpInput) {
+                        if (window.currentTotalPages) jumpInput.max = window.currentTotalPages;
+                        jumpInput.value = window.currentPageNum;
+                    }
+                }
+                
+                // 更新URL（不刷新页面）
+                window.history.pushState({}, '', url);
+                
+                // 隐藏加载状态
+                hideLoadingState();
+                
+                // 重新绑定事件
+                bindTableEvents();
+
+                // 如果当前处于批量删除模式，恢复复选框列和相关UI，防止分页/每页切换后复选框消失
+                if (window.isBatchDeleteMode) {
+                    // 显示复选框列
+                    document.querySelectorAll('.checkbox-column').forEach(col => {
+                        col.style.display = 'table-cell';
+                    });
+                    // 显示顶部操作按钮
+                    const selectAllBtn = document.getElementById('selectAllBtn');
+                    if (selectAllBtn) selectAllBtn.style.display = 'inline-block';
+                    const cancelBtn = document.getElementById('cancelBatchDeleteBtn');
+                    if (cancelBtn) cancelBtn.style.display = 'inline-block';
+                    // 调整批量删除按钮为执行模式
+                    const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+                    if (batchDeleteBtn) {
+                        batchDeleteBtn.innerHTML = '<i class="fa fa-trash me-1"></i>执行删除';
+                        batchDeleteBtn.className = 'btn btn-danger btn-sm';
+                        batchDeleteBtn.setAttribute('data-mode', 'execute');
+                    }
+                    // 同步全选复选框与计数
+                    updateSelectAllCheckbox && updateSelectAllCheckbox();
+                    updateSelectedCount && updateSelectedCount();
+                    updateBatchDeleteButton && updateBatchDeleteButton();
+                }
+            })
+            .catch(error => {
+                console.error('搜索失败:', error);
+                hideLoadingState();
+                alert('搜索失败，请重试');
+            });
+        }
+
+        // 显示加载状态
+        function showLoadingState() {
+            const tbody = document.querySelector('tbody');
+            if (tbody) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">搜索中...</span>
+                            </div>
+                            <p class="mt-2 mb-0">正在搜索...</p>
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        // 隐藏加载状态
+        function hideLoadingState() {
+            // 加载状态会在loadSearchResults中自动替换
+        }
+
+        // 重新绑定表格事件
+        function bindTableEvents() {
+            // 重新绑定下载按钮事件
+            document.querySelectorAll('.download-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const filename = this.getAttribute('data-filename');
+                    const filesize = this.getAttribute('data-filesize');
+
+                    // 更新模态框内容
+                    document.getElementById('download-filename').textContent = filename;
+                    document.getElementById('download-filesize').textContent =
+                        formatBytes(parseInt(filesize));
+
+                    // 重置下载进度
+                    document.getElementById('download-progress-container').classList.add('d-none');
+                    document.getElementById('download-progress-bar').style.width = '0%';
+                    document.getElementById('download-progress-bar').setAttribute('aria-valuenow', '0');
+                    document.getElementById('download-progress-text').textContent = '准备下载...';
+                    document.getElementById('download-speed-text').textContent = '0 KB/s';
+                    document.getElementById('download-eta-text').textContent = '--:--';
+                });
+            });
+
+            // 重新绑定删除按钮事件
+            document.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const fileid = this.getAttribute('data-fileid');
+                    const filename = this.getAttribute('data-filename');
+                    const filetype = this.getAttribute('data-filetype');
+
+                    // 更新模态框内容
+                    document.getElementById('delete-filename').textContent = filename;
+                    document.getElementById('delete-filetype').textContent = filetype;
+
+                    // 设置删除按钮的data-fileid属性
+                    document.getElementById('confirm-delete').setAttribute('data-fileid', fileid);
+                });
+            });
+
+            // 重新绑定冻结按钮事件
+            document.querySelectorAll('.freeze-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const fileid = this.getAttribute('data-fileid');
+                    const filename = this.getAttribute('data-filename');
+                    
+                    document.getElementById('freeze-filename').textContent = filename;
+                    document.getElementById('confirm-freeze').setAttribute('data-fileid', fileid);
+                    document.getElementById('freeze-reason').value = '';
+                });
+            });
+
+            // 重新绑定解冻按钮事件
+            document.querySelectorAll('.thaw-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const fileid = this.getAttribute('data-fileid');
+                    const filename = this.getAttribute('data-filename');
+                    
+                    document.getElementById('thaw-filename').textContent = filename;
+                    document.getElementById('confirm-thaw').setAttribute('data-fileid', fileid);
+                    document.getElementById('thaw-file-info').classList.add('d-none');
+                    document.getElementById('thaw-reason').textContent = '';
+                    document.getElementById('thaw-time').textContent = '';
+                });
+            });
+
+        }
+
+
+
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOMContentLoaded 事件触发');
+            
+            // 为Flash消息添加自动关闭功能
+            const flashMessages = document.querySelectorAll('[id^="flash-message-"]');
+            flashMessages.forEach(message => {
+                setTimeout(() => {
+                    if (message.parentNode) {
+                        message.parentNode.removeChild(message);
+                    }
+                }, 3000); // 3秒后自动关闭
+            });
+            
+            // 初始化批量删除模式标志
+            window.isBatchDeleteMode = false;
+            
+            // 初始化批量删除按钮模式
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            console.log('初始化批量删除按钮:', batchDeleteBtn);
+            if (batchDeleteBtn) {
+                batchDeleteBtn.setAttribute('data-mode', 'enter');
+                console.log('批量删除按钮模式设置为: enter');
+            } else {
+                console.error('批量删除按钮未找到！');
+            }
+            
+            // 批量删除按钮事件
+            if (batchDeleteBtn) {
+                console.log('批量删除按钮已找到，绑定事件');
+                batchDeleteBtn.addEventListener('click', function() {
+                    console.log('批量删除按钮被点击');
+                    const mode = this.getAttribute('data-mode');
+                    console.log('当前模式:', mode);
+                    if (mode === 'execute') {
+                        executeBatchDelete();
+                    } else {
+                        enterBatchDeleteMode();
+                    }
+                });
+            } else {
+                console.error('批量删除按钮未找到');
+            }
+
+            // 全选按钮事件
+            const selectAllBtn = document.getElementById('selectAllBtn');
+            if (selectAllBtn) {
+                selectAllBtn.addEventListener('click', function() {
+                    // 检查当前是否有全局选择状态
+                    const hasGlobalSelection = window.globalSelectionIds && 
+                                             Array.isArray(window.globalSelectionIds) && 
+                                             window.globalSelectionIds.length > 0;
+                    
+                    if (hasGlobalSelection) {
+                        // 如果已经有全局选择，则取消选择
+                        clearAllSelection();
+                    } else {
+                        // 如果没有全局选择，则选择所有数据
+                        selectAllData();
+                    }
+                });
+            }
+
+            // 注意：全选复选框的主要事件监听器已在下面定义，这里不需要重复定义
+
+            // 取消批量删除按钮事件
+            const cancelBatchDeleteBtn = document.getElementById('cancelBatchDeleteBtn');
+            if (cancelBatchDeleteBtn) {
+                cancelBatchDeleteBtn.addEventListener('click', function() {
+                    exitBatchDeleteMode();
+                });
+            }
+
+            // 单个复选框事件
+            document.addEventListener('change', function(e) {
+                if (e.target.classList.contains('file-checkbox')) {
+                    const checkbox = e.target;
+                    const isChecked = checkbox.checked;
+                    const fileId = checkbox.value;
+                    
+                    // 确保全局选择数组存在
+                    if (!window.globalSelectionIds || !Array.isArray(window.globalSelectionIds)) {
+                        window.globalSelectionIds = [];
+                    }
+                    
+                    if (isChecked) {
+                        // 如果复选框被选中，确保该ID在全局选择中
+                        if (!window.globalSelectionIds.includes(fileId)) {
+                            window.globalSelectionIds.push(fileId);
+                        }
+                    } else {
+                        // 如果复选框被取消，从全局选择中移除该ID
+                        const index = window.globalSelectionIds.indexOf(fileId);
+                        if (index > -1) {
+                            window.globalSelectionIds.splice(index, 1);
+                        }
+                    }
+                    
+                    // 如果全局选择为空，重置为空数组
+                    if (window.globalSelectionIds.length === 0) {
+                        window.globalSelectionIds = [];
+                    }
+                    
+                    updateSelectedCount();
+                    updateBatchDeleteButton();
+                    updateSelectAllCheckbox();
+                }
+            });
+
+            // 为所有搜索输入框添加实时监听
+            const searchFields = ['search_filename', 'search_vehicle_type', 'search_eo'];
+            let searchTimeout;
+            
+            searchFields.forEach(fieldId => {
+                const field = document.getElementById(fieldId);
+                if (field) {
+                    // 监听输入变化
+                    field.addEventListener('input', function() {
+                        // 清除之前的定时器
+                        clearTimeout(searchTimeout);
+                        
+                        // 设置新的定时器，延迟500ms执行搜索（防抖）
+                        searchTimeout = setTimeout(() => {
+                            performSearch();
+                        }, 500);
+                    });
+                    
+                    // 监听回车键
+                    field.addEventListener('keypress', function(e) {
+                        if (e.key === 'Enter') {
+                            clearTimeout(searchTimeout);
+                            performSearch();
+                        }
+                    });
+                }
+            });
+
+            // 下载按钮事件处理
+            document.querySelectorAll('.download-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const filename = this.getAttribute('data-filename');
+                    const filesize = this.getAttribute('data-filesize');
+
+                    // 更新模态框内容
+                    document.getElementById('download-filename').textContent = filename;
+                    document.getElementById('download-filesize').textContent =
+                        formatBytes(parseInt(filesize));
+
+                    // 重置下载进度
+                    document.getElementById('download-progress-container').classList.add('d-none');
+                    document.getElementById('download-progress-bar').style.width = '0%';
+                    document.getElementById('download-progress-bar').setAttribute('aria-valuenow', '0');
+                    document.getElementById('download-progress-text').textContent = '准备下载...';
+                    document.getElementById('download-speed-text').textContent = '0 KB/s';
+                    document.getElementById('download-eta-text').textContent = '--:--';
+                });
+            });
+
+            // 删除按钮事件处理
+            document.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const fileid = this.getAttribute('data-fileid');
+                    const filename = this.getAttribute('data-filename');
+                    const filetype = this.getAttribute('data-filetype');
+
+                    // 更新模态框内容
+                    document.getElementById('delete-filename').textContent = filename;
+                    document.getElementById('delete-filetype').textContent = filetype;
+
+                    // 设置删除按钮的data-fileid属性
+                    document.getElementById('confirm-delete').setAttribute('data-fileid', fileid);
+                });
+            });
+
+// 确认下载 - 使用Fetch API实现真实进度
+document.getElementById('confirm-download').addEventListener('click', async function() {
+    const filename = document.getElementById('download-filename').textContent;
+    const filesize = document.getElementById('download-filesize').textContent;
+
+    // 显示下载进度
+    document.getElementById('download-progress-container').classList.remove('d-none');
+    document.getElementById('download-progress-text').textContent = '正在连接服务器...';
+
+    // 禁用确认按钮
+    this.disabled = true;
+    this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 下载中...';
+
+    try {
+        // 发送请求
+        const response = await fetch(`{{ url_for('main.download_file', filename='') }}${filename}`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        // 获取文件大小
+        const contentLength = response.headers.get('Content-Length');
+        const total = parseInt(contentLength, 10);
+        let loaded = 0;
+
+        // 创建读取器
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let chunks = [];
+
+        // 记录开始时间，用于计算下载速度
+        const startTime = performance.now();
+
+        // 读取数据
+        while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+                break;
+            }
+
+            // 累加已下载大小
+            loaded += value.byteLength;
+            chunks.push(value);
+
+            // 计算下载进度
+            const percentComplete = Math.round((loaded / total) * 100);
+
+            // 计算下载速度 (KB/s)
+            const elapsedTime = (performance.now() - startTime) / 1000; // 秒
+            const speed = elapsedTime > 0 ? (loaded / 1024) / elapsedTime : 0;
+
+            // 计算预计剩余时间
+            const remainingBytes = total - loaded;
+            const eta = speed > 0 ? remainingBytes / (speed * 1024) : 0;
+
+            // 更新进度UI
+            document.getElementById('download-progress-bar').style.width = `${percentComplete}%`;
+            document.getElementById('download-progress-bar').setAttribute('aria-valuenow', percentComplete);
+            document.getElementById('download-progress-text').textContent = `下载中: ${percentComplete}%`;
+            document.getElementById('download-speed-text').textContent = `${speed.toFixed(1)} KB/s`;
+            document.getElementById('download-eta-text').textContent = formatTime(eta);
+        }
+
+        // 合并所有块
+        const blob = new Blob(chunks);
+
+        // 创建下载链接
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+
+        // 更新进度UI为完成状态
+        document.getElementById('download-progress-text').textContent = '下载完成！';
+        document.getElementById('download-speed-text').textContent = '完成';
+        document.getElementById('download-eta-text').textContent = '00:00';
+
+        // 清理并关闭模态框
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            // 使用更可靠的方式关闭模态框
+            const modalElement = document.getElementById('downloadModal');
+            const modalInstance = bootstrap.Modal.getInstance(modalElement);
+
+            if (modalInstance) {
+                modalInstance.hide();
+            } else {
+                // 如果实例不存在，则直接操作DOM
+                modalElement.classList.remove('show');
+                modalElement.setAttribute('aria-hidden', 'true');
+                modalElement.setAttribute('style', 'display: none');
+                document.body.classList.remove('modal-open');
+                const modalBackdrop = document.querySelector('.modal-backdrop');
+                if (modalBackdrop) {
+                    document.body.removeChild(modalBackdrop);
+                }
+            }
+
+            // 恢复按钮状态
+            this.disabled = false;
+            this.innerHTML = '<i class="fa fa-download me-1"></i> 确认下载';
+
+            // 重置进度条
+            setTimeout(() => {
+                document.getElementById('download-progress-container').classList.add('d-none');
+                document.getElementById('download-progress-bar').style.width = '0%';
+                document.getElementById('download-progress-bar').setAttribute('aria-valuenow', '0');
+            }, 500);
+
+        }, 1000); // 延长时间确保用户能看到完成状态
+
+    } catch (error) {
+        console.error('下载错误:', error);
+        document.getElementById('download-progress-text').textContent = '下载失败';
+        alert(`下载失败: ${error.message}`);
+
+        // 恢复按钮状态
+        this.disabled = false;
+        this.innerHTML = '<i class="fa fa-download me-1"></i> 确认下载';
+    }
+});
+
+            // 确认删除单个文件
+            document.getElementById('confirm-delete').addEventListener('click', function() {
+                const fileid = this.getAttribute('data-fileid');
+
+                // 禁用删除按钮
+                this.disabled = true;
+                this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 删除中...';
+
+                // 保持模态打开，显示删除中状态并禁用取消
+                const singleModalEl = document.getElementById('deleteModal');
+                const singleModalInstance = bootstrap.Modal.getInstance(singleModalEl);
+                const singleCancelBtn = singleModalEl.querySelector('.modal-footer .btn-secondary');
+                if (singleCancelBtn) {
+                    singleCancelBtn.disabled = true;
+                    singleCancelBtn.style.display = 'none';
+                }
+                let singleStatusEl = singleModalEl.querySelector('#single-delete-status');
+                if (!singleStatusEl) {
+                    singleStatusEl = document.createElement('div');
+                    singleStatusEl.id = 'single-delete-status';
+                    singleStatusEl.className = 'mt-2 text-danger d-flex align-items-center';
+                    singleStatusEl.innerHTML = '<span class="loader" style="display:inline-block"></span><span class="ms-2">正在删除，请稍候...</span>';
+                    singleModalEl.querySelector('.modal-body').appendChild(singleStatusEl);
+                } else {
+                    singleStatusEl.style.display = 'block';
+                    singleStatusEl.innerHTML = '<span class="loader" style="display:inline-block"></span><span class="ms-2">正在删除，请稍候...</span>';
+                }
+
+                // 发送删除请求（使用 POST，并携带会话凭证）
+                fetch(`{{ url_for('main.delete_file', file_id=0) }}`.replace('0', fileid), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRFToken': '{{ csrf_token() }}'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({})
+                })
+                .then(response => {
+                    if (response.ok) {
+                        // 删除成功，显示成功消息
+                        showMessage('文件删除成功', 'success');
+                        if (singleStatusEl) {
+                            singleStatusEl.style.display = 'block';
+                            singleStatusEl.innerHTML = '<span class="text-success"><i class="fa fa-check me-1"></i> 删除完成</span>';
+                        }
+                        // 成功后保持隐藏取消按钮
+                        if (singleCancelBtn) {
+                            singleCancelBtn.disabled = false;
+                            singleCancelBtn.style.display = 'none';
+                        }
+                        // 将按钮改为“完成”，点击后关闭并刷新
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-check me-1"></i> 完成';
+                        const selfBtn = this;
+                        selfBtn.onclick = function() {
+                            if (singleModalInstance) singleModalInstance.hide();
+                            location.reload();
+                        };
+                    } else {
+                        return response.json().catch(() => null).then(errData => {
+                            let msg = '删除失败';
+                            if (errData && errData.message) {
+                                msg = errData.message;
+                                if (errData.code === 'FROZEN_FILE' && errData.frozen_files && errData.frozen_files.length) {
+                                    msg += '：' + errData.frozen_files.join('、');
+                                }
+                            }
+                            throw new Error(msg);
+                        });
+                    }
+                })
+                .catch(error => {
+                    alert(`删除失败: ${error.message}`);
+                    // 重新启用删除按钮...
+                    if (singleStatusEl) {
+                        singleStatusEl.style.display = 'block';
+                        singleStatusEl.innerHTML = `<span class=\"text-danger\"><i class=\"fa fa-exclamation-circle me-1\"></i> 删除失败：${error.message}</span>`;
+                    }
+                    if (singleCancelBtn) {
+                        singleCancelBtn.disabled = false;
+                        singleCancelBtn.style.display = '';
+                    }
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-trash me-1"></i> 确认删除';
+                });
+            });
+
+            // 文件选择逻辑
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            const selectedCount = document.getElementById('selected-count');
+            const batchDeleteInfo = document.getElementById('batch-delete-info');
+            const cancelBatchBtn = document.getElementById('cancel-batch');
+            const batchDeleteModal = new bootstrap.Modal(document.getElementById('batchDeleteModal'));
+
+            // 更新选择状态
+            function updateSelectionState() {
+                const checkedCount = document.querySelectorAll('.file-checkbox:checked').length;
+                if (selectedCount) selectedCount.textContent = checkedCount;
+
+                // 更新批量删除按钮状态
+                batchDeleteBtn.disabled = checkedCount === 0;
+
+                // 更新全选复选框状态
+                const allBoxes = document.querySelectorAll('.file-checkbox');
+                if (allBoxes.length > 0 && selectAllCheckbox) {
+                    selectAllCheckbox.checked = checkedCount === allBoxes.length;
+                    selectAllCheckbox.indeterminate = checkedCount > 0 && checkedCount < allBoxes.length;
+                }
+
+                // 显示/隐藏批量删除信息
+                if (checkedCount > 0) {
+                    batchDeleteInfo.style.display = 'block';
+                } else {
+                    batchDeleteInfo.style.display = 'none';
+                }
+            }
+
+            // 全选复选框事件
+            if (selectAllCheckbox) selectAllCheckbox.addEventListener('change', function() {
+                const isChecked = this.checked;
+                
+                // 清除全局选择状态，因为用户手动操作本页全选复选框
+                window.globalSelectionIds = [];
+                
+                // 更新当前页面的所有复选框
+                document.querySelectorAll('.file-checkbox').forEach(checkbox => {
+                    checkbox.checked = isChecked;
+                    const row = checkbox.closest('tr');
+                    if (isChecked) {
+                        row.classList.add('selected-row');
+                    } else {
+                        row.classList.remove('selected-row');
+                    }
+                });
+                
+                updateSelectionState();
+                updateSelectedCount();
+                updateBatchDeleteButton();
+            });
+
+            // 取消批量选择
+            cancelBatchBtn.addEventListener('click', function() {
+                document.querySelectorAll('.file-checkbox').forEach(checkbox => {
+                    checkbox.checked = false;
+                    checkbox.closest('tr').classList.remove('selected-row');
+                });
+                updateSelectionState();
+            });
+
+            // 注意：批量删除按钮的主要事件监听器已在上面定义，这里不需要重复定义
+
+            // 确认批量删除 - 优化错误处理和CSRF获取
+            document.getElementById('confirm-batch-delete').addEventListener('click', function() {
+                const fileIdsAttr = this.getAttribute('data-fileids');
+
+                // 验证文件ID是否存在
+                if (!fileIdsAttr || fileIdsAttr.trim() === '') {
+                    alert('没有选择要删除的文件');
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-trash me-1"></i> 确认删除';
+                    return;
+                }
+
+                const fileIds = fileIdsAttr.split(',');
+
+                // 保持模态框打开并显示“删除中”状态
+                const modalElement = document.getElementById('batchDeleteModal');
+                const modalInstance = bootstrap.Modal.getInstance(modalElement);
+                // 禁用取消按钮，防止中途关闭
+                const cancelBtn = modalElement.querySelector('.modal-footer .btn-secondary');
+                if (cancelBtn) {
+                    cancelBtn.disabled = true;
+                    cancelBtn.style.display = 'none';
+                }
+
+                // 禁用删除按钮
+                this.disabled = true;
+                this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 删除中...';
+                // 在模态框内显示进度提示
+                let statusEl = modalElement.querySelector('#batch-delete-status');
+                if (!statusEl) {
+                    statusEl = document.createElement('div');
+                    statusEl.id = 'batch-delete-status';
+                    statusEl.className = 'mt-2 text-danger d-flex align-items-center';
+                    statusEl.innerHTML = '<span class="loader" style="display:inline-block"></span><span class="ms-2">正在删除，请稍候...</span>';
+                    modalElement.querySelector('.modal-body').appendChild(statusEl);
+                } else {
+                    statusEl.style.display = 'block';
+                    statusEl.innerHTML = '<span class="loader" style="display:inline-block"></span><span class="ms-2">正在删除，请稍候...</span>';
+                }
+                
+                // 显示删除进度提示（页面右上角）
+                showMessage(`正在删除 ${fileIds.length} 个文件，请稍候...`, 'info');
+
+                // 获取CSRF令牌 - 优化获取逻辑
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ||
+                                  document.querySelector('input[name="csrf_token"]')?.value ||
+                                  document.cookie.split('; ').find(row => row.startsWith('csrf_token='))?.split('=')[1] ||
+                                  '';
+
+                // 检查CSRF令牌是否存在
+                if (!csrfToken) {
+                    alert('无法获取CSRF令牌，请刷新页面后重试');
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-trash me-1"></i> 确认删除';
+                    return;
+                }
+
+                // 发送批量删除请求
+                fetch('{{ url_for('main.batch_delete_files') }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        file_ids: fileIds
+                    })
+                })
+                .then(async response => {
+                    if (!response.ok) {
+                        let msg = `服务器返回错误: ${response.status}`;
+                        try {
+                            const errData = await response.json();
+                            if (errData && errData.message) {
+                                msg = errData.message;
+                                if (errData.code === 'FROZEN_FILE' && errData.frozen_files && errData.frozen_files.length) {
+                                    const names = errData.frozen_files.slice(0, 5).join('、');
+                                    msg += '：' + names + (errData.frozen_files.length > 5 ? ` 等 ${errData.frozen_files.length} 个文件` : '');
+                                }
+                            }
+                        } catch (e) {}
+                        throw new Error(msg);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('响应数据:', data);
+                    const info = (data && typeof data === 'object')
+                        ? `删除成功：${data.deleted_count || 0} 个文件`
+                        : '删除完成';
+                    // 立即更新页面：移除被删除的行
+                    try {
+                        (fileIds || []).forEach(id => {
+                            const row = document.querySelector(`tr[data-fileid="${id}"]`);
+                            if (row && row.parentNode) {
+                                row.parentNode.removeChild(row);
+                            }
+                        });
+                        // 隐藏顶部批量删除提示区域
+                        const batchDeleteInfo = document.getElementById('batch-delete-info');
+                        if (batchDeleteInfo) batchDeleteInfo.style.display = 'none';
+                        const selectAllCheckboxReset = document.getElementById('selectAllCheckbox');
+                        if (selectAllCheckboxReset) selectAllCheckboxReset.checked = false;
+                        // 显示成功消息
+                        showMessage(info, 'success');
+                        // 在模态内显示完成状态，不自动关闭
+                        if (statusEl) {
+                            statusEl.style.display = 'block';
+                            statusEl.innerHTML = '<span class="text-success"><i class="fa fa-check me-1"></i> 批量删除完成</span>';
+                        }
+                        // 成功后保持隐藏取消按钮
+                        if (cancelBtn) {
+                            cancelBtn.disabled = false;
+                            cancelBtn.style.display = 'none';
+                        }
+                        
+                        // 清除之前的进度提示
+                        const progressMessages = document.querySelectorAll('.alert-info');
+                        progressMessages.forEach(msg => {
+                            if (msg.textContent.includes('正在删除') && msg.parentNode) {
+                                msg.parentNode.removeChild(msg);
+                            }
+                        });
+                        
+                        // 将按钮改为“完成”，点击后关闭并刷新
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-check me-1"></i> 完成';
+                        const selfBtn = this;
+                        selfBtn.onclick = function() {
+                            if (modalInstance) modalInstance.hide();
+                            location.reload();
+                        };
+                        
+
+                    } catch (e) {
+                        console.warn('更新页面显示失败：', e);
+                        // 出现异常也尽量恢复按钮状态
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-trash me-1"></i> 确认删除';
+                    }
+                })
+                .catch(error => {
+                    console.error('删除过程中发生错误:', error);
+                    
+                    // 清除进度提示
+                    const progressMessages = document.querySelectorAll('.alert-info');
+                    progressMessages.forEach(msg => {
+                        if (msg.textContent.includes('正在删除') && msg.parentNode) {
+                            msg.parentNode.removeChild(msg);
+                        }
+                    });
+                    
+                    // 显示错误消息
+                    showMessage(`批量删除失败: ${error.message}`, 'danger');
+                    // 恢复模态内状态
+                    if (statusEl) {
+                        statusEl.style.display = 'block';
+                        statusEl.innerHTML = `<span class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> 删除失败：${error.message}</span>`;
+                    }
+                    if (cancelBtn) {
+                        cancelBtn.disabled = false;
+                        cancelBtn.style.display = '';
+                    }
+                    
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-trash me-1"></i> 确认删除';
+                });
+            });
+
+
+            // 下载文件清单明细
+            const downloadFileListBtn = document.getElementById('download-file-list');
+            if (downloadFileListBtn) {
+                downloadFileListBtn.addEventListener('click', async function() {
+                    try {
+                        // 防抖并给出loading态
+                        downloadFileListBtn.disabled = true;
+                        downloadFileListBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 生成中...';
+
+                        const resp = await fetch('{{ url_for('main.file_list_download') }}', {
+                            method: 'POST',
+                            headers: {
+                                'X-CSRFToken': '{{ csrf_token() }}',
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({})
+                        });
+
+                        if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({}));
+                            throw new Error(err.error || `HTTP ${resp.status}`);
+                        }
+
+                        const blob = await resp.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `file_list_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.xlsx`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                    } catch (e) {
+                        alert('下载文件清单失败：' + e.message);
+                    } finally {
+                        downloadFileListBtn.disabled = false;
+                        downloadFileListBtn.innerHTML = '<i class="fa fa-list me-1"></i> 下载文件清单明细';
+                    }
+                });
+            }
+
+            // 权限检查 - 在页面加载时隐藏没有权限的按钮
+            // 检查用户是否有批量删除权限
+            fetch('{{ url_for('main.get_user_permissions', user_id=session['user_id']) }}', { credentials: 'same-origin' })
+                .then(response => response.json())
+                .then(data => {
+                    const permissions = data.permissions || [];
+                    // 如果是管理员，默认有所有权限；否则检查具体权限
+                    const isAdmin = {{ session.get('is_admin') | tojson }};
+                    const hasBatchDeletePermission = isAdmin || permissions.includes('can_batch_delete');
+                    const hasDeletePermission = isAdmin || permissions.includes('can_file_management_delete');
+
+                    // 显示/隐藏批量删除按钮
+                    if (batchDeleteBtn) {
+                        batchDeleteBtn.style.display = hasBatchDeletePermission ? 'inline-block' : 'none';
+                    }
+                    // 显示/隐藏按文件名批量删除按钮
+                    const batchDeleteByFilenameBtn = document.getElementById('batchDeleteByFilenameBtn');
+                    if (batchDeleteByFilenameBtn) {
+                        batchDeleteByFilenameBtn.style.display = hasBatchDeletePermission ? 'inline-block' : 'none';
+                    }
+                    // 显示/隐藏全选按钮
+                    const selectAllBtn = document.getElementById('selectAllBtn');
+                    if (selectAllBtn) {
+                        selectAllBtn.style.display = hasBatchDeletePermission ? 'inline-block' : 'none';
+                    }
+                    // 显示/隐藏取消批量删除按钮
+                    const cancelBatchDeleteBtn = document.getElementById('cancelBatchDeleteBtn');
+                    if (cancelBatchDeleteBtn) {
+                        cancelBatchDeleteBtn.style.display = hasBatchDeletePermission ? 'inline-block' : 'none';
+                    }
+                    
+                    // 批量冻结/解冻按钮在进入批量选择模式时显示
+                    const hasFreezePermission = isAdmin || permissions.includes('can_file_management_freeze');
+                    const batchFreezeBtn = document.getElementById('batchFreezeBtn');
+                    const batchThawBtn = document.getElementById('batchThawBtn');
+                    // 始终显示（有权限时）
+                    if (batchFreezeBtn && hasFreezePermission) {
+                        batchFreezeBtn.style.display = 'inline-block';
+                    }
+                    if (batchThawBtn && hasFreezePermission) {
+                        batchThawBtn.style.display = 'inline-block';
+                    }
+                    
+                    // 显示/隐藏单个删除按钮（如果有删除权限）
+                    document.querySelectorAll('.delete-btn').forEach(btn => {
+                        btn.style.display = hasDeletePermission ? 'inline-block' : 'none';
+                    });
+                    
+                    // 显示/隐藏单个冻结按钮（如果有冻结权限）
+                    if (hasFreezePermission) {
+                        document.querySelectorAll('.freeze-btn').forEach(btn => {
+                            btn.style.display = 'inline-block';
+                        });
+                        document.querySelectorAll('.thaw-btn').forEach(btn => {
+                            btn.style.display = 'inline-block';
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('获取用户权限失败:', error);
+                    // 如果获取权限失败，对于管理员用户，默认显示所有按钮
+                    const isAdmin = {{ session.get('is_admin') | tojson }};
+                    if (isAdmin) {
+                        if (batchDeleteBtn) batchDeleteBtn.style.display = 'inline-block';
+                        const batchDeleteByFilenameBtn = document.getElementById('batchDeleteByFilenameBtn');
+                        if (batchDeleteByFilenameBtn) batchDeleteByFilenameBtn.style.display = 'inline-block';
+                        const selectAllBtn = document.getElementById('selectAllBtn');
+                        if (selectAllBtn) selectAllBtn.style.display = 'inline-block';
+                        const cancelBatchDeleteBtn = document.getElementById('cancelBatchDeleteBtn');
+                        if (cancelBatchDeleteBtn) cancelBatchDeleteBtn.style.display = 'inline-block';
+                    }
+                });
+            
+            // 按文件名批量删除功能
+            const confirmBatchDeleteByFilename = document.getElementById('confirm-batch-delete-by-filename');
+            if (confirmBatchDeleteByFilename) {
+                confirmBatchDeleteByFilename.addEventListener('click', function() {
+                    const filenamesTextarea = document.getElementById('batch-filenames');
+                    const filenamesInput = filenamesTextarea.value.trim();
+                    
+                    if (!filenamesInput) {
+                        alert('请输入要删除的文件名');
+                        return;
+                    }
+                    
+                    // 解析输入的文件名
+                    const filenames = filenamesInput.split('\n')
+                        .map(filename => filename.trim())
+                        .filter(filename => filename !== '');
+                    
+                    if (filenames.length === 0) {
+                        alert('请输入有效的文件名');
+                        return;
+                    }
+                    
+                    // 禁用删除按钮
+                    this.disabled = true;
+                    this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 删除中...';
+                    
+                    // 保持模态打开，显示删除中状态并禁用取消
+                    const modalEl = document.getElementById('batchDeleteByFilenameModal');
+                    const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                    const cancelBtn = modalEl.querySelector('.modal-footer .btn-secondary');
+                    if (cancelBtn) {
+                        cancelBtn.disabled = true;
+                        cancelBtn.style.display = 'none';
+                    }
+                    
+                    let statusEl = modalEl.querySelector('#batch-delete-by-filename-status');
+                    if (!statusEl) {
+                        statusEl = document.createElement('div');
+                        statusEl.id = 'batch-delete-by-filename-status';
+                        statusEl.className = 'mt-2 text-danger d-flex align-items-center';
+                        statusEl.innerHTML = '<span class="loader" style="display:inline-block"></span><span class="ms-2">正在删除，请稍候...</span>';
+                        modalEl.querySelector('.modal-body').appendChild(statusEl);
+                    } else {
+                        statusEl.style.display = 'block';
+                        statusEl.innerHTML = '<span class="loader" style="display:inline-block"></span><span class="ms-2">正在删除，请稍候...</span>';
+                    }
+                    
+                    // 获取CSRF令牌
+                    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ||
+                                      document.querySelector('input[name="csrf_token"]')?.value ||
+                                      document.cookie.split('; ').find(row => row.startsWith('csrf_token='))?.split('=')[1] ||
+                                      '';
+                    
+                    // 检查CSRF令牌是否存在
+                    if (!csrfToken) {
+                        alert('无法获取CSRF令牌，请刷新页面后重试');
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-trash me-1"></i> 确认删除';
+                        return;
+                    }
+                    
+                    // 发送批量删除请求
+                    fetch('{{ url_for('main.batch_delete_files_by_filename') }}', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': csrfToken
+                        },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({
+                            filenames: filenames
+                        })
+                    })
+                    .then(async response => {
+                        if (!response.ok) {
+                            let msg = `服务器返回错误: ${response.status}`;
+                            try {
+                                const errData = await response.json();
+                                if (errData && errData.message) {
+                                    msg = errData.message;
+                                    if (errData.code === 'FROZEN_FILE' && errData.frozen_files && errData.frozen_files.length) {
+                                        const names = errData.frozen_files.slice(0, 5).join('、');
+                                        msg += '：' + names + (errData.frozen_files.length > 5 ? ` 等 ${errData.frozen_files.length} 个文件` : '');
+                                    }
+                                }
+                            } catch (e) {}
+                            throw new Error(msg);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        console.log('响应数据:', data);
+                        const info = (data && typeof data === 'object')
+                            ? `删除成功：${data.deleted_count || 0} 个文件`
+                            : '删除完成';
+                        
+                        // 显示成功消息
+                        showMessage(info, 'success');
+                        
+                        // 在模态内显示完成状态，不自动关闭
+                        if (statusEl) {
+                            statusEl.style.display = 'block';
+                            statusEl.innerHTML = '<span class="text-success"><i class="fa fa-check me-1"></i> 批量删除完成</span>';
+                        }
+                        
+                        // 将按钮改为“完成”，点击后关闭并刷新
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-check me-1"></i> 完成';
+                        const selfBtn = this;
+                        selfBtn.onclick = function() {
+                            if (modalInstance) modalInstance.hide();
+                            location.reload();
+                        };
+                    })
+                    .catch(error => {
+                        console.error('删除过程中发生错误:', error);
+                        
+                        // 显示错误消息
+                        showMessage(`批量删除失败: ${error.message}`, 'danger');
+                        
+                        // 恢复模态内状态
+                        if (statusEl) {
+                            statusEl.style.display = 'block';
+                            statusEl.innerHTML = `<span class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> 删除失败：${error.message}</span>`;
+                        }
+                        if (cancelBtn) {
+                            cancelBtn.disabled = false;
+                            cancelBtn.style.display = '';
+                        }
+                        
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-trash me-1"></i> 确认删除';
+                    });
+                });
+            }
+        });
+
+        // 进入批量删除模式
+        function enterBatchDeleteMode() {
+            console.log('进入批量删除模式');
+            
+            // 显示复选框列
+            const checkboxColumns = document.querySelectorAll('.checkbox-column');
+            console.log('找到复选框列数量:', checkboxColumns.length);
+            checkboxColumns.forEach(col => {
+                col.style.display = 'table-cell';
+            });
+            
+            // 显示全选按钮和取消按钮
+            const selectAllBtn = document.getElementById('selectAllBtn');
+            const cancelBtn = document.getElementById('cancelBatchDeleteBtn');
+            console.log('全选按钮:', selectAllBtn);
+            console.log('取消按钮:', cancelBtn);
+            
+            if (selectAllBtn) selectAllBtn.style.display = 'inline-block';
+            if (cancelBtn) cancelBtn.style.display = 'inline-block';
+            
+            // 更新批量删除按钮
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            console.log('批量删除按钮:', batchDeleteBtn);
+            if (batchDeleteBtn) {
+                batchDeleteBtn.innerHTML = '<i class="fa fa-trash me-1"></i>执行删除';
+                batchDeleteBtn.className = 'btn btn-danger btn-sm';
+                batchDeleteBtn.setAttribute('data-mode', 'execute');
+                batchDeleteBtn.disabled = true; // 初始状态禁用
+            }
+            
+            // 批量冻结/解冻按钮始终显示，无需处理
+            
+            // 显示批量删除信息
+            const batchDeleteInfo = document.getElementById('batch-delete-info');
+            console.log('批量删除信息元素:', batchDeleteInfo);
+            if (batchDeleteInfo) {
+                batchDeleteInfo.style.display = 'block';
+            }
+            
+            window.isBatchDeleteMode = true;
+            
+            // 初始化全选按钮文本
+            updateSelectAllButtonText();
+            
+            console.log('批量删除模式已激活');
+        }
+
+        // 退出批量删除模式
+        function exitBatchDeleteMode() {
+            // 隐藏复选框列
+            const checkboxColumns = document.querySelectorAll('.checkbox-column');
+            checkboxColumns.forEach(col => {
+                col.style.display = 'none';
+            });
+            
+            // 隐藏全选按钮和取消按钮
+            document.getElementById('selectAllBtn').style.display = 'none';
+            document.getElementById('cancelBatchDeleteBtn').style.display = 'none';
+            
+            // 恢复批量删除按钮
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            batchDeleteBtn.innerHTML = '<i class="fa fa-trash me-1"></i>批量删除';
+            batchDeleteBtn.className = 'btn btn-outline-danger btn-sm';
+            batchDeleteBtn.setAttribute('data-mode', 'enter');
+            batchDeleteBtn.disabled = false; // 重新启用按钮
+            
+            // 批量冻结/解冻按钮始终显示，无需处理
+            
+            // 隐藏批量删除信息
+            document.getElementById('batch-delete-info').style.display = 'none';
+            
+            // 清除所有选择状态（包括全局选择）
+            clearAllSelection();
+            window.isBatchDeleteMode = false;
+        }
+
+        // 重置复选框选择状态
+        function resetCheckboxSelection() {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            if (selectAllCheckbox) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            }
+            // 清除全局选择状态
+            window.globalSelectionIds = [];
+            updateSelectedCount();
+        }
+
+        // 选择所有数据（包括所有页面）
+        function selectAllData() {
+            const currentPageIds = Array.from(document.querySelectorAll('.file-checkbox')).map(checkbox => checkbox.value);
+            
+            // 获取所有页面的文件ID
+            getAllFileIds().then(allIds => {
+                // 设置全局选择状态
+                window.globalSelectionIds = [...allIds]; // 使用展开运算符创建新数组
+                
+                // 设置当前页面的复选框为选中状态
+                const checkboxes = document.querySelectorAll('.file-checkbox');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = true;
+                });
+                
+                // 设置全选复选框状态
+                const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+                if (selectAllCheckbox) {
+                    selectAllCheckbox.checked = true;
+                    selectAllCheckbox.indeterminate = false;
+                }
+                
+                // 更新状态
+                updateSelectedCount();
+                updateBatchDeleteButton();
+                
+                // 更新全选按钮文本
+                updateSelectAllButtonText();
+                
+                // 显示选择提示
+                showSelectionInfo(allIds.length);
+            }).catch(error => {
+                console.error('获取所有文件ID失败:', error);
+                // 如果获取失败，至少选择当前页
+                selectCurrentPageOnly();
+            });
+        }
+
+        // 取消选择所有数据
+        function clearAllSelection() {
+            // 清除全局选择状态
+            window.globalSelectionIds = [];
+            
+            // 取消选择当前页面的所有复选框
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            
+            // 设置全选复选框状态
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            if (selectAllCheckbox) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            }
+            
+            // 恢复批量删除信息的原始HTML结构
+            const batchDeleteInfo = document.getElementById('batch-delete-info');
+            if (batchDeleteInfo) {
+                batchDeleteInfo.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <span id="selected-count">0</span> 个文件已选择
+                        </div>
+                        <button type="button" id="cancel-batch" class="btn btn-sm btn-outline-secondary">
+                            <i class="fa fa-times"></i> 取消选择
+                        </button>
+                    </div>
+                `;
+                
+                // 重新绑定取消选择按钮事件
+                const cancelBatchBtn = document.getElementById('cancel-batch');
+                if (cancelBatchBtn) {
+                    cancelBatchBtn.addEventListener('click', function() {
+                        clearAllSelection();
+                    });
+                }
+            }
+            
+            // 更新状态
+            updateSelectedCount();
+            updateBatchDeleteButton();
+            
+            // 更新全选按钮文本
+            updateSelectAllButtonText();
+        }
+
+        // 只选择当前页面的数据
+        function selectCurrentPageOnly() {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = true;
+            });
+            
+            // 设置全选复选框状态
+            document.getElementById('selectAllCheckbox').checked = true;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            
+            // 更新状态
+            updateSelectedCount();
+            updateBatchDeleteButton();
+        }
+
+        // 获取所有页面的文件信息
+        function getAllFileIds() {
+            // 获取当前的搜索参数
+            const searchParams = new URLSearchParams();
+            const searchFilename = document.getElementById('search_filename')?.value || '';
+            const searchVehicleType = document.getElementById('search_vehicle_type')?.value || '';
+            const searchFileType = document.getElementById('search_file_type')?.value || '';
+            const searchEo = document.getElementById('search_eo')?.value || '';
+            
+            if (searchFilename) searchParams.append('search', searchFilename);
+            if (searchVehicleType) searchParams.append('vehicle_type', searchVehicleType);
+            if (searchFileType) searchParams.append('type', searchFileType);
+            if (searchEo) searchParams.append('eo', searchEo);
+            
+            // 先获取所有文件ID
+            return fetch('{{ url_for("main.get_all_file_ids") }}?' + searchParams.toString())
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.file_ids) {
+                        const fileIds = data.file_ids.map(id => id.toString());
+                        
+                        // 如果文件数量不太多（<1000），获取精简文件信息用于显示
+                        // 性能优化：改用 all_slim 接口，仅返回 id/filename/file_type/is_frozen，
+                        // 避免 per_page=999999 加载完整字段与关联对象。
+                        if (fileIds.length < 1000) {
+                            return fetch('{{ url_for("main.get_all_files_slim") }}?' + searchParams.toString())
+                                .then(response => response.json())
+                                .then(fullData => {
+                                    if (fullData.success && fullData.items) {
+                                        window.allFilesData = fullData.items;
+                                    }
+                                    return fileIds;
+                                });
+                        } else {
+                            // 文件数量太多时，不获取完整信息，批量删除时会显示简化信息
+                            window.allFilesData = null;
+                            return fileIds;
+                        }
+                    } else {
+                        throw new Error('获取文件ID失败');
+                    }
+                });
+        }
+
+        // 显示选择信息
+        function showSelectionInfo(count) {
+            const info = document.getElementById('batch-delete-info');
+            info.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="fa fa-info-circle me-2"></i>已选择 ${count} 个文件（包括所有页面）
+                    </div>
+                    <button type="button" id="cancel-batch" class="btn btn-sm btn-outline-secondary">
+                        <i class="fa fa-times"></i> 取消选择
+                    </button>
+                </div>
+            `;
+            
+            // 重新绑定取消选择按钮事件
+            const cancelBatchBtn = document.getElementById('cancel-batch');
+            if (cancelBatchBtn) {
+                cancelBatchBtn.addEventListener('click', function() {
+                    clearAllSelection();
+                });
+            }
+        }
+
+        // 更新选中数量显示
+        function updateSelectedCount() {
+            let selectedCount = 0;
+            
+            // 如果有全局选择，使用全局选择的数量
+            if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                selectedCount = window.globalSelectionIds.length;
+            } else {
+                // 否则使用当前页面选中的数量
+                selectedCount = document.querySelectorAll('.file-checkbox:checked').length;
+            }
+            
+            const selectedCountElement = document.getElementById('selected-count');
+            if (selectedCountElement) {
+                selectedCountElement.textContent = selectedCount;
+            }
+        }
+
+        // 更新批量删除按钮状态
+        function updateBatchDeleteButton() {
+            let selectedCount = 0;
+            
+            // 如果有全局选择，使用全局选择的数量
+            if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                selectedCount = window.globalSelectionIds.length;
+            } else {
+                // 否则使用当前页面选中的数量
+                selectedCount = document.querySelectorAll('.file-checkbox:checked').length;
+            }
+            
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            
+            if (batchDeleteBtn.innerHTML.includes('执行删除')) {
+                batchDeleteBtn.disabled = selectedCount === 0;
+            }
+        }
+
+        // 更新全选按钮文本
+        function updateSelectAllButtonText() {
+            const selectAllBtnText = document.getElementById('selectAllBtnText');
+            if (!selectAllBtnText) return;
+            
+            // 检查当前是否有全局选择状态
+            const hasGlobalSelection = window.globalSelectionIds && 
+                                     Array.isArray(window.globalSelectionIds) && 
+                                     window.globalSelectionIds.length > 0;
+            
+            if (hasGlobalSelection) {
+                selectAllBtnText.textContent = '取消全选';
+            } else {
+                selectAllBtnText.textContent = '全选';
+            }
+        }
+
+        // 更新全选复选框状态
+        function updateSelectAllCheckbox() {
+            const totalCheckboxes = document.querySelectorAll('.file-checkbox');
+            const checkedCheckboxes = document.querySelectorAll('.file-checkbox:checked');
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            
+            if (!selectAllCheckbox) return;
+            
+            // 检查是否有有效的全局选择状态
+            const hasGlobalSelection = window.globalSelectionIds && 
+                                     Array.isArray(window.globalSelectionIds) && 
+                                     window.globalSelectionIds.length > 0;
+            
+            // 如果有全局选择，全选复选框应该是选中状态
+            if (hasGlobalSelection) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = true;
+                return;
+            }
+            
+            // 否则按当前页面状态更新
+            if (checkedCheckboxes.length === 0) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = false;
+            } else if (checkedCheckboxes.length === totalCheckboxes.length) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = true;
+            } else {
+                selectAllCheckbox.indeterminate = true;
+                selectAllCheckbox.checked = false;
+            }
+        }
+
+        // 执行批量删除
+        function executeBatchDelete() {
+            let selectedFileIds = [];
+            
+            // 如果有全局选择，使用全局选择的ID
+            if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                selectedFileIds = window.globalSelectionIds;
+            } else {
+                // 否则使用当前页面选中的ID
+                selectedFileIds = Array.from(document.querySelectorAll('.file-checkbox:checked'))
+                    .map(checkbox => checkbox.value);
+            }
+
+            if (selectedFileIds.length === 0) {
+                alert('请先选择要删除的文件');
+                return;
+            }
+
+            // 冻结文件禁止删除：收集选中项中的冻结文件并排除
+            const frozenIds = new Set();
+            if (window.globalSelectionIds && window.globalSelectionIds.length > 0
+                && window.allFilesData && Array.isArray(window.allFilesData)) {
+                window.allFilesData.forEach(f => {
+                    if (f && f.is_frozen) frozenIds.add(String(f.id));
+                });
+            } else {
+                document.querySelectorAll('tr.file-item[data-frozen="true"]').forEach(tr => {
+                    const cb = tr.querySelector('.file-checkbox');
+                    if (cb && cb.checked) frozenIds.add(String(tr.getAttribute('data-fileid')));
+                });
+            }
+            if (frozenIds.size > 0) {
+                const before = selectedFileIds.length;
+                selectedFileIds = selectedFileIds.filter(id => !frozenIds.has(String(id)));
+                showMessage(`已自动排除 ${before - selectedFileIds.length} 个冻结文件（冻结文件需先解冻才能删除）`, 'warning');
+                if (selectedFileIds.length === 0) {
+                    alert('选中的文件均为冻结状态，无法删除。请先解冻后再操作。');
+                    return;
+                }
+            }
+
+            // 过滤空ID，避免计数异常
+            selectedFileIds = (selectedFileIds || []).map(id => String(id)).filter(id => id && id.trim().length > 0);
+            // 先行更新计数（限定在模态内查找目标元素）
+            const countElEarly = document.querySelector('#batchDeleteModal #batch-delete-count');
+            if (countElEarly) countElEarly.textContent = selectedFileIds.length;
+
+            // 显示选中的文件名
+            const batchDeleteFiles = document.getElementById('batch-delete-files');
+            batchDeleteFiles.innerHTML = '';
+
+            // 检查是否是全局选择
+            const isGlobalSelection = window.globalSelectionIds && 
+                                    Array.isArray(window.globalSelectionIds) && 
+                                    window.globalSelectionIds.length > 0;
+
+            if (isGlobalSelection) {
+                // 全局选择时，使用保存的完整文件信息显示所有文件
+                if (window.allFilesData && Array.isArray(window.allFilesData)) {
+                    // 创建折叠容器
+                    const collapsibleContainer = document.createElement('div');
+                    collapsibleContainer.className = 'collapsible-file-list';
+                    
+                    // 创建折叠按钮
+                    const toggleButton = document.createElement('button');
+                    toggleButton.type = 'button';
+                    toggleButton.className = 'btn btn-link btn-sm p-0 mb-2';
+                    toggleButton.innerHTML = `
+                        <i class="fa fa-chevron-down me-1"></i>
+                        查看选中的 ${selectedFileIds.length} 个文件
+                    `;
+                    
+                    // 创建文件列表容器
+                    const fileListContainer = document.createElement('div');
+                    fileListContainer.className = 'file-list-content';
+                    fileListContainer.style.display = 'none';
+                    
+                    // 添加文件到列表
+                    selectedFileIds.forEach((fileId, index) => {
+                        const fileData = window.allFilesData.find(file => file.id.toString() === fileId);
+                        
+                        if (fileData) {
+                            const fileInfo = document.createElement('div');
+                            fileInfo.className = 'mb-1';
+                            fileInfo.innerHTML = `
+                                <span class="text-muted me-2">${index + 1}.</span>
+                                <span class="font-weight-bold">${fileData.filename}</span>
+                                <span class="text-muted ml-2">(${fileData.file_type})</span>
+                            `;
+                            fileListContainer.appendChild(fileInfo);
+                        } else {
+                            const fileInfo = document.createElement('div');
+                            fileInfo.className = 'mb-1 text-warning';
+                            fileInfo.innerHTML = `
+                                <span class="text-muted me-2">${index + 1}.</span>
+                                <span class="font-weight-bold">ID:${fileId}</span>
+                                <span class="text-muted ml-2">(文件信息获取失败)</span>
+                            `;
+                            fileListContainer.appendChild(fileInfo);
+                        }
+                    });
+                    
+                    // 绑定折叠按钮事件
+                    toggleButton.addEventListener('click', function() {
+                        const icon = this.querySelector('i');
+                        const content = fileListContainer;
+                        
+                        if (content.style.display === 'none') {
+                            content.style.display = 'block';
+                            icon.className = 'fa fa-chevron-up me-1';
+                        } else {
+                            content.style.display = 'none';
+                            icon.className = 'fa fa-chevron-down me-1';
+                        }
+                    });
+                    
+                    // 组装折叠容器
+                    collapsibleContainer.appendChild(toggleButton);
+                    collapsibleContainer.appendChild(fileListContainer);
+                    batchDeleteFiles.appendChild(collapsibleContainer);
+                } else {
+                    // 如果没有保存的文件数据，显示简化信息
+                    const summaryInfo = document.createElement('div');
+                    summaryInfo.className = 'mb-3 p-3 bg-light rounded';
+                    summaryInfo.innerHTML = `
+                        <div class="d-flex align-items-center">
+                            <i class="fa fa-info-circle text-info me-2"></i>
+                            <div>
+                                <div class="font-weight-bold">已选择 ${selectedFileIds.length} 个文件</div>
+                                <div class="text-muted small">文件数量较多，将批量删除所有选中的文件</div>
+                            </div>
+                        </div>
+                    `;
+                    batchDeleteFiles.appendChild(summaryInfo);
+                }
+            } else {
+                // 当前页面选择时，根据文件数量决定是否使用折叠
+                if (selectedFileIds.length > 5) {
+                    // 文件数量较多时，使用折叠显示
+                    const collapsibleContainer = document.createElement('div');
+                    collapsibleContainer.className = 'collapsible-file-list';
+                    
+                    // 创建折叠按钮
+                    const toggleButton = document.createElement('button');
+                    toggleButton.type = 'button';
+                    toggleButton.className = 'btn btn-link btn-sm p-0 mb-2';
+                    toggleButton.innerHTML = `
+                        <i class="fa fa-chevron-down me-1"></i>
+                        查看选中的 ${selectedFileIds.length} 个文件
+                    `;
+                    
+                    // 创建文件列表容器
+                    const fileListContainer = document.createElement('div');
+                    fileListContainer.className = 'file-list-content';
+                    fileListContainer.style.display = 'none';
+                    
+                    // 添加文件到列表
+                    selectedFileIds.forEach((fileId, index) => {
+                        const row = document.querySelector(`tr[data-fileid="${fileId}"]`);
+                        if (row) {
+                            const filename = row.querySelector('.font-weight-bold')?.textContent || `ID:${fileId}`;
+                            const filetype = row.querySelector('.badge')?.textContent || '未知类型';
+
+                            const fileInfo = document.createElement('div');
+                            fileInfo.className = 'mb-1';
+                            fileInfo.innerHTML = `
+                                <span class="text-muted me-2">${index + 1}.</span>
+                                <span class="font-weight-bold">${filename}</span>
+                                <span class="text-muted ml-2">(${filetype})</span>
+                            `;
+                            fileListContainer.appendChild(fileInfo);
+                        }
+                    });
+                    
+                    // 绑定折叠按钮事件
+                    toggleButton.addEventListener('click', function() {
+                        const icon = this.querySelector('i');
+                        const content = fileListContainer;
+                        
+                        if (content.style.display === 'none') {
+                            content.style.display = 'block';
+                            icon.className = 'fa fa-chevron-up me-1';
+                        } else {
+                            content.style.display = 'none';
+                            icon.className = 'fa fa-chevron-down me-1';
+                        }
+                    });
+                    
+                    // 组装折叠容器
+                    collapsibleContainer.appendChild(toggleButton);
+                    collapsibleContainer.appendChild(fileListContainer);
+                    batchDeleteFiles.appendChild(collapsibleContainer);
+                } else {
+                    // 文件数量较少时，直接显示
+                    selectedFileIds.forEach((fileId, index) => {
+                        const row = document.querySelector(`tr[data-fileid="${fileId}"]`);
+                        if (row) {
+                            const filename = row.querySelector('.font-weight-bold')?.textContent || `ID:${fileId}`;
+                            const filetype = row.querySelector('.badge')?.textContent || '未知类型';
+
+                            const fileInfo = document.createElement('div');
+                            fileInfo.className = 'mb-1';
+                            fileInfo.innerHTML = `
+                                <span class="text-muted me-2">${index + 1}.</span>
+                                <span class="font-weight-bold">${filename}</span>
+                                <span class="text-muted ml-2">(${filetype})</span>
+                            `;
+                            batchDeleteFiles.appendChild(fileInfo);
+                        }
+                    });
+                }
+            }
+
+            // 设置确认删除按钮的数据
+            document.getElementById('confirm-batch-delete').setAttribute(
+                'data-fileids',
+                selectedFileIds.join(',')
+            );
+            // 最后再同步数量显示，确保与传入的ID一致（限定在模态内）
+            const countEl = document.querySelector('#batchDeleteModal #batch-delete-count');
+            if (countEl) countEl.textContent = selectedFileIds.length;
+
+            // 显示模态框
+            const batchDeleteModal = new bootstrap.Modal(document.getElementById('batchDeleteModal'));
+            // 再保险：在模态显示时同步数量
+            const modalEl = document.getElementById('batchDeleteModal');
+            if (modalEl) {
+                modalEl.addEventListener('shown.bs.modal', function() {
+                    try {
+                        const idsAttr = document.getElementById('confirm-batch-delete').getAttribute('data-fileids') || '';
+                        const ids = idsAttr ? idsAttr.split(',').filter(x => x && x.trim().length > 0) : [];
+                        const countEl2 = document.getElementById('batch-delete-count');
+                        if (countEl2) countEl2.textContent = ids.length;
+                    } catch (e) {
+                        console.warn('更新批量删除数量失败: ', e);
+                    }
+                }, { once: true });
+            }
+            batchDeleteModal.show();
+        }
+
+        // ============ 冻结/解冻文件功能 ============
+        
+        // 冻结按钮事件绑定
+        document.querySelectorAll('.freeze-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const fileid = this.getAttribute('data-fileid');
+                const filename = this.getAttribute('data-filename');
+                
+                document.getElementById('freeze-filename').textContent = filename;
+                document.getElementById('confirm-freeze').setAttribute('data-fileid', fileid);
+                document.getElementById('freeze-reason').value = '';
+            });
+        });
+
+        // 解冻按钮事件绑定
+        document.querySelectorAll('.thaw-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const fileid = this.getAttribute('data-fileid');
+                const filename = this.getAttribute('data-filename');
+                
+                document.getElementById('thaw-filename').textContent = filename;
+                document.getElementById('confirm-thaw').setAttribute('data-fileid', fileid);
+                document.getElementById('thaw-file-info').classList.add('d-none');
+                document.getElementById('thaw-reason').textContent = '';
+                document.getElementById('thaw-time').textContent = '';
+                
+                // 获取文件详细信息以显示冻结原因和时间
+                fetch(`/api/files/${fileid}`, {
+                    method: 'GET',
+                    credentials: 'same-origin'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.file) {
+                        const file = data.file;
+                        if (file.frozen_reason || file.frozen_at) {
+                            document.getElementById('thaw-file-info').classList.remove('d-none');
+                            document.getElementById('thaw-reason').textContent = file.frozen_reason || '未知';
+                            document.getElementById('thaw-time').textContent = file.frozen_at || '未知';
+                        }
+                    }
+                })
+                .catch(() => {
+                    // 静默失败，不显示详细信息
+                });
+            });
+        });
+
+        // 确认冻结操作
+        document.getElementById('confirm-freeze').addEventListener('click', function() {
+            const fileid = this.getAttribute('data-fileid');
+            const reason = document.getElementById('freeze-reason').value.trim() || '手动冻结';
+            
+            // 禁用按钮并显示加载状态
+            this.disabled = true;
+            this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 冻结中...';
+            
+            fetch(`/api/files/freeze/${fileid}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ reason: reason })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(data.message || '文件已冻结', 'success');
+                    // 关闭模态框并刷新页面
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('freezeModal'));
+                    if (modal) modal.hide();
+                    location.reload();
+                } else {
+                    showMessage(data.error || '冻结失败', 'danger');
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-lock me-1"></i> 确认冻结';
+                }
+            })
+            .catch(error => {
+                showMessage('冻结请求失败: ' + error.message, 'danger');
+                this.disabled = false;
+                this.innerHTML = '<i class="fa fa-lock me-1"></i> 确认冻结';
+            });
+        });
+
+        // 确认解冻操作
+        document.getElementById('confirm-thaw').addEventListener('click', function() {
+            const fileid = this.getAttribute('data-fileid');
+            
+            // 禁用按钮并显示加载状态
+            this.disabled = true;
+            this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 解冻中...';
+            
+            fetch(`/api/files/thaw/${fileid}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                credentials: 'same-origin'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(data.message || '文件已解冻', 'success');
+                    // 关闭模态框并刷新页面
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('thawModal'));
+                    if (modal) modal.hide();
+                    location.reload();
+                } else {
+                    showMessage(data.error || '解冻失败', 'danger');
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-unlock me-1"></i> 确认解冻';
+                }
+            })
+            .catch(error => {
+                showMessage('解冻请求失败: ' + error.message, 'danger');
+                this.disabled = false;
+                this.innerHTML = '<i class="fa fa-unlock me-1"></i> 确认解冻';
+            });
+        });
+
+        // ============ 批量冻结/解冻功能 ============
+        
+        // 获取选中的文件ID列表
+        function getSelectedFileIds() {
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            const ids = [];
+            checkboxes.forEach(cb => {
+                const fileId = parseInt(cb.value);
+                if (fileId) ids.push(fileId);
+            });
+            return ids;
+        }
+
+        // 批量冻结按钮点击
+        const batchFreezeBtn = document.getElementById('batchFreezeBtn');
+        if (batchFreezeBtn) {
+            batchFreezeBtn.addEventListener('click', function() {
+                const fileIds = getSelectedFileIds();
+                if (fileIds.length === 0) {
+                    showMessage('请先选择要冻结的文件', 'warning');
+                    return;
+                }
+                document.getElementById('batch-freeze-count').textContent = fileIds.length;
+                document.getElementById('batch-freeze-status').innerHTML = '';
+                document.getElementById('batch-freeze-reason').value = '';
+                const modal = new bootstrap.Modal(document.getElementById('batchFreezeModal'));
+                modal.show();
+            });
+        }
+
+        // 批量解冻按钮点击
+        const batchThawBtn = document.getElementById('batchThawBtn');
+        if (batchThawBtn) {
+            batchThawBtn.addEventListener('click', function() {
+                const fileIds = getSelectedFileIds();
+                if (fileIds.length === 0) {
+                    showMessage('请先选择要解冻的文件', 'warning');
+                    return;
+                }
+                document.getElementById('batch-thaw-count').textContent = fileIds.length;
+                document.getElementById('batch-thaw-status').innerHTML = '';
+                const modal = new bootstrap.Modal(document.getElementById('batchThawModal'));
+                modal.show();
+            });
+        }
+
+        // 确认批量冻结
+        const confirmBatchFreeze = document.getElementById('confirm-batch-freeze');
+        if (confirmBatchFreeze) {
+            confirmBatchFreeze.addEventListener('click', function() {
+                const fileIds = getSelectedFileIds();
+                if (fileIds.length === 0) {
+                    showMessage('没有选中的文件', 'warning');
+                    return;
+                }
+                
+                const reason = document.getElementById('batch-freeze-reason').value.trim() || '批量冻结';
+                const statusEl = document.getElementById('batch-freeze-status');
+                
+                this.disabled = true;
+                this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 冻结中...';
+                statusEl.innerHTML = '<div class="text-muted">正在冻结文件，请稍候...</div>';
+                
+                fetch('/api/files/batch_freeze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRFToken': '{{ csrf_token() }}'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        file_ids: fileIds,
+                        reason: reason
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        statusEl.innerHTML = `<div class="text-success"><i class="fa fa-check me-1"></i> 成功冻结 ${data.frozen_count || 0} 个文件</div>`;
+                        showMessage(data.message || '批量冻结成功', 'success');
+                        setTimeout(() => {
+                            const modal = bootstrap.Modal.getInstance(document.getElementById('batchFreezeModal'));
+                            if (modal) modal.hide();
+                            location.reload();
+                        }, 1000);
+                    } else {
+                        statusEl.innerHTML = `<div class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> ${data.error || '冻结失败'}</div>`;
+                        showMessage(data.error || '批量冻结失败', 'danger');
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-lock me-1"></i> 确认批量冻结';
+                    }
+                })
+                .catch(error => {
+                    statusEl.innerHTML = `<div class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> 请求失败: ${error.message}</div>`;
+                    showMessage('批量冻结请求失败: ' + error.message, 'danger');
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-lock me-1"></i> 确认批量冻结';
+                });
+            });
+        }
+
+        // 确认批量解冻
+        const confirmBatchThaw = document.getElementById('confirm-batch-thaw');
+        if (confirmBatchThaw) {
+            confirmBatchThaw.addEventListener('click', function() {
+                const fileIds = getSelectedFileIds();
+                if (fileIds.length === 0) {
+                    showMessage('没有选中的文件', 'warning');
+                    return;
+                }
+                
+                const statusEl = document.getElementById('batch-thaw-status');
+                
+                this.disabled = true;
+                this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 解冻中...';
+                statusEl.innerHTML = '<div class="text-muted">正在解冻文件，请稍候...</div>';
+                
+                fetch('/api/files/batch_thaw', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRFToken': '{{ csrf_token() }}'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        file_ids: fileIds
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        statusEl.innerHTML = `<div class="text-success"><i class="fa fa-check me-1"></i> 成功解冻 ${data.thawed_count || 0} 个文件</div>`;
+                        showMessage(data.message || '批量解冻成功', 'success');
+                        setTimeout(() => {
+                            const modal = bootstrap.Modal.getInstance(document.getElementById('batchThawModal'));
+                            if (modal) modal.hide();
+                            location.reload();
+                        }, 1000);
+                    } else {
+                        statusEl.innerHTML = `<div class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> ${data.error || '解冻失败'}</div>`;
+                        showMessage(data.error || '批量解冻失败', 'danger');
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-unlock me-1"></i> 确认批量解冻';
+                    }
+                })
+                .catch(error => {
+                    statusEl.innerHTML = `<div class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> 请求失败: ${error.message}</div>`;
+                    showMessage('批量解冻请求失败: ' + error.message, 'danger');
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-unlock me-1"></i> 确认批量解冻';
+                });
+            });
+        }
+
+        // ============ 冻结历史旧版本功能 ============
+
+        const freezeOldVersionsBtn = document.getElementById('freezeOldVersionsBtn');
+        const freezeOldVersionsModal = document.getElementById('freezeOldVersionsModal');
+        const freezeOldVersionsPreview = document.getElementById('freeze-old-versions-preview');
+        const freezeOldVersionsStatus = document.getElementById('freeze-old-versions-status');
+        const confirmFreezeOldVersionsBtn = document.getElementById('confirm-freeze-old-versions');
+
+        if (freezeOldVersionsBtn && freezeOldVersionsModal) {
+            // 打开模态框时加载预览
+            freezeOldVersionsBtn.addEventListener('click', function() {
+                // 重置状态
+                freezeOldVersionsStatus.style.display = 'none';
+                freezeOldVersionsPreview.innerHTML = `
+                    <div class="text-center text-muted">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">加载中...</span>
+                        </div>
+                        正在分析文件...
+                    </div>
+                `;
+                confirmFreezeOldVersionsBtn.disabled = true;
+
+                const modal = new bootstrap.Modal(freezeOldVersionsModal);
+                modal.show();
+
+                // 调用预览API
+                fetch('/api/files/freeze_old_versions_preview', {
+                    method: 'GET',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        renderPreview(data);
+                    } else {
+                        freezeOldVersionsPreview.innerHTML = `
+                            <div class="alert alert-danger">
+                                <i class="fa fa-exclamation-circle me-2"></i>
+                                ${data.error || '获取预览失败'}
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    freezeOldVersionsPreview.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fa fa-exclamation-circle me-2"></i>
+                            请求失败: ${error.message}
+                        </div>
+                    `;
+                });
+            });
+
+            // 确认冻结旧版本
+            confirmFreezeOldVersionsBtn.addEventListener('click', function() {
+                this.disabled = true;
+                this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 冻结中...';
+                freezeOldVersionsStatus.style.display = 'block';
+                freezeOldVersionsStatus.innerHTML = '<div class="text-muted">正在冻结旧版本文件，请稍候...</div>';
+
+                fetch('/api/files/freeze_old_versions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRFToken': '{{ csrf_token() }}'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({})
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        let msg = `成功冻结 ${data.frozen_count} 个文件`;
+                        if (data.groups_processed > 0) {
+                            msg += `，涉及 ${data.groups_processed} 个品番组`;
+                        }
+                        freezeOldVersionsStatus.innerHTML = `<div class="text-success"><i class="fa fa-check me-1"></i> ${msg}</div>`;
+                        showMessage(msg, 'success');
+
+                        // 显示详情
+                        if (data.details && data.details.length > 0) {
+                            const detailsHtml = data.details.map(d =>
+                                `<div class="small text-muted">• ${d.filename} (EO: ${d.eo} → 最新: ${d.latest_eo}, 品番: ${d.subpno})</div>`
+                            ).join('');
+                            freezeOldVersionsStatus.innerHTML += `
+                                <div class="mt-2" style="max-height: 200px; overflow-y: auto;">
+                                    <strong>冻结详情：</strong>
+                                    ${detailsHtml}
+                                </div>
+                            `;
+                        }
+
+                        setTimeout(() => {
+                            const modal = bootstrap.Modal.getInstance(freezeOldVersionsModal);
+                            if (modal) modal.hide();
+                            location.reload();
+                        }, 2000);
+                    } else {
+                        freezeOldVersionsStatus.innerHTML = `<div class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> ${data.error || '冻结失败'}</div>`;
+                        showMessage(data.error || '冻结失败', 'danger');
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-archive me-1"></i> 确认冻结';
+                    }
+                })
+                .catch(error => {
+                    freezeOldVersionsStatus.innerHTML = `<div class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> 请求失败: ${error.message}</div>`;
+                    showMessage('冻结请求失败: ' + error.message, 'danger');
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-archive me-1"></i> 确认冻结';
+                });
+            });
+        }
+
+        // 渲染预览数据
+        function renderPreview(data) {
+            const totalToFreeze = data.total_to_freeze || 0;
+            const groupsAffected = data.groups_affected || 0;
+            const preview = data.preview || [];
+
+            if (totalToFreeze === 0) {
+                freezeOldVersionsPreview.innerHTML = `
+                    <div class="alert alert-success">
+                        <i class="fa fa-check-circle me-2"></i>
+                        <strong>没有需要冻结的旧版本文件</strong>
+                        <div class="small mt-1">所有品番组中，每个品番都只有一个活跃文件，无需冻结。</div>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = `
+                <div class="alert alert-info">
+                    <i class="fa fa-info-circle me-2"></i>
+                    <strong>将冻结 ${totalToFreeze} 个旧版本文件</strong>
+                    <div class="small mt-1">涉及 ${groupsAffected} 个品番组</div>
+                </div>
+                <div class="preview-groups" style="max-height: 300px; overflow-y: auto;">
+            `;
+
+            preview.forEach(group => {
+                html += `
+                    <div class="card mb-2">
+                        <div class="card-header bg-light">
+                            <strong>品番: ${group.subpno}</strong>
+                            <span class="badge bg-success ms-2">最新EO: ${group.latest_eo}</span>
+                            <span class="badge bg-warning text-dark ms-2">待冻结: ${group.files_to_freeze.length} 个</span>
+                        </div>
+                        <div class="card-body py-2">
+                            ${group.files_to_freeze.map(f => `
+                                <div class="d-flex justify-content-between align-items-center py-1">
+                                    <span class="small">${f.filename}</span>
+                                    <span class="badge bg-secondary">EO: ${f.eo}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            freezeOldVersionsPreview.innerHTML = html;
+
+            // 启用确认按钮
+            confirmFreezeOldVersionsBtn.disabled = false;
+        }
+    </script>
+</body>
+</html>

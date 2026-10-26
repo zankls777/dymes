@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>RW核对</title>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <!-- 引入Bootstrap CSS -->
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <!-- 引入Font Awesome -->
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        /* RW核对页面的样式可以在这里添加 */
+
+        /* 资料选择模态框样式 */
+        .select-panel {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            height: 420px;
+            display: flex;
+            flex-direction: column;
+        }
+        .select-panel .panel-header {
+            padding: 10px 14px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            border-radius: 8px 8px 0 0;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .select-panel .panel-search {
+            padding: 8px 12px;
+            border-bottom: 1px solid #eee;
+        }
+        .select-panel .panel-search input {
+            font-size: 13px;
+        }
+        .select-panel .panel-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 0;
+        }
+        .select-panel .panel-list .option-item {
+            padding: 7px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            border-left: 3px solid transparent;
+            transition: background 0.15s;
+        }
+        .select-panel .panel-list .option-item:hover {
+            background: #e9ecef;
+        }
+        .select-panel .panel-list .option-item.selected {
+            background: #d0e8ff;
+            border-left-color: #0d6efd;
+            font-weight: 500;
+        }
+        .select-panel .panel-list .option-item .opt-sub {
+            font-size: 11px;
+            color: #6c757d;
+            margin-top: 1px;
+        }
+        .pair-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .pair-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            margin-bottom: 4px;
+            font-size: 13px;
+        }
+        .pair-item .pair-info {
+            flex: 1;
+        }
+        .pair-item .pair-arrow {
+            margin: 0 8px;
+            color: #0d6efd;
+            font-weight: bold;
+        }
+        .empty-hint {
+            text-align: center;
+            color: #adb5bd;
+            padding: 40px 20px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <div class="col-md-12">
+                <h2 class="mt-4 mb-4">RW核对</h2>
+                
+                <!-- RW核对页面内容 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">RW对比数据</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Excel上传表单 -->
+                        <form id="rwUploadForm" enctype="multipart/form-data">
+                            <div class="mb-3">
+                                <label for="rwFile" class="form-label">选择Excel文件</label>
+                                <input type="file" class="form-control" id="rwFile" name="rwFile" accept=".xlsx,.xls" required>
+                                <div class="form-text">支持Excel文件(.xlsx, .xls)，文件需包含以下列：序号、车种、TEAM、P/NO基准、EO、R/W后P/NO、R/W后EO</div>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fa fa-upload me-1"></i> 上传并对比
+                                </button>
+                                <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#selectCompareModal" id="openSelectModalBtn">
+                                    <i class="fa fa-list-alt me-1"></i> 从资料库选择
+                                </button>
+                                <button type="button" class="btn btn-secondary" data-bs-toggle="modal" data-bs-target="#manualAddModal">
+                                    <i class="fa fa-plus me-1"></i> 手动新规
+                                </button>
+                                <a href="/template/RW对比--最终模板.xlsx" class="btn btn-info" download>
+                                    <i class="fa fa-download me-1"></i> 模板下载
+                                </a>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- 手动新规模态框 -->
+                <div class="modal fade" id="manualAddModal" tabindex="-1" aria-labelledby="manualAddModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="manualAddModalLabel">手动添加RW对比数据</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <form id="manualAddForm">
+                                    <div class="mb-3">
+                                        <label for="manualData" class="form-label">批量输入RW对比数据</label>
+                                        <textarea class="form-control" id="manualData" rows="10" placeholder="请输入或粘贴数据，每行格式：序号,车种,TEAM,P/NO基准,EO,R/W后P/NO,R/W后EO
+示例：
+1,KA4_PE,FRDR_DRI,91606-ES380,b8,916D2-ES800,c1
+2,KA4_PE,FRDR_DRI,91607-R0860,b9,916D0-ES610,c1"></textarea>
+                                        <div class="form-text">支持批量输入，每行一条数据，字段之间用逗号分隔</div>
+                                    </div>
+                                </form>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                                <button type="button" class="btn btn-primary" id="manualAddSubmit">添加并对比</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 从资料库选择对比 模态框 -->
+                <div class="modal fade" id="selectCompareModal" tabindex="-1" aria-labelledby="selectCompareModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-xl" style="max-width: 960px;">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="selectCompareModalLabel">
+                                    <i class="fa fa-list-alt me-2"></i>从资料库选择对比资料
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <!-- 选择区域：基准 vs RW后 -->
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-5">
+                                        <div class="select-panel" id="basePanel">
+                                            <div class="panel-header">
+                                                <i class="fa fa-file-text-o me-1 text-primary"></i> 基准资料（选择P/NO + EO）
+                                            </div>
+                                            <div class="panel-search">
+                                                <input type="text" class="form-control form-control-sm" id="baseSearchInput" placeholder="搜索 P/NO、EO、车种...">
+                                            </div>
+                                            <div class="panel-list" id="baseOptionList">
+                                                <div class="empty-hint">
+                                                    <i class="fa fa-spinner fa-spin me-1"></i> 加载中...
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-2 d-flex flex-column align-items-center justify-content-center">
+                                        <div class="text-center mb-2">
+                                            <div class="text-muted small mb-1">已选基准</div>
+                                            <div id="selectedBaseDisplay" class="badge bg-primary" style="font-size:12px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">未选择</div>
+                                        </div>
+                                        <i class="fa fa-arrow-right fa-2x text-primary my-2"></i>
+                                        <div class="text-center mt-2">
+                                            <div class="text-muted small mb-1">已选RW后</div>
+                                            <div id="selectedRwDisplay" class="badge bg-success" style="font-size:12px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">未选择</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-5">
+                                        <div class="select-panel" id="rwPanel">
+                                            <div class="panel-header">
+                                                <i class="fa fa-exchange me-1 text-success"></i> R/W后资料（选择P/NO + EO）
+                                            </div>
+                                            <div class="panel-search">
+                                                <input type="text" class="form-control form-control-sm" id="rwSearchInput" placeholder="搜索 P/NO、EO、车种...">
+                                            </div>
+                                            <div class="panel-list" id="rwOptionList">
+                                                <div class="empty-hint">
+                                                    <i class="fa fa-spinner fa-spin me-1"></i> 加载中...
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 添加对比对按钮 -->
+                                <div class="text-center mb-3">
+                                    <button type="button" class="btn btn-outline-primary btn-sm" id="addPairBtn" disabled>
+                                        <i class="fa fa-plus me-1"></i> 添加此对比对
+                                    </button>
+                                </div>
+
+                                <!-- 已添加的对比对列表 -->
+                                <div class="card">
+                                    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                                        <span class="fw-bold" style="font-size:14px;">对比对列表 (<span id="pairCount">0</span>)</span>
+                                        <button type="button" class="btn btn-outline-danger btn-sm" id="clearAllPairsBtn" style="display:none;">
+                                            <i class="fa fa-trash me-1"></i> 清空
+                                        </button>
+                                    </div>
+                                    <div class="card-body p-2">
+                                        <div class="pair-list" id="pairListContainer">
+                                            <div class="empty-hint" id="pairEmptyHint" style="padding:20px;">
+                                                尚未添加任何对比对，请在上方选择基准和RW后资料后点击“添加此对比对”
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                                <button type="button" class="btn btn-primary" id="startSelectCompareBtn" disabled>
+                                    <i class="fa fa-play me-1"></i> 开始对比 (<span id="startPairCount">0</span>)
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 结果显示区域 -->
+                <div class="card mb-4" id="resultCard" style="display: none;">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">RW对比结果</h5>
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-sm btn-primary" id="downloadListBtn">
+                                <i class="fa fa-download me-1"></i> 清单下载
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" id="downloadDetailZipBtn">
+                                <i class="fa fa-file-archive-o me-1"></i> 明细详单.zip
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="rwComparisonTable">
+                                <thead>
+                                    <tr>
+                                        <th>序号</th>
+                                        <th>车种</th>
+                                        <th>TEAM</th>
+                                        <th>P/NO基准</th>
+                                        <th>EO</th>
+                                        <th>R/W后P/NO</th>
+                                        <th>R/W后EO</th>
+                                        <th>sublist增加</th>
+                                        <th>sublist删除</th>
+                                        <th>Usagelist增加</th>
+                                        <th>Usagelist删除</th>
+                                        <th>验证信息</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="rwComparisonBody">
+                                    <!-- 对比结果将通过JavaScript动态添加 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 引入Bootstrap JavaScript -->
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    
+    {% include '_scripts.html' %}
+    <script>
+        // RW核对页面的JavaScript代码
+        document.addEventListener('DOMContentLoaded', function() {
+            const rwUploadForm = document.getElementById('rwUploadForm');
+            const resultCard = document.getElementById('resultCard');
+            const rwComparisonBody = document.getElementById('rwComparisonBody');
+            const downloadListBtn = document.getElementById('downloadListBtn');
+            const downloadDetailZipBtn = document.getElementById('downloadDetailZipBtn');
+            
+            // 存储当前对比结果数据
+            let currentResults = [];
+
+            // 冻结归档徽章（业务页面可只读访问冻结数据，但须明确标注）
+            const frozenBadge = function (frozen) {
+                return frozen
+                    ? ' <span class="badge bg-warning text-dark align-middle" title="冻结归档版本（只读，不可编辑/删除/应用）"><i class="fa fa-lock me-1"></i>已冻结</span>'
+                    : '';
+            };
+            
+            rwUploadForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(this);
+                
+                try {
+                    const response = await fetch('/api/rw_comparison/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    // 调试信息
+                    console.log('Response status:', response.status);
+                    
+                    const data = await response.json();
+                    
+                    // 调试信息
+                    console.log('Response data:', data);
+                    
+                    if (data.success) {
+                        // 存储当前结果数据
+                        currentResults = data.results || [];
+                        
+                        // 显示结果卡片
+                        resultCard.style.display = 'block';
+                        
+                        // 清空之前的结果
+                        rwComparisonBody.innerHTML = '';
+                        
+                        // 添加新的结果行
+                        if (currentResults.length > 0) {
+                            currentResults.forEach(row => {
+                                const tr = document.createElement('tr');
+                                // 根据验证信息设置行样式（仅"缺少数据"标红；冻结归档标黄）
+                                const validationInfo = row['验证信息'] || '';
+                                const hasError = validationInfo.indexOf('缺少') !== -1;
+                                const isFrozenRow = !!(row['基准冻结'] || row['RW后冻结']);
+                                if (hasError) {
+                                    tr.className = 'table-danger';
+                                } else if (isFrozenRow) {
+                                    tr.className = 'table-warning';
+                                }
+                                tr.innerHTML = `
+                                    <td>${row.序号 || ''}</td>
+                                    <td>${row.车种 || ''}</td>
+                                    <td>${row.TEAM || ''}</td>
+                                    <td>${row['P/NO基准'] || ''}${frozenBadge(row['基准冻结'])}</td>
+                                    <td>${row.EO || ''}</td>
+                                    <td>${row['R/W后P/NO'] || ''}${frozenBadge(row['RW后冻结'])}</td>
+                                    <td>${row['R/W后EO'] || ''}</td>
+                                    <td>${row['sublist增加'] || 0}</td>
+                                    <td>${row['sublist删除'] || 0}</td>
+                                    <td>${row['Usagelist增加'] || 0}</td>
+                                    <td>${row['Usagelist删除'] || 0}</td>
+                                    <td>
+                                        <div class="validation-info" title="${validationInfo}">
+                                            ${validationInfo}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-sm btn-primary download-btn" 
+                                                data-base-pno="${row['P/NO基准']}" 
+                                                data-base-eo="${row.EO}" 
+                                                data-rw-pno="${row['R/W后P/NO']}" 
+                                                data-rw-eo="${row['R/W后EO']}">
+                                            <i class="fa fa-download me-1"></i> 下载差异
+                                        </button>
+                                    </td>
+                                `;
+                                rwComparisonBody.appendChild(tr);
+                            });
+                            
+                            // 添加下载按钮事件监听
+                            document.querySelectorAll('.download-btn').forEach(btn => {
+                                btn.addEventListener('click', function() {
+                                    const basePno = this.getAttribute('data-base-pno');
+                                    const baseEo = this.getAttribute('data-base-eo');
+                                    const rwPno = this.getAttribute('data-rw-pno');
+                                    const rwEo = this.getAttribute('data-rw-eo');
+                                    
+                                    // 构造下载请求
+                                    const downloadUrl = `/api/rw_comparison/download?base_pno=${encodeURIComponent(basePno)}&base_eo=${encodeURIComponent(baseEo)}&rw_pno=${encodeURIComponent(rwPno)}&rw_eo=${encodeURIComponent(rwEo)}`;
+                                    window.location.href = downloadUrl;
+                                });
+                            });
+                        } else {
+                            // 没有数据时显示提示信息
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `
+                                <td colspan="13" class="text-center">暂无对比结果数据</td>
+                            `;
+                            rwComparisonBody.appendChild(tr);
+                        }
+                    } else {
+                        alert('处理失败: ' + data.error);
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert('上传过程中发生错误: ' + error.message);
+                }
+            });
+            
+            // 清单下载按钮事件处理
+            downloadListBtn.addEventListener('click', async function() {
+                if (currentResults.length === 0) {
+                    alert('暂无对比结果数据');
+                    return;
+                }
+                
+                try {
+                    // 发送请求下载对比结果清单
+                    const response = await fetch('/api/rw_comparison/download_list', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': getCsrfToken()
+                        },
+                        body: JSON.stringify({ results: currentResults })
+                    });
+                    
+                    if (response.ok) {
+                        // 处理下载
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `RW对比结果清单_${new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '_')}.xlsx`;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                    } else {
+                        const data = await response.json();
+                        alert('下载失败: ' + (data.error || '未知错误'));
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert('下载过程中发生错误: ' + error.message);
+                }
+            });
+            
+            // 明细详单.zip按钮事件处理
+            downloadDetailZipBtn.addEventListener('click', async function() {
+                if (currentResults.length === 0) {
+                    alert('暂无对比结果数据');
+                    return;
+                }
+                
+                try {
+                    // 发送请求下载所有结果详细文件的压缩包
+                    const response = await fetch('/api/rw_comparison/download_detail_zip', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': getCsrfToken()
+                        },
+                        body: JSON.stringify({ results: currentResults })
+                    });
+                    
+                    if (response.ok) {
+                        // 处理下载
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `明细详单_${new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '_')}.zip`;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                    } else {
+                        const data = await response.json();
+                        alert('下载失败: ' + (data.error || '未知错误'));
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert('下载过程中发生错误: ' + error.message);
+                }
+            });
+            
+            // 获取CSRF令牌的函数
+            function getCsrfToken() {
+                const metaTag = document.querySelector('meta[name="csrf-token"]');
+                return metaTag ? metaTag.getAttribute('content') : '';
+            }
+            
+            // 手动新规功能
+            const manualAddSubmit = document.getElementById('manualAddSubmit');
+            manualAddSubmit.addEventListener('click', async function() {
+                const manualData = document.getElementById('manualData');
+                const inputData = manualData.value.trim();
+                
+                if (!inputData) {
+                    alert('请输入或粘贴RW对比数据');
+                    return;
+                }
+                
+                // 解析输入的数据
+                const lines = inputData.split('\n').filter(line => line.trim() !== '');
+                const parsedData = [];
+                
+                for (const line of lines) {
+                    const fields = line.split(',').map(field => field.trim());
+                    
+                    // 检查字段数量
+                    if (fields.length < 4) {
+                        alert(`数据格式错误: ${line}\n每行至少需要包含4个字段: P/NO基准,EO,R/W后P/NO,R/W后EO`);
+                        return;
+                    }
+                    
+                    // 构建数据对象
+                    const dataRow = {
+                        '序号': fields[0] || '',
+                        '车种': fields[1] || '',
+                        'TEAM': fields[2] || '',
+                        'P/NO基准': fields[3] || '',
+                        'EO': fields[4] || '',
+                        'R/W后P/NO': fields[5] || '',
+                        'R/W后EO': fields[6] || ''
+                    };
+                    
+                    parsedData.push(dataRow);
+                }
+                
+                try {
+                    // 发送POST请求到新端点
+                    const response = await fetch('/api/rw_comparison/manual_add', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': getCsrfToken()
+                        },
+                        body: JSON.stringify({ data: parsedData })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        // 存储当前结果数据
+                        currentResults = data.results || [];
+                        
+                        // 显示结果卡片
+                        resultCard.style.display = 'block';
+                        
+                        // 清空之前的结果
+                        rwComparisonBody.innerHTML = '';
+                        
+                        // 添加新的结果行
+                        if (currentResults.length > 0) {
+                            currentResults.forEach(row => {
+                                const tr = document.createElement('tr');
+                                // 根据验证信息设置行样式（仅"缺少数据"标红；冻结归档标黄）
+                                const validationInfo = row['验证信息'] || '';
+                                const hasError = validationInfo.indexOf('缺少') !== -1;
+                                const isFrozenRow = !!(row['基准冻结'] || row['RW后冻结']);
+                                if (hasError) {
+                                    tr.className = 'table-danger';
+                                } else if (isFrozenRow) {
+                                    tr.className = 'table-warning';
+                                }
+                                tr.innerHTML = `
+                                    <td>${row.序号 || ''}</td>
+                                    <td>${row.车种 || ''}</td>
+                                    <td>${row.TEAM || ''}</td>
+                                    <td>${row['P/NO基准'] || ''}${frozenBadge(row['基准冻结'])}</td>
+                                    <td>${row.EO || ''}</td>
+                                    <td>${row['R/W后P/NO'] || ''}${frozenBadge(row['RW后冻结'])}</td>
+                                    <td>${row['R/W后EO'] || ''}</td>
+                                    <td>${row['sublist增加'] || 0}</td>
+                                    <td>${row['sublist删除'] || 0}</td>
+                                    <td>${row['Usagelist增加'] || 0}</td>
+                                    <td>${row['Usagelist删除'] || 0}</td>
+                                    <td>
+                                        <div class="validation-info" title="${validationInfo}">
+                                            ${validationInfo}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-sm btn-primary download-btn" 
+                                                data-base-pno="${row['P/NO基准']}" 
+                                                data-base-eo="${row.EO}" 
+                                                data-rw-pno="${row['R/W后P/NO']}" 
+                                                data-rw-eo="${row['R/W后EO']}">
+                                            <i class="fa fa-download me-1"></i> 下载差异
+                                        </button>
+                                    </td>
+                                `;
+                                rwComparisonBody.appendChild(tr);
+                            });
+                            
+                            // 添加下载按钮事件监听
+                            document.querySelectorAll('.download-btn').forEach(btn => {
+                                btn.addEventListener('click', function() {
+                                    const basePno = this.getAttribute('data-base-pno');
+                                    const baseEo = this.getAttribute('data-base-eo');
+                                    const rwPno = this.getAttribute('data-rw-pno');
+                                    const rwEo = this.getAttribute('data-rw-eo');
+                                    
+                                    // 构造下载请求
+                                    const downloadUrl = `/api/rw_comparison/download?base_pno=${encodeURIComponent(basePno)}&base_eo=${encodeURIComponent(baseEo)}&rw_pno=${encodeURIComponent(rwPno)}&rw_eo=${encodeURIComponent(rwEo)}`;
+                                    window.location.href = downloadUrl;
+                                });
+                            });
+                        } else {
+                            // 没有数据时显示提示信息
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `
+                                <td colspan="13" class="text-center">暂无对比结果数据</td>
+                            `;
+                            rwComparisonBody.appendChild(tr);
+                        }
+                        
+                        // 关闭模态框
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('manualAddModal'));
+                        modal.hide();
+                        
+                        // 清空输入框
+                        manualData.value = '';
+                    } else {
+                        alert('处理失败: ' + data.error);
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert('处理过程中发生错误: ' + error.message);
+                }
+            });
+
+            // ============================================================
+            // 从资料库选择对比功能
+            // ============================================================
+            const selectCompareModal = document.getElementById('selectCompareModal');
+            const baseOptionList = document.getElementById('baseOptionList');
+            const rwOptionList = document.getElementById('rwOptionList');
+            const baseSearchInput = document.getElementById('baseSearchInput');
+            const rwSearchInput = document.getElementById('rwSearchInput');
+            const addPairBtn = document.getElementById('addPairBtn');
+            const pairListContainer = document.getElementById('pairListContainer');
+            const pairEmptyHint = document.getElementById('pairEmptyHint');
+            const pairCountEl = document.getElementById('pairCount');
+            const startPairCountEl = document.getElementById('startPairCount');
+            const startSelectCompareBtn = document.getElementById('startSelectCompareBtn');
+            const clearAllPairsBtn = document.getElementById('clearAllPairsBtn');
+            const selectedBaseDisplay = document.getElementById('selectedBaseDisplay');
+            const selectedRwDisplay = document.getElementById('selectedRwDisplay');
+
+            let allOptions = [];         // 全部选项数据
+            let selectedBase = null;     // 当前选中的基准
+            let selectedRw = null;       // 当前选中的RW后
+            let comparePairs = [];       // 已添加的对比对列表
+
+            // 加载选项数据
+            async function loadOptions(search) {
+                try {
+                    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+                    const resp = await fetch(`/api/rw_comparison/options${params}`);
+                    const data = await resp.json();
+                    if (data.success) {
+                        allOptions = data.options || [];
+                    } else {
+                        allOptions = [];
+                        console.error('加载选项失败:', data.error);
+                    }
+                } catch (e) {
+                    console.error('加载选项异常:', e);
+                    allOptions = [];
+                }
+            }
+
+            // 渲染选项列表
+            function renderOptions(listEl, options, selected, side) {
+                if (options.length === 0) {
+                    listEl.innerHTML = '<div class="empty-hint">无匹配数据</div>';
+                    return;
+                }
+                listEl.innerHTML = '';
+                options.forEach(opt => {
+                    const key = `${opt.sub_pno}|${opt.eo}`;
+                    const isSelected = selected && `${selected.sub_pno}|${selected.eo}` === key;
+                    const div = document.createElement('div');
+                    div.className = 'option-item' + (isSelected ? ' selected' : '') + (opt.is_frozen ? ' list-group-item-warning' : '');
+                    const badge = opt.is_frozen
+                        ? ' <span class="badge bg-warning text-dark align-middle"><i class="fa fa-lock me-1"></i>已冻结</span>'
+                        : '';
+                    div.innerHTML = `
+                        <div>${opt.sub_pno} <span class="text-muted">| EO: ${opt.eo}</span>${badge}</div>
+                        <div class="opt-sub">${opt.vehicle_type || ''} ${opt.row_count ? '(' + opt.row_count + '行)' : ''}</div>
+                    `;
+                    div.addEventListener('click', () => {
+                        const dispText = `${opt.sub_pno} (EO:${opt.eo})` + (opt.is_frozen ? ' [已冻结]' : '');
+                        if (side === 'base') {
+                            selectedBase = opt;
+                            selectedBaseDisplay.textContent = dispText;
+                            selectedBaseDisplay.title = `${opt.sub_pno} | EO: ${opt.eo} | ${opt.vehicle_type || ''}` + (opt.is_frozen ? ' | 已冻结归档（只读）' : '');
+                        } else {
+                            selectedRw = opt;
+                            selectedRwDisplay.textContent = dispText;
+                            selectedRwDisplay.title = `${opt.sub_pno} | EO: ${opt.eo} | ${opt.vehicle_type || ''}` + (opt.is_frozen ? ' | 已冻结归档（只读）' : '');
+                        }
+                        // 重新渲染两侧列表以更新选中状态
+                        const baseFiltered = filterOptions(allOptions, baseSearchInput.value);
+                        const rwFiltered = filterOptions(allOptions, rwSearchInput.value);
+                        renderOptions(baseOptionList, baseFiltered, selectedBase, 'base');
+                        renderOptions(rwOptionList, rwFiltered, selectedRw, 'rw');
+                        updateAddPairBtn();
+                    });
+                    listEl.appendChild(div);
+                });
+            }
+
+            function filterOptions(options, keyword) {
+                if (!keyword) return options;
+                const kw = keyword.toLowerCase();
+                return options.filter(o =>
+                    (o.sub_pno || '').toLowerCase().includes(kw) ||
+                    (o.eo || '').toLowerCase().includes(kw) ||
+                    (o.vehicle_type || '').toLowerCase().includes(kw)
+                );
+            }
+
+            function updateAddPairBtn() {
+                addPairBtn.disabled = !(selectedBase && selectedRw);
+            }
+
+            function updatePairList() {
+                const count = comparePairs.length;
+                pairCountEl.textContent = count;
+                startPairCountEl.textContent = count;
+                startSelectCompareBtn.disabled = count === 0;
+                clearAllPairsBtn.style.display = count > 0 ? '' : 'none';
+
+                if (count === 0) {
+                    pairEmptyHint.style.display = '';
+                    // 移除所有 pair-item
+                    pairListContainer.querySelectorAll('.pair-item').forEach(el => el.remove());
+                    return;
+                }
+                pairEmptyHint.style.display = 'none';
+                // 重新渲染
+                pairListContainer.querySelectorAll('.pair-item').forEach(el => el.remove());
+                comparePairs.forEach((pair, idx) => {
+                    const div = document.createElement('div');
+                    div.className = 'pair-item';
+                    div.innerHTML = `
+                        <div class="pair-info">
+                            <span class="badge bg-primary me-1">#${idx + 1}</span>
+                            <strong>${pair.base_pno}</strong> (EO:${pair.base_eo})
+                            <span class="pair-arrow">&rarr;</span>
+                            <strong>${pair.rw_pno}</strong> (EO:${pair.rw_eo})
+                            ${pair.vehicle_type ? '<span class="text-muted ms-1">' + pair.vehicle_type + '</span>' : ''}
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-danger ms-2" data-idx="${idx}" title="移除">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    `;
+                    div.querySelector('button').addEventListener('click', function() {
+                        const i = parseInt(this.getAttribute('data-idx'));
+                        comparePairs.splice(i, 1);
+                        updatePairList();
+                    });
+                    pairListContainer.appendChild(div);
+                });
+            }
+
+            // 模态框打开时加载数据
+            selectCompareModal.addEventListener('show.bs.modal', async function() {
+                selectedBase = null;
+                selectedRw = null;
+                selectedBaseDisplay.textContent = '未选择';
+                selectedRwDisplay.textContent = '未选择';
+                baseSearchInput.value = '';
+                rwSearchInput.value = '';
+                updateAddPairBtn();
+
+                baseOptionList.innerHTML = '<div class="empty-hint"><i class="fa fa-spinner fa-spin me-1"></i> 加载中...</div>';
+                rwOptionList.innerHTML = '<div class="empty-hint"><i class="fa fa-spinner fa-spin me-1"></i> 加载中...</div>';
+
+                await loadOptions('');
+                const baseFiltered = filterOptions(allOptions, '');
+                const rwFiltered = filterOptions(allOptions, '');
+                renderOptions(baseOptionList, baseFiltered, null, 'base');
+                renderOptions(rwOptionList, rwFiltered, null, 'rw');
+            });
+
+            // 搜索防抖
+            let searchTimer = null;
+            function onSearchInput(side) {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(async () => {
+                    const keyword = side === 'base' ? baseSearchInput.value : rwSearchInput.value;
+                    await loadOptions(keyword);
+                    const filtered = filterOptions(allOptions, keyword);
+                    if (side === 'base') {
+                        renderOptions(baseOptionList, filtered, selectedBase, 'base');
+                    } else {
+                        renderOptions(rwOptionList, filtered, selectedRw, 'rw');
+                    }
+                }, 300);
+            }
+            baseSearchInput.addEventListener('input', () => onSearchInput('base'));
+            rwSearchInput.addEventListener('input', () => onSearchInput('rw'));
+
+            // 添加对比对
+            addPairBtn.addEventListener('click', function() {
+                if (!selectedBase || !selectedRw) return;
+                comparePairs.push({
+                    base_pno: selectedBase.sub_pno,
+                    base_eo: selectedBase.eo,
+                    rw_pno: selectedRw.sub_pno,
+                    rw_eo: selectedRw.eo,
+                    vehicle_type: selectedBase.vehicle_type || selectedRw.vehicle_type || ''
+                });
+                // 重置选择
+                selectedBase = null;
+                selectedRw = null;
+                selectedBaseDisplay.textContent = '未选择';
+                selectedRwDisplay.textContent = '未选择';
+                updateAddPairBtn();
+                updatePairList();
+            });
+
+            // 清空对比对
+            clearAllPairsBtn.addEventListener('click', function() {
+                comparePairs = [];
+                updatePairList();
+            });
+
+            // 开始对比
+            startSelectCompareBtn.addEventListener('click', async function() {
+                if (comparePairs.length === 0) return;
+                const btn = this;
+                const originalText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 对比中...';
+
+                try {
+                    const resp = await fetch('/api/rw_comparison/select_compare', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': getCsrfToken()
+                        },
+                        body: JSON.stringify({ pairs: comparePairs })
+                    });
+                    const data = await resp.json();
+
+                    if (data.success) {
+                        currentResults = data.results || [];
+                        resultCard.style.display = 'block';
+                        rwComparisonBody.innerHTML = '';
+
+                        if (currentResults.length > 0) {
+                            currentResults.forEach(row => {
+                                const tr = document.createElement('tr');
+                                const validationInfo = row['验证信息'] || '';
+                                const hasError = validationInfo !== '验证通过';
+                                if (hasError) tr.className = 'table-danger';
+                                tr.innerHTML = `
+                                    <td>${row.序号 || ''}</td>
+                                    <td>${row.车种 || ''}</td>
+                                    <td>${row.TEAM || ''}</td>
+                                    <td>${row['P/NO基准'] || ''}${frozenBadge(row['基准冻结'])}</td>
+                                    <td>${row.EO || ''}</td>
+                                    <td>${row['R/W后P/NO'] || ''}${frozenBadge(row['RW后冻结'])}</td>
+                                    <td>${row['R/W后EO'] || ''}</td>
+                                    <td>${row['sublist增加'] || 0}</td>
+                                    <td>${row['sublist删除'] || 0}</td>
+                                    <td>${row['Usagelist增加'] || 0}</td>
+                                    <td>${row['Usagelist删除'] || 0}</td>
+                                    <td><div class="validation-info" title="${validationInfo}">${validationInfo}</div></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-primary download-btn"
+                                                data-base-pno="${row['P/NO基准']}"
+                                                data-base-eo="${row.EO}"
+                                                data-rw-pno="${row['R/W后P/NO']}"
+                                                data-rw-eo="${row['R/W后EO']}">
+                                            <i class="fa fa-download me-1"></i> 下载差异
+                                        </button>
+                                    </td>
+                                `;
+                                rwComparisonBody.appendChild(tr);
+                            });
+
+                            document.querySelectorAll('.download-btn').forEach(b => {
+                                b.addEventListener('click', function() {
+                                    const downloadUrl = `/api/rw_comparison/download?base_pno=${encodeURIComponent(this.getAttribute('data-base-pno'))}&base_eo=${encodeURIComponent(this.getAttribute('data-base-eo'))}&rw_pno=${encodeURIComponent(this.getAttribute('data-rw-pno'))}&rw_eo=${encodeURIComponent(this.getAttribute('data-rw-eo'))}`;
+                                    window.location.href = downloadUrl;
+                                });
+                            });
+                        } else {
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = '<td colspan="13" class="text-center">暂无对比结果数据</td>';
+                            rwComparisonBody.appendChild(tr);
+                        }
+
+                        // 关闭模态框
+                        const modal = bootstrap.Modal.getInstance(selectCompareModal);
+                        modal.hide();
+
+                        // 滚动到结果区域
+                        resultCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    } else {
+                        alert('对比失败: ' + data.error);
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert('对比过程中发生错误: ' + error.message);
+                } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }
+            });
+        });
+    </script>
+</body>
+</html>

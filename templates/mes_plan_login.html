@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>{{ page_title }} - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+</head>
+<body>
+    <div class="container-fluid mt-4">
+        {% include '_navbar.html' %}
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 顶部：LOT 登录区（扫码/输入 LOT 后自动带出品番、车种等） -->
+        <div class="card mb-3">
+            <div class="card-header" style="display:none;">
+                <h5 class="card-title mb-0"><i class="fa fa-barcode mr-1 text-primary"></i>计划登录 · LOT 登录</h5>
+            </div>
+            <div class="card-body" style="display:none;">
+                <!-- LOT 登录输入区已隐藏（保留客户维护入口，其余字段暂不使用） -->
+                <div class="row g-2 align-items-end" style="display:none;">
+                    <div class="col-md-2">
+                        <label class="form-label">LOT NO <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="s-lot" placeholder="扫码 / 输入 LOT 后回车" autocomplete="off" autofocus>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">计划日期 <span class="text-danger">*</span></label>
+                        <input type="date" class="form-control" id="s-date">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">品番</label>
+                        <input type="text" class="form-control" id="s-pno" readonly>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">车种</label>
+                        <input type="text" class="form-control" id="s-vehicle" readonly>
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label">数量</label>
+                        <input type="number" class="form-control" id="s-qty" min="0" value="0">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label">客户 <span class="text-danger">*</span></label>
+                        <select class="form-select" id="s-customer" title="手选客户">
+                            <option value="">请选择</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="row g-2 mt-2 align-items-center" style="display:none;">
+                    <div class="col-auto">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-cust-manage">
+                            <i class="fa fa-cog mr-1"></i> 客户维护
+                        </button>
+                    </div>
+                    <div class="col-auto" style="display:none;">
+                        <span class="text-muted small" id="s-hint">扫码或输入 LOT NO 后按回车自动带出资料</span>
+                    </div>
+                    <div class="col text-end" style="display:none;">
+                        {% if can_add %}
+                        <button type="button" class="btn btn-primary" id="btn-save-plan">
+                            <i class="fa fa-check mr-1"></i> 登录
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0"><i class="fa fa-list mr-1 text-primary"></i>计划登录记录</h5>
+                    <div class="d-flex gap-2">
+                        {% if can_add %}
+                        <button type="button" class="btn btn-outline-primary" id="btn-add">
+                            <i class="fa fa-plus mr-1"></i> 手动新增
+                        </button>
+                        <button type="button" class="btn btn-outline-success" id="btn-upload">
+                            <i class="fa fa-file-excel-o mr-1"></i> Excel上传
+                        </button>
+                        <input type="file" id="file-upload" accept=".xlsx,.xls" style="display:none;">
+                        <button type="button" class="btn btn-outline-secondary" id="btn-template">
+                            <i class="fa fa-download mr-1"></i> 下载模板
+                        </button>
+                        {% endif %}
+                        {% if can_download %}
+                        <button type="button" class="btn btn-success" id="btn-export">
+                            <i class="fa fa-download mr-1"></i> 导出CSV
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- 筛选 -->
+                <div class="row mb-3 g-2">
+                    <div class="col-md-3">
+                        <input type="text" class="form-control" id="filter-keyword"
+                               placeholder="LOT / 品番 / 车种 / 客户">
+                    </div>
+                    <div class="col-auto">
+                        <input type="date" class="form-control" id="filter-date-from" title="起始日期">
+                    </div>
+                    <div class="col-auto align-self-center text-muted">至</div>
+                    <div class="col-auto">
+                        <input type="date" class="form-control" id="filter-date-to" title="结束日期">
+                    </div>
+                    <div class="col-auto">
+                        <button class="btn btn-outline-primary" id="btn-search">
+                            <i class="fa fa-search mr-1"></i> 查询
+                        </button>
+                        <button class="btn btn-outline-secondary" id="btn-reset">
+                            <i class="fa fa-refresh mr-1"></i> 重置
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>计划日期</th>
+                                <th>LOT NO</th>
+                                <th>品番</th>
+                                <th>车种</th>
+                                <th>计划数量</th>
+                                <th>客户</th>
+                                <th>状态</th>
+                                <th>操作人</th>
+                                <th>更新时间</th>
+                                <th style="width:150px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="list-tbody">
+                            <tr><td colspan="10" class="text-center text-muted py-4">加载中…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="text-muted small" id="page-info"></div>
+                    <nav>
+                        <ul class="pagination pagination-sm mb-0" id="pager"></ul>
+                    </nav>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 手动新增/编辑弹窗（列表维护用，LOT 可留空） -->
+    <div class="modal fade" id="item-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modal-title">新增</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="f-id">
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label">计划日期 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="f-date">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">LOT NO</label>
+                            <input type="text" class="form-control" id="f-lot" maxlength="100">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">品番 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="f-pno" maxlength="50">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">车种</label>
+                            <input type="text" class="form-control" id="f-vehicle" maxlength="100">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">计划数量</label>
+                            <input type="number" class="form-control" id="f-qty" min="0" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">客户</label>
+                            <select class="form-select" id="f-customer">
+                                <option value="">请选择</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">状态</label>
+                            <select class="form-select" id="f-status">
+                                <option value="pending">未完成</option>
+                                <option value="done">已完成</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">备注</label>
+                        <textarea class="form-control" id="f-remark" rows="2" maxlength="500"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-save">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 客户维护弹窗 -->
+    <div class="modal fade" id="cust-modal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">客户主数据维护</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-2 align-items-end mb-3">
+                        <input type="hidden" id="c-id">
+                        <div class="col-md-3">
+                            <label class="form-label">客户代码 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="c-code" maxlength="50">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">客户名称 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="c-name" maxlength="100">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">排序号</label>
+                            <input type="number" class="form-control" id="c-sort" value="0">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">启用</label>
+                            <select class="form-select" id="c-active">
+                                <option value="1">启用</option>
+                                <option value="0">停用</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <button type="button" class="btn btn-primary w-100" id="btn-cust-save">保存</button>
+                        </div>
+                    </div>
+                    <div class="table-responsive" style="max-height:340px;overflow:auto;">
+                        <table class="table table-sm table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>客户代码</th>
+                                    <th>客户名称</th>
+                                    <th>排序号</th>
+                                    <th>状态</th>
+                                    <th style="width:130px;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cust-tbody">
+                                <tr><td colspan="5" class="text-center text-muted py-3">加载中…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+    (function () {
+        const API = '{{ api_base }}';
+        const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+        const CAN_DELETE = {{ 'true' if can_delete else 'false' }};
+        const PER_PAGE = 20;
+        const COLS = 10;
+        let curPage = 1;
+        let cache = {};
+        let custOptions = [];   // 客户下拉选项 [{cust_code, cust_name}]
+        let priceRegistered = false;  // 当前扫码品番是否已登录单价
+
+        const modal = new bootstrap.Modal(document.getElementById('item-modal'));
+        const custModal = new bootstrap.Modal(document.getElementById('cust-modal'));
+        const tbody = document.getElementById('list-tbody');
+
+        function esc(s) {
+            return (s === null || s === undefined) ? '' : String(s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+        function today() {
+            const d = new Date();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${d.getFullYear()}-${m}-${day}`;
+        }
+        function buildQs(extra) {
+            const qs = new URLSearchParams({page: curPage, per_page: PER_PAGE});
+            const kw = document.getElementById('filter-keyword').value.trim();
+            const df = document.getElementById('filter-date-from').value;
+            const dt = document.getElementById('filter-date-to').value;
+            if (kw) qs.set('keyword', kw);
+            if (df) qs.set('date_from', df);
+            if (dt) qs.set('date_to', dt);
+            if (extra) Object.keys(extra).forEach(k => qs.set(k, extra[k]));
+            return qs;
+        }
+
+        // ---------------- 客户下拉 ----------------
+        function fillCustomerSelect(sel, current) {
+            let html = '<option value="">请选择</option>';
+            custOptions.forEach(c => {
+                const label = esc(c.cust_name) + ' (' + esc(c.cust_code) + ')';
+                html += `<option value="${esc(c.cust_name)}">${label}</option>`;
+            });
+            sel.innerHTML = html;
+            if (current) sel.value = current;
+        }
+        function loadCustomers() {
+            return fetch('/mes/api/customers')
+                .then(r => r.json())
+                .then(res => {
+                    custOptions = (res && res.success && res.items) ? res.items : [];
+                    fillCustomerSelect(document.getElementById('s-customer'));
+                    fillCustomerSelect(document.getElementById('f-customer'));
+                })
+                .catch(() => {});
+        }
+
+        // ---------------- LOT 反查带出 ----------------
+        function lookupLot() {
+            const lot = document.getElementById('s-lot').value.trim();
+            const hint = document.getElementById('s-hint');
+            if (!lot) { hint.textContent = '请先输入 LOT NO'; hint.className = 'text-danger small'; return; }
+            hint.textContent = '查询中…';
+            hint.className = 'text-muted small';
+            fetch('/mes/api/plan/lot_lookup?lot_no=' + encodeURIComponent(lot))
+                .then(r => r.json())
+                .then(res => {
+                    if (!res.success || !res.found) {
+                        clearScanFields();
+                        hint.textContent = (res && res.message) || '未找到 LOT 资料';
+                        hint.className = 'text-danger small';
+                        return;
+                    }
+                    const d = res.data;
+                    document.getElementById('s-pno').value = d.pno || '';
+                    document.getElementById('s-vehicle').value = d.vehicle_type || '';
+                    document.getElementById('s-qty').value = d.qty || 0;
+                    if (!document.getElementById('s-date').value) {
+                        document.getElementById('s-date').value = today();
+                    }
+                    // 品番未登录单价：显示错误并提醒前往单价登陆页登录，阻止后续登录
+                    if (d.price_registered === false) {
+                        priceRegistered = false;
+                        hint.textContent = `品番「${d.pno || ''}」未登录单价，请先到「单价登陆」页面登录该品番单价后再登录计划`;
+                        hint.className = 'text-danger small';
+                        alert(`品番「${d.pno || ''}」未登录单价，请先到「单价登陆」页面登录单价！`);
+                        return;
+                    }
+                    priceRegistered = true;
+                    hint.textContent = '已带出资料，请手选客户后点击「登录」';
+                    hint.className = 'text-success small';
+                    document.getElementById('s-customer').focus();
+                })
+                .catch(() => { hint.textContent = '查询失败'; hint.className = 'text-danger small'; });
+        }
+        function clearScanFields() {
+            ['s-pno', 's-vehicle'].forEach(id => document.getElementById(id).value = '');
+            document.getElementById('s-qty').value = 0;
+            priceRegistered = false;   // 清空资料时同步重置单价校验标记
+        }
+        function resetScanForm() {
+            document.getElementById('s-lot').value = '';
+            clearScanFields();
+            document.getElementById('s-customer').value = '';
+            const hint = document.getElementById('s-hint');
+            hint.textContent = '扫码或输入 LOT NO 后按回车自动带出资料';
+            hint.className = 'text-muted small';
+            document.getElementById('s-lot').focus();
+        }
+
+        function savePlan() {
+            const payload = {
+                plan_date: document.getElementById('s-date').value,
+                lot_no: document.getElementById('s-lot').value.trim(),
+                pno: document.getElementById('s-pno').value.trim(),
+                vehicle_type: document.getElementById('s-vehicle').value.trim(),
+                plan_qty: parseInt(document.getElementById('s-qty').value, 10) || 0,
+                customer: document.getElementById('s-customer').value,
+                status: 'pending'
+            };
+            if (!payload.plan_date) { alert('请选择计划日期'); return; }
+            if (!payload.pno) { alert('品番为空，请先扫码带出 LOT 资料'); return; }
+            // 品番未登录单价时禁止提交，提醒先登录单价
+            if (!priceRegistered) { alert(`品番「${payload.pno}」未登录单价，请先到「单价登陆」页面登录单价！`); return; }
+            if (!payload.customer) { alert('请手选客户'); return; }
+            fetch(API, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).then(r => r.json()).then(res => {
+                if (res.success) { resetScanForm(); load(1); }
+                else alert(res.message || '登录失败');
+            }).catch(() => alert('登录失败'));
+        }
+
+        // ---------------- 列表 ----------------
+        function load(page) {
+            curPage = page || 1;
+            fetch(API + '?' + buildQs().toString())
+                .then(r => r.json())
+                .then(res => {
+                    if (!res.success) { alert(res.message || '加载失败'); return; }
+                    renderRows(res.items);
+                    renderPager(res.page, res.pages, res.total);
+                })
+                .catch(() => { tbody.innerHTML = '<tr><td colspan="' + COLS + '" class="text-center text-danger py-4">加载失败</td></tr>'; });
+        }
+
+        function renderRows(items) {
+            cache = {};
+            items.forEach(i => { cache[i.id] = i; });
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="' + COLS + '" class="text-center text-muted py-4">暂无数据</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map(g => {
+                let ops = '';
+                if (CAN_EDIT) ops += `<button class="btn btn-sm btn-outline-primary mr-1" data-edit="${g.id}">编辑</button>`;
+                // 已完成状态禁止删除：按钮置灰，后端亦会二次拦截
+                if (CAN_DELETE) {
+                    ops += g.status === 'done'
+                        ? `<button class="btn btn-sm btn-outline-secondary" disabled title="已完成的计划禁止删除">删除</button>`
+                        : `<button class="btn btn-sm btn-outline-danger" data-del="${g.id}">删除</button>`;
+                }
+                const status = g.status === 'done'
+                    ? '<span class="badge bg-success">已完成</span>'
+                    : '<span class="badge bg-warning text-dark">未完成</span>';
+                return `<tr>
+                    <td>${esc(g.plan_date)}</td>
+                    <td>${esc(g.lot_no)}</td>
+                    <td>${esc(g.pno)}</td>
+                    <td>${esc(g.vehicle_type)}</td>
+                    <td>${g.plan_qty}</td>
+                    <td>${esc(g.customer)}</td>
+                    <td>${status}</td>
+                    <td>${esc(g.created_by_name)}</td>
+                    <td>${esc(g.updated_at) || '-'}</td>
+                    <td>${ops || '-'}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderPager(page, pages, total) {
+            document.getElementById('page-info').textContent = `共 ${total} 条，第 ${page}/${pages || 1} 页`;
+            const ul = document.getElementById('pager');
+            let html = '';
+            const mk = (p, label, disabled, active) =>
+                `<li class="page-item ${disabled ? 'disabled' : ''} ${active ? 'active' : ''}">
+                    <a class="page-link" href="#" data-page="${p}">${label}</a></li>`;
+            html += mk(page - 1, '上一页', page <= 1, false);
+            for (let p = 1; p <= pages; p++) {
+                if (p === 1 || p === pages || Math.abs(p - page) <= 2) {
+                    html += mk(p, p, false, p === page);
+                } else if (Math.abs(p - page) === 3) {
+                    html += '<li class="page-item disabled"><span class="page-link">…</span></li>';
+                }
+            }
+            html += mk(page + 1, '下一页', page >= pages, false);
+            ul.innerHTML = html;
+        }
+
+        // ---------------- 手动新增/编辑 ----------------
+        function openModal(g) {
+            document.getElementById('modal-title').textContent = g ? '编辑' : '新增';
+            document.getElementById('f-id').value = g ? g.id : '';
+            document.getElementById('f-date').value = g ? g.plan_date : today();
+            document.getElementById('f-lot').value = g ? g.lot_no : '';
+            document.getElementById('f-pno').value = g ? g.pno : '';
+            document.getElementById('f-vehicle').value = g ? g.vehicle_type : '';
+            document.getElementById('f-qty').value = g ? g.plan_qty : 0;
+            fillCustomerSelect(document.getElementById('f-customer'), g ? g.customer : '');
+            document.getElementById('f-status').value = g ? (g.status || 'pending') : 'pending';
+            document.getElementById('f-remark').value = g ? g.remark : '';
+            modal.show();
+        }
+
+        function save() {
+            const id = document.getElementById('f-id').value;
+            const payload = {
+                plan_date: document.getElementById('f-date').value,
+                lot_no: document.getElementById('f-lot').value.trim(),
+                pno: document.getElementById('f-pno').value.trim(),
+                vehicle_type: document.getElementById('f-vehicle').value.trim(),
+                plan_qty: parseInt(document.getElementById('f-qty').value, 10) || 0,
+                customer: document.getElementById('f-customer').value,
+                status: document.getElementById('f-status').value,
+                remark: document.getElementById('f-remark').value.trim()
+            };
+            if (!payload.plan_date || !payload.pno) { alert('计划日期与品番为必填项'); return; }
+            fetch(id ? (API + '/' + id) : API, {
+                method: id ? 'PUT' : 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).then(r => r.json()).then(res => {
+                if (res.success) { modal.hide(); load(id ? curPage : 1); }
+                else alert(res.message || '保存失败');
+            }).catch(() => alert('保存失败'));
+        }
+
+        function del(id) {
+            if (!confirm('确认删除该记录？')) return;
+            fetch(API + '/' + id, {method: 'DELETE'})
+                .then(r => r.json())
+                .then(res => { if (res.success) load(curPage); else alert(res.message || '删除失败'); })
+                .catch(() => alert('删除失败'));
+        }
+
+        // ---------------- 客户维护 ----------------
+        function loadCustAdmin() {
+            const tb = document.getElementById('cust-tbody');
+            tb.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">加载中…</td></tr>';
+            fetch('/mes/api/customers/admin')
+                .then(r => r.json())
+                .then(res => {
+                    if (!res.success) { tb.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">加载失败</td></tr>'; return; }
+                    if (!res.items.length) { tb.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">暂无客户</td></tr>'; return; }
+                    tb.innerHTML = res.items.map(c => `<tr>
+                        <td>${esc(c.cust_code)}</td>
+                        <td>${esc(c.cust_name)}</td>
+                        <td>${c.sort_no}</td>
+                        <td>${c.is_active ? '<span class="badge bg-success">启用</span>' : '<span class="badge bg-secondary">停用</span>'}</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary mr-1" data-cedit="${c.id}">编辑</button>
+                            <button class="btn btn-sm btn-outline-danger" data-cdel="${c.id}">删除</button>
+                        </td>
+                    </tr>`).join('');
+                    tb._items = res.items;
+                })
+                .catch(() => { tb.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">加载失败</td></tr>'; });
+        }
+
+        function saveCust() {
+            const payload = {
+                id: document.getElementById('c-id').value || null,
+                cust_code: document.getElementById('c-code').value.trim(),
+                cust_name: document.getElementById('c-name').value.trim(),
+                sort_no: parseInt(document.getElementById('c-sort').value, 10) || 0,
+                is_active: document.getElementById('c-active').value === '1'
+            };
+            if (!payload.cust_code || !payload.cust_name) { alert('客户代码与名称为必填项'); return; }
+            fetch('/mes/api/customers/admin', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).then(r => r.json()).then(res => {
+                if (res.success) {
+                    resetCustForm();
+                    loadCustAdmin();
+                    loadCustomers();
+                } else alert(res.message || '保存失败');
+            }).catch(() => alert('保存失败'));
+        }
+
+        function resetCustForm() {
+            document.getElementById('c-id').value = '';
+            document.getElementById('c-code').value = '';
+            document.getElementById('c-name').value = '';
+            document.getElementById('c-sort').value = 0;
+            document.getElementById('c-active').value = '1';
+        }
+
+        // ---------------- Excel 上传 ----------------
+        function uploadExcel(file) {
+            if (!file) return;
+            const fd = new FormData();
+            fd.append('file', file);
+            const btn = document.getElementById('btn-upload');
+            btn.disabled = true;
+            fetch(API + '/upload', {method: 'POST', body: fd, headers: {'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content}})
+                .then(r => r.json())
+                .then(res => {
+                    btn.disabled = false;
+                    if (!res.success) { alert(res.message || '上传失败'); return; }
+                    let msg = `导入完成：成功 ${res.imported} 行，失败 ${res.failed} 行。`;
+                    if (res.errors && res.errors.length) {
+                        msg += '\n\n失败明细（前 ' + res.errors.length + ' 条）：\n'
+                             + res.errors.map(e => `第 ${e.row} 行：${e.message}`).join('\n');
+                    }
+                    alert(msg);
+                    load(1);
+                })
+                .catch(() => { btn.disabled = false; alert('上传失败'); });
+        }
+
+        // ---------------- 事件绑定 ----------------
+        document.getElementById('s-lot').addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); lookupLot(); }
+        });
+        document.getElementById('s-lot').addEventListener('change', lookupLot);
+        const btnSavePlan = document.getElementById('btn-save-plan');
+        if (btnSavePlan) btnSavePlan.addEventListener('click', savePlan);
+
+        // 客户维护入口已迁移至单价登陆页，此处保持空值安全
+        const btnCustManage = document.getElementById('btn-cust-manage');
+        if (btnCustManage) btnCustManage.addEventListener('click', () => {
+            resetCustForm();
+            loadCustAdmin();
+            custModal.show();
+        });
+        document.getElementById('btn-cust-save').addEventListener('click', saveCust);
+        document.getElementById('cust-tbody').addEventListener('click', e => {
+            const eid = e.target.getAttribute('data-cedit');
+            const did = e.target.getAttribute('data-cdel');
+            const items = document.getElementById('cust-tbody')._items || [];
+            if (eid) {
+                const c = items.find(x => String(x.id) === String(eid));
+                if (c) {
+                    document.getElementById('c-id').value = c.id;
+                    document.getElementById('c-code').value = c.cust_code;
+                    document.getElementById('c-name').value = c.cust_name;
+                    document.getElementById('c-sort').value = c.sort_no;
+                    document.getElementById('c-active').value = c.is_active ? '1' : '0';
+                }
+            } else if (did) {
+                if (!confirm('确认删除该客户？')) return;
+                fetch('/mes/api/customers/admin/' + did, {method: 'DELETE'})
+                    .then(r => r.json())
+                    .then(res => { if (res.success) { loadCustAdmin(); loadCustomers(); } else alert(res.message || '删除失败'); })
+                    .catch(() => alert('删除失败'));
+            }
+        });
+
+        document.getElementById('btn-search').addEventListener('click', () => load(1));
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            document.getElementById('filter-keyword').value = '';
+            document.getElementById('filter-date-from').value = '';
+            document.getElementById('filter-date-to').value = '';
+            load(1);
+        });
+        document.getElementById('filter-keyword').addEventListener('keydown', e => { if (e.key === 'Enter') load(1); });
+        const btnAdd = document.getElementById('btn-add');
+        if (btnAdd) btnAdd.addEventListener('click', () => openModal(null));
+        const btnUpload = document.getElementById('btn-upload');
+        const fileUpload = document.getElementById('file-upload');
+        if (btnUpload) btnUpload.addEventListener('click', () => fileUpload.click());
+        if (fileUpload) fileUpload.addEventListener('change', e => {
+            if (e.target.files.length) { uploadExcel(e.target.files[0]); e.target.value = ''; }
+        });
+        // 下载导入模板（服务端按标准列头生成 xlsx）
+        const btnTemplate = document.getElementById('btn-template');
+        if (btnTemplate) btnTemplate.addEventListener('click', () => {
+            window.location.href = API + '/template';
+        });
+        document.getElementById('btn-save').addEventListener('click', save);
+        const btnExport = document.getElementById('btn-export');
+        if (btnExport) btnExport.addEventListener('click', () => {
+            window.location.href = API + '/export?' + buildQs().toString();
+        });
+
+        tbody.addEventListener('click', e => {
+            const editId = e.target.getAttribute('data-edit');
+            const delId = e.target.getAttribute('data-del');
+            if (editId) {
+                if (cache[editId]) { openModal(cache[editId]); return; }
+                fetch(API + '?' + buildQs({page: curPage}).toString())
+                    .then(r => r.json())
+                    .then(res => {
+                        const g = (res.items || []).find(x => String(x.id) === String(editId));
+                        if (g) openModal(g);
+                    });
+            } else if (delId) {
+                del(delId);
+            }
+        });
+
+        document.getElementById('pager').addEventListener('click', e => {
+            e.preventDefault();
+            const p = e.target.getAttribute('data-page');
+            if (p && !e.target.closest('.disabled')) load(parseInt(p, 10));
+        });
+
+        // ---------------- 初始化 ----------------
+        document.getElementById('s-date').value = today();
+        // 日期筛选默认取当天
+        document.getElementById('filter-date-from').value = today();
+        document.getElementById('filter-date-to').value = today();
+        loadCustomers();
+        load(1);
+    })();
+    </script>
+</body>
+</html>

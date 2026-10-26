@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>投入计划书 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .card { margin-bottom: 12px; }
+        .card-header { padding: 0.45rem 0.9rem; }
+        .card-body { padding: 0.8rem; }
+        .table th { background-color: #f8f9fa; white-space: nowrap; }
+        .table td { vertical-align: middle; }
+        .table-sm th, .table-sm td { padding: 0.35rem 0.5rem; }
+        .batch-badge {
+            display: inline-block; min-width: 26px; text-align: center;
+            color: #fff; font-weight: 600; border-radius: 4px; padding: 2px 6px;
+        }
+        .batch-A { background: #0d6efd; }
+        .batch-B { background: #198754; }
+        .batch-J { background: #6f42c1; }
+        .batch-7 { background: #fd7e14; }
+        .batch-G { background: #dc3545; }
+        .batch-default { background: #6c757d; }
+        /* 1-9 / A-Z 等扩展批次兜底配色（未在固定集合中的批次显示灰色） */
+        .batch-badge:not(.batch-A):not(.batch-B):not(.batch-J):not(.batch-7):not(.batch-G):not(.batch-default) {
+            background: #6c757d; color: #fff;
+        }
+        .tag-chip {
+            display: inline-block; font-size: 0.75rem; padding: 1px 8px;
+            border-radius: 10px; background: #e7f1ff; color: #0d6efd; margin: 1px 2px;
+        }
+        .tag-紧急 { background: #fde8e8; color: #dc3545; }
+        .tag-配对 { background: #fff3cd; color: #997404; }
+        .tag-AS { background: #e2e3e5; color: #495057; }
+        .tag-副线不投入 { background: #f8d7da; color: #842029; }
+        .tag-海外RHD { background: #d1e7dd; color: #0f5132; }
+        .kpi-card {
+            border-left: 4px solid #0d6efd; background: #f8f9fa;
+            padding: 12px 16px; border-radius: 6px;
+        }
+        .kpi-card .num { font-size: 1.5rem; font-weight: 700; color: #0d6efd; }
+        .kpi-card .label { font-size: 0.8rem; color: #6c757d; }
+        .error-icon { color: #dc3545; }
+        .warn-icon { color: #fd7e14; }
+        #fileListSection { scroll-margin-top: 20px; }
+        .file-actions .btn { white-space: nowrap; }
+        .calendar-table td { height: 34px; vertical-align: middle; cursor: default; }
+        .calendar-table td[data-date] { cursor: pointer; }
+        .calendar-table td.table-success { background-color: #d1e7dd; }
+        .calendar-table td.table-warning { background-color: #fff3cd; }
+        .calendar-table td[data-date]:hover { background-color: #dee2e6; }
+        .calendar-table .cal-day-num { font-weight: 600; font-size: 0.9rem; }
+        .calendar-table .badge { font-size: 0.65rem; }
+        .upload-dropzone {
+            border: 2px dashed #86b7fe; border-radius: 8px;
+            background: #f0f7ff; padding: 10px; text-align: center;
+            cursor: pointer; transition: all 0.2s ease;
+        }
+        .upload-dropzone .fs-5 { font-size: 0.95rem !important; }
+        .upload-dropzone.dragover { border-color: #0d6efd; background: #e7f1ff; }
+        .file-chips { list-style: none; padding: 0; margin-top: 8px; text-align: left; }
+        .file-chips li {
+            background: #e7f1ff; border-radius: 12px; padding: 2px 10px;
+            margin: 3px 6px 0 0; display: inline-block; font-size: 0.78rem; color: #0d6efd;
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    <div class="container-fluid mt-4">
+        <div class="d-flex justify-content-between flex-wrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+            <h1 class="h3 mb-0"><i class="fa fa-file-excel-o text-primary me-2"></i>投入计划书</h1>
+            <span class="text-muted small">批量上传每日投入计划书 Excel → 数据直接入库（LOT自动解析批次/投入日期、系统内唯一查重）→ 按 投入日期 / 月 / 季度 筛选统计并导出</span>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 左侧批量上传区 + 右侧上传日历（同一排，日历位于右侧偏上，与上传插件对齐） -->
+        <div class="row g-3">
+            <div class="col-lg-8">
+        <!-- 批量上传区 -->
+        <div class="card">
+            <div class="card-header bg-primary text-white py-2">
+                <i class="fa fa-upload me-1"></i> 批量上传投入计划书
+            </div>
+            <div class="card-body py-2">
+                <form method="POST" enctype="multipart/form-data" id="investForm"
+                      class="d-flex flex-wrap align-items-center gap-2 mb-0">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="file" class="d-none" id="excelFiles" name="excelFiles"
+                           accept=".xlsx,.xlsm,.xls" multiple required>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="dropZone"
+                            title="点击选择，或将 Excel 直接拖到此处（.xlsx / .xlsm / .xls，可多选）">
+                        <i class="fa fa-cloud-upload me-1"></i>选择文件
+                    </button>
+                    <span class="badge bg-light text-dark border" id="fileChips" title="已选文件列表">0 个文件</span>
+                    <button type="submit" class="btn btn-sm btn-primary" id="investBtn">
+                        <i class="fa fa-cogs me-1"></i>上传并直接入库
+                    </button>
+                    <span class="text-muted small d-none d-xl-inline">LOT 自动解析批次/投入日期、系统内唯一查重；MES678 自动比对；.xls 自动转换</span>
+                </form>
+            </div>
+        </div>
+
+        <!-- 历史投入数据筛选（与上传区同一区域，大小与右侧上传日历卡对齐） -->
+        <div class="card">
+            <div class="card-header bg-secondary text-white">
+                <i class="fa fa-filter me-1"></i> 历史投入数据筛选汇总（按日期 / 车种 / 批次 选择性汇总）
+            </div>
+            <div class="card-body">
+                <form method="GET" action="{{ url_for('main.invest_tidy') }}" id="filterForm">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-6">
+                            <label class="form-label" for="date_from">投入日期起</label>
+                            <input type="date" class="form-control" id="date_from" name="date_from"
+                                   value="{{ (filter_values or {}).get('date_from','') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="date_to">投入日期止</label>
+                            <input type="date" class="form-control" id="date_to" name="date_to"
+                                   value="{{ (filter_values or {}).get('date_to','') }}">
+                        </div>
+                        <div class="col-12">
+                            <div class="form-text mt-0">按投入日期筛选（默认当天，LOT 投入日期优先）</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="vehicle">车种</label>
+                            <input type="text" class="form-control" id="vehicle" name="vehicle" list="vehicleList"
+                                   placeholder="全部" value="{{ (filter_values or {}).get('vehicle','') }}">
+                            <datalist id="vehicleList">
+                                {% for v in (filter_options or {}).get('vehicles', []) %}
+                                <option value="{{ v }}"></option>
+                                {% endfor %}
+                            </datalist>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="batch">批次</label>
+                            <select class="form-select" id="batch" name="batch">
+                                <option value="">全部</option>
+                                {% for b in (filter_options or {}).get('batches', []) %}
+                                <option value="{{ b }}" {% if (filter_values or {}).get('batch') == b %}selected{% endif %}>{{ b }}次</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="keyword">关键词（品番/LOT）</label>
+                            <input type="text" class="form-control" id="keyword" name="keyword"
+                                   value="{{ (filter_values or {}).get('keyword','') }}">
+                        </div>
+                        <div class="col-12 d-flex gap-2">
+                            <button type="submit" class="btn btn-secondary" id="filterBtn">
+                                <i class="fa fa-search me-1"></i>开始筛选汇总
+                            </button>
+                            {% if filter_count is not none %}
+                            <a href="{{ url_for('main.invest_batch_detail_download',
+                                scope=(filter_values or {}).get('scope',''),
+                                month=(filter_values or {}).get('month',''),
+                                quarter=(filter_values or {}).get('quarter',''),
+                                date_from=(filter_values or {}).get('date_from',''),
+                                date_to=(filter_values or {}).get('date_to',''),
+                                vehicle=(filter_values or {}).get('vehicle',''),
+                                batch=(filter_values or {}).get('batch',''),
+                                keyword=(filter_values or {}).get('keyword','')) }}"
+                               class="btn btn-success" id="btnFilterDownload"
+                               title="仅导出「批次明细」单表，不做汇总处理，速度快">
+                                <i class="fa fa-download me-1"></i>下载批次明细Excel
+                            </a>
+                            {% endif %}
+                        </div>
+                        <!-- 周期快捷：按 自然月/自然季度 一键筛选 -->
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-3">
+                                <label class="form-label" for="scope">周期快捷</label>
+                                <select class="form-select" id="scope" name="scope">
+                                    <option value="">自定义日期</option>
+                                    <option value="7d" {% if (filter_values or {}).get('scope') == '7d' %}selected{% endif %}>最近7天</option>
+                                    <option value="30d" {% if (filter_values or {}).get('scope') == '30d' %}selected{% endif %}>最近30天</option>
+                                    <option value="month" {% if (filter_values or {}).get('scope') == 'month' %}selected{% endif %}>自然月</option>
+                                    <option value="quarter" {% if (filter_values or {}).get('scope') == 'quarter' %}selected{% endif %}>自然季度</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3" id="monthWrap" style="display:none">
+                                <label class="form-label" for="month">选择月份</label>
+                                <select class="form-select" id="month" name="month">
+                                    {% for mo in (months or []) %}
+                                    <option value="{{ mo.value }}" {% if (filter_values or {}).get('month') == mo.value %}selected{% endif %}>{{ mo.label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3" id="quarterWrap" style="display:none">
+                                <label class="form-label" for="quarter">选择季度</label>
+                                <select class="form-select" id="quarter" name="quarter">
+                                    <option value="">全部</option>
+                                    {% for qv, ql in [('2025-Q1','2025年Q1'),('2025-Q2','2025年Q2'),('2025-Q3','2025年Q3'),('2025-Q4','2025年Q4'),('2026-Q1','2026年Q1'),('2026-Q2','2026年Q2'),('2026-Q3','2026年Q3'),('2026-Q4','2026年Q4')] %}
+                                    <option value="{{ qv }}" {% if (filter_values or {}).get('quarter') == qv %}selected{% endif %}>{{ ql }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3 text-muted small align-self-end">选择「最近7天 / 30天 / 自然月 / 季度」后，自动汇总该区间所有日期的投入量，并可直接导出 Excel。</div>
+                        </div>
+                    </div>
+                </form>
+                <div class="text-muted small mt-2">上传的历史投入计划书已长期保存至数据库，可跨文件按条件选择性汇总。</div>
+            </div>
+        </div>
+            </div>
+
+            <div class="col-lg-4">
+                <!-- 上传日历：确认每日是否遗漏上传（右侧偏上，与上传插件一排） -->
+                {% if calendar_data %}
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <i class="fa fa-calendar me-1"></i> 上传日历（确认每日是否遗漏上传）
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <a href="{{ url_for('main.invest_tidy', cy=calendar_data.prev.year, cm=calendar_data.prev.month) }}"
+                               class="btn btn-sm btn-outline-secondary"><i class="fa fa-chevron-left me-1"></i>上月</a>
+                            <h5 class="mb-0">
+                                {{ calendar_data.year }}年{{ calendar_data.month }}月
+                                <span class="badge bg-success ms-1">已上传 {{ calendar_data.uploaded_count }} 天</span>
+                                <span class="badge bg-secondary ms-1">{{ calendar_data.days|length }} 天</span>
+                            </h5>
+                            <a href="{{ url_for('main.invest_tidy', cy=calendar_data.next.year, cm=calendar_data.next.month) }}"
+                               class="btn btn-sm btn-outline-secondary">下月<i class="fa fa-chevron-right ms-1"></i></a>
+                        </div>
+                        <table class="table table-bordered table-sm text-center calendar-table">
+                            <thead><tr><th>一</th><th>二</th><th>三</th><th>四</th><th>五</th><th>六</th><th>日</th></tr></thead>
+                            <tbody>
+                                <tr>
+                                {% for i in range(7 * ((calendar_data.first_weekday + calendar_data.days|length + 6) // 7)) %}
+                                    {% if i >= calendar_data.first_weekday and i < calendar_data.first_weekday + calendar_data.days|length %}
+                                    {% set d = calendar_data.days[i - calendar_data.first_weekday] %}
+                                    <td class="{{ 'table-success fw-bold' if d.uploaded else '' }} {{ 'table-warning' if d.is_today else '' }}"
+                                            data-date="{{ d.date }}"
+                                            title="{{ '双击跳转到文件入口' if d.uploaded else '未上传，双击填入筛选日期' }}">
+                                        <div class="cal-day-num">{{ d.day }}</div>
+                                        {% if d.uploaded %}<span class="badge bg-success">{{ d.files|length }}个</span>
+                                        <div class="text-truncate small" style="max-width:80px;color:#0a5c36;">{{ d.files[0] }}</div>{% endif %}
+                                        {% if d.is_today %}<div class="small text-danger fw-bold">今天</div>{% endif %}
+                                    </td>
+                                    {% else %}
+                                    <td class="text-muted"></td>
+                                    {% endif %}
+                                    {% if (i + 1) % 7 == 0 and not loop.last %}</tr><tr>{% endif %}
+                                {% endfor %}
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div class="text-muted small">
+                            <span class="badge bg-success">N个</span> = 当日已上传N个文件（双击跳转文件入口）；
+                            黄色格 = 今天；空白格 = 未上传（双击可将筛选日期设为该日）。
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 历史数据筛选已并入上方左侧区域（批量上传卡片下方，与上传日历卡同一排对齐） -->
+
+        
+
+        {% if batches %}
+        <div id="fileListSection">
+            <!-- 总览 KPI -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0"><i class="fa fa-bar-chart text-primary me-1"></i>批量解析总览（共 {{ totals.files }} 个文件）</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-6 col-md-3"><div class="kpi-card"><div class="num">{{ totals.files }}</div><div class="label">上传文件数</div></div></div>
+                        <div class="col-6 col-md-3"><div class="kpi-card"><div class="num">{{ totals.rows }}</div><div class="label">投入明细行总数</div></div></div>
+                        <div class="col-6 col-md-3"><div class="kpi-card"><div class="num">{{ totals.parts }}</div><div class="label">有量品番总数</div></div></div>
+                        <div class="col-6 col-md-3"><div class="kpi-card"><div class="num">{{ totals.qty }}</div><div class="label">总投入数量</div></div></div>
+                        <div class="col-6 col-md-3"><div class="kpi-card"><div class="num">{{ totals.circuits }}</div><div class="label">总回路数</div></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 文件列表 -->
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h5 class="card-title mb-0"><i class="fa fa-list text-primary me-1"></i>上传文件列表
+                        <span class="badge bg-secondary ms-1">{{ batches|length }}</span></h5>
+                    <div class="d-inline-flex align-items-center gap-2">
+                        <span class="text-muted small">已选 <span id="selCount" class="fw-bold text-primary">0</span> 个文件</span>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="btnCheckAll">
+                            <i class="fa fa-check-square-o me-1"></i>全部选择
+                        </button>
+                        <button type="button" class="btn btn-primary btn-sm" id="btnBatchDownload" disabled>
+                            <i class="fa fa-download me-1"></i>批量下载所选
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body table-responsive">
+                    <table class="table table-sm table-bordered table-hover" id="investFileTable">
+                        <thead>
+                            <tr>
+                                <th class="text-center" style="width:34px">
+                                    <input type="checkbox" id="chkAll" title="全选/取消全选">
+                                </th>
+                                <th>#</th>
+                                <th>文件名</th>
+                                <th>投入日期</th>
+                                <th class="text-center">批次</th>
+                                <th class="text-end">明细行数</th>
+                                <th class="text-end">有量品番数</th>
+                                <th class="text-center">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in batches %}
+                            <tr id="file-row-{{ loop.index0 }}" data-file="{{ row.source_file }}">
+                                <td class="text-center">
+                                    <input type="checkbox" class="row-chk" value="{{ row.source_file }}">
+                                </td>
+                                <td>{{ loop.index }}</td>
+                                <td class="text-break">{{ row.source_file }}</td>
+                                <td class="text-center">{{ row.record_date or '' }}</td>
+                                <td class="text-center">
+                                    {% for s in row.detail_sheets %}
+                                    <span class="batch-badge batch-{{ s.batch if s.batch else 'default' }}" title="{{ s.name }}">{{ s.batch or '?' }}</span>
+                                    {% endfor %}
+                                </td>
+                                <td class="text-end">{{ row.record_len }}</td>
+                                <td class="text-end">{{ row.parts_len }}</td>
+                                <td class="text-center file-actions" style="min-width:300px;">
+                                    <a href="{{ url_for('main.invest_tidy_download', filename=row.source_file) }}"
+                                       class="btn btn-success btn-sm"><i class="fa fa-download me-1"></i>下载</a>
+                                    <form method="POST" action="{{ url_for('main.invest_tidy_reupload') }}"
+                                          enctype="multipart/form-data" class="d-inline-block" id="reform-{{ loop.index0 }}">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="old_name" value="{{ row.source_file }}">
+                                        <input type="file" name="excelFile" class="d-none"
+                                       accept=".xlsx,.xlsm,.xls" onchange="this.form.submit()">
+                                        <button type="button" class="btn btn-outline-primary btn-sm"
+                                                onclick="document.querySelector('#reform-{{ loop.index0 }} input[type=file]').click()">
+                                            <i class="fa fa-refresh me-1"></i>重新上传
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('main.invest_tidy_delete') }}"
+                                          class="d-inline-block" onsubmit="return confirm('确定删除《{{ row.source_file }}》的全部入库数据？');">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="filename" value="{{ row.source_file }}">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">
+                                            <i class="fa fa-trash me-1"></i>删除入库
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="8" class="text-center text-muted py-3">尚未上传文件，请先批量上传投入计划书。</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    <div class="text-muted small">提示：点击「下载」直接导出该文件汇总Excel（含批次明细/品番聚合/车种品目/团队统计/异常清单）；「重新上传」覆盖该文件入库数据；「删除入库」移除该文件全部存储记录。</div>
+                </div>
+            </div>
+
+            <!-- 详细数据不再在网页展示：文件列表「下载」按钮导出的Excel已含批次明细/品番聚合/车种品目/团队统计/异常清单 -->
+
+            <div class="text-center mb-4">
+                <a href="javascript:void(0)" onclick="window.scrollTo({top:0,behavior:'smooth'})" class="btn btn-outline-secondary btn-sm">返回顶部</a>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 历史筛选结果：仅显示命中条数 + 导出入口（不加载明细，避免卡顿） -->
+        {% if filter_count is not none %}
+        <div id="filterResultSection" class="mt-4">
+            <div class="card">
+                <div class="card-header bg-secondary text-white">
+                    <i class="fa fa-bar-chart me-1"></i>历史筛选结果
+                </div>
+                <div class="card-body">
+                    <div class="row g-3 mb-3">
+                        <div class="col-6 col-md-3"><div class="kpi-card"><div class="num">{{ filter_count }}</div><div class="label">筛选明细行数</div></div></div>
+                    </div>
+                    {% if filter_count %}
+                    <div class="alert alert-info mb-3">
+                        命中 <strong>{{ filter_count }}</strong> 条批次明细。为避免大数据量导致页面卡顿，此处不再预览明细，请直接导出 Excel（仅含「批次明细」单表，已按投入日期排序）。
+                    </div>
+                    {% else %}
+                    <div class="alert alert-warning mb-3">筛选条件下无明细数据。</div>
+                    {% endif %}
+                    <div class="text-center mt-3">
+                        <a href="{{ filter_export_url or url_for('main.invest_batch_detail_download') }}"
+                           class="btn btn-success" id="btnFilterDownloadInline"
+                           title="仅导出「批次明细」单表，不做汇总处理，速度快">
+                            <i class="fa fa-download me-1"></i>导出批次明细Excel
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('investForm')?.addEventListener('submit', function() {
+            const btn = document.getElementById('investBtn');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 正在上传入库...';
+            }
+        });
+        // 周期快捷：选择「自然月/季度」时联动显示对应下拉
+        const scopeEl = document.getElementById('scope');
+        const monthWrap = document.getElementById('monthWrap');
+        const quarterWrap = document.getElementById('quarterWrap');
+        function togglePeriod() {
+            if (!scopeEl) return;
+            const v = scopeEl.value;
+            if (monthWrap) monthWrap.style.display = v === 'month' ? '' : 'none';
+            if (quarterWrap) quarterWrap.style.display = v === 'quarter' ? '' : 'none';
+        }
+        scopeEl?.addEventListener('change', togglePeriod);
+        togglePeriod();
+
+        // 批量上传（条形）：点击/拖拽选择 + 已选文件计数
+        const dropZone = document.getElementById('dropZone');
+        const excelInput = document.getElementById('excelFiles');
+        const chips = document.getElementById('fileChips');
+        if (dropZone && excelInput) {
+            dropZone.addEventListener('click', function() { excelInput.click(); });
+            dropZone.addEventListener('dragover', function(e) { e.preventDefault(); dropZone.classList.add('btn-outline-success'); });
+            dropZone.addEventListener('dragleave', function(e) { dropZone.classList.remove('btn-outline-success'); });
+            dropZone.addEventListener('drop', function(e) {
+                e.preventDefault();
+                dropZone.classList.remove('btn-outline-success');
+                if (e.dataTransfer && e.dataTransfer.files.length) {
+                    excelInput.files = e.dataTransfer.files;
+                    renderFileChips();
+                }
+            });
+            excelInput.addEventListener('change', renderFileChips);
+            function renderFileChips() {
+                if (!chips) return;
+                const n = excelInput.files ? excelInput.files.length : 0;
+                chips.textContent = n + ' 个文件';
+                chips.title = n ? Array.from(excelInput.files).map(function(f) { return f.name; }).join('\n') : '已选文件列表';
+            }
+        }
+
+        // 上传成功提示自动清除（3.5 秒后淡出移除），异常/警告提示保留供人工确认
+        setTimeout(function() {
+            document.querySelectorAll('.alert-success').forEach(function(a) {
+                a.style.transition = 'opacity 0.9s ease';
+                a.style.opacity = '0';
+                setTimeout(function() { if (a.parentNode) a.parentNode.removeChild(a); }, 950);
+            });
+        }, 3500);
+
+        // 文件列表自动折叠分页：条目超过 PAGE 条时自动折叠，可一键展开全部
+        (function() {
+            const rows = Array.from(document.querySelectorAll('#investFileTable tbody tr[data-file]'));
+            const PAGE = 10;
+            if (rows.length <= PAGE) return;
+            let folded = true;
+            function apply() {
+                rows.forEach(function(r, i) { r.style.display = (folded && i >= PAGE) ? 'none' : ''; });
+                let bar = document.getElementById('foldBar');
+                if (!bar) {
+                    bar = document.createElement('div');
+                    bar.id = 'foldBar';
+                    bar.className = 'text-center py-2';
+                    const tbl = document.getElementById('investFileTable');
+                    if (tbl && tbl.parentNode) tbl.parentNode.insertBefore(bar, tbl.nextSibling);
+                }
+                bar.innerHTML = folded
+                    ? '<button type="button" id="btnFold" class="btn btn-sm btn-outline-primary">已自动折叠 ' + (rows.length - PAGE) + ' 条，点击展开全部（共 ' + rows.length + ' 条）</button>'
+                    : '<button type="button" id="btnFold" class="btn btn-sm btn-outline-secondary">收起折叠（仅显示前 ' + PAGE + ' 条）</button>';
+                bar.querySelector('#btnFold').addEventListener('click', function() { folded = !folded; apply(); refreshSel(); });
+            }
+            apply();
+        })();
+        // 日历双击：已上传日期跳转到下方文件入口；未上传日期将筛选日期设为当日
+        const calDays = {{ (calendar_data.days if calendar_data else [])|tojson }};
+        function fillFilterDate(date) {
+            const df = document.getElementById('date_from');
+            const dt = document.getElementById('date_to');
+            if (df) df.value = date;
+            if (dt) dt.value = date;
+            const form = document.getElementById('filterForm');
+            if (form) form.submit();
+        }
+        document.querySelectorAll('.calendar-table td[data-date]').forEach(function(td) {
+            td.addEventListener('dblclick', function() {
+                const date = td.getAttribute('data-date');
+                const info = (calDays || []).find(function(d) { return d.date === date; });
+                if (!info || !info.files || !info.files.length) { fillFilterDate(date); return; }
+                // 优先跳转页面文件列表中的对应行
+                let target = null;
+                document.querySelectorAll('#fileListSection tbody tr[data-file]').forEach(function(tr) {
+                    if (info.files.indexOf(tr.getAttribute('data-file')) >= 0 && !target) target = tr;
+                });
+                if (target) {
+                    target.classList.add('table-warning');
+                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setTimeout(function() { target.classList.remove('table-warning'); }, 2500);
+                } else {
+                    fillFilterDate(date);
+                }
+            });
+        });
+
+        // ===== 文件列表：全部选择 + 批量下载 =====
+        const chkAll = document.getElementById('chkAll');
+        const selCount = document.getElementById('selCount');
+        const btnCheckAll = document.getElementById('btnCheckAll');
+        const btnBatch = document.getElementById('btnBatchDownload');
+
+        function refreshSel() {
+            const checked = Array.from(document.querySelectorAll('.row-chk:checked'));
+            if (selCount) selCount.textContent = checked.length;
+            if (btnBatch) btnBatch.disabled = checked.length === 0;
+            if (chkAll) {
+                const total = document.querySelectorAll('.row-chk').length;
+                chkAll.checked = total > 0 && checked.length === total;
+                chkAll.indeterminate = total > 0 && checked.length > 0 && checked.length < total;
+            }
+        }
+        document.querySelectorAll('.row-chk').forEach(function(c) {
+            c.addEventListener('change', refreshSel);
+        });
+        if (chkAll) {
+            chkAll.addEventListener('change', function() {
+                document.querySelectorAll('.row-chk').forEach(function(c) { c.checked = chkAll.checked; });
+                refreshSel();
+            });
+        }
+        if (btnCheckAll) {
+            btnCheckAll.addEventListener('click', function() {
+                const checked = document.querySelectorAll('.row-chk:checked').length;
+                const total = document.querySelectorAll('.row-chk').length;
+                const to = total > 0 && checked < total;   // 未全选时点「全部选择」= 全选；已全选则取消
+                document.querySelectorAll('.row-chk').forEach(function(c) { c.checked = to; });
+                refreshSel();
+            });
+        }
+        if (btnBatch) {
+            btnBatch.addEventListener('click', function() {
+                const checked = Array.from(document.querySelectorAll('.row-chk:checked')).map(function(c) { return c.value; });
+                if (!checked.length) { alert('请先勾选要下载的文件'); return; }
+                // loading 状态：禁用按钮 + spinner
+                const orig = btnBatch.innerHTML;
+                btnBatch.disabled = true;
+                btnBatch.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 正在生成 ' + checked.length + ' 个文件的汇总...';
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = "{{ url_for('main.invest_tidy_batch_download') }}";
+                form.style.display = 'none';
+                const csrf = document.createElement('input');
+                csrf.type = 'hidden'; csrf.name = 'csrf_token'; csrf.value = "{{ csrf_token() }}";
+                form.appendChild(csrf);
+                checked.forEach(function(v) {
+                    const i = document.createElement('input');
+                    i.type = 'hidden'; i.name = 'filenames'; i.value = v;
+                    form.appendChild(i);
+                });
+                document.body.appendChild(form);
+                form.submit();
+            });
+        }
+        refreshSel();
+
+        // 筛选下载按钮：点击后禁用 + spinner
+        const btnFilterDownload = document.getElementById('btnFilterDownload');
+        if (btnFilterDownload) {
+            btnFilterDownload.addEventListener('click', function() {
+                btnFilterDownload.classList.add('disabled', 'pointer-events-none');
+                btnFilterDownload.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i> 正在生成筛选汇总Excel...';
+                btnFilterDownload.title = '正在生成，请勿重复点击';
+                // 兜底：15s 后自动恢复（文件下载后页面不会自动跳转，保留 loading 即可）
+                setTimeout(function() {
+                    btnFilterDownload.classList.remove('disabled', 'pointer-events-none');
+                    btnFilterDownload.innerHTML = '<i class="fa fa-download me-1"></i>下载筛选汇总Excel';
+                    btnFilterDownload.title = '';
+                }, 15000);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>资材每日入库 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        html, body { overflow-x: hidden; }
+        .card { margin-bottom: 18px; }
+        .toolbar-label { font-size: 0.8rem; color: #6c757d; margin-bottom: 2px; text-align: center; }
+        .stat-badge {
+            font-size: 0.82rem;
+            padding: 6px 10px;
+            border-radius: 6px;
+        }
+        #listWrap { max-height: 620px; overflow: auto; }
+        #listTable { font-size: 0.85rem; margin-bottom: 0; }
+        #listTable th {
+            background-color: #f8f9fa;
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        #listTable td { vertical-align: middle; }
+        #listTable tr.row-done td { background-color: #eefaf1; }
+        #listTable tr.row-short td { background-color: #fdecec; }
+        #listTable th.sortable { cursor: pointer; user-select: none; }
+        #listTable th.sortable:hover { background-color: #e9ecef; }
+        #listTable th.sortable i { margin-left: 4px; font-size: 0.75rem; opacity: 0.5; }
+        #listTable th.sortable.sort-asc i, #listTable th.sortable.sort-desc i { opacity: 1; }
+        .status-pill { font-size: 0.75rem; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+        .status-done { background: #d1e7dd; color: #146c43; }
+        .status-pending { background: #fff3cd; color: #997404; }
+        .status-short { background: #f8d7da; color: #b02a37; }
+        .qty-short { color: #dc3545; font-weight: 700; }
+        .part-no { font-weight: 600; letter-spacing: 0.4px; }
+
+        /* ---------- 移动端（<768px）适配 ---------- */
+        @media (max-width: 767.98px) {
+            .container-fluid { padding-left: 10px; padding-right: 10px; }
+            .card { margin-bottom: 12px; }
+            .card-body { padding: 0.75rem; }
+            .form-control, .form-select { min-height: 44px; font-size: 1rem; }
+            /* 仅主操作按钮保持大点击区域，次要/表格内按钮保持紧凑 */
+            .btn-main { min-height: 44px; }
+            .btn.btn-sm { min-height: 30px; font-size: 0.8rem; padding: 0.2rem 0.5rem; }
+            #listTable { min-width: 940px; }
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    {# 权限优先使用路由显式传入的变量，缺失时回退到 session 推导，保证健壮 #}
+    {% set is_admin = is_admin if is_admin is defined else session.get('is_admin') %}
+    {% set can_upload = (can_upload if can_upload is defined else (is_admin or session.get('user_permissions', {}).get('can_material_inbound_daily_upload'))) %}
+    {% set can_add = (can_add if can_add is defined else (is_admin or session.get('user_permissions', {}).get('can_material_inbound_daily_add'))) %}
+    {% set can_edit = (can_edit if can_edit is defined else (is_admin or session.get('user_permissions', {}).get('can_material_inbound_daily_edit'))) %}
+    {% set can_delete = (can_delete if can_delete is defined else (is_admin or session.get('user_permissions', {}).get('can_material_inbound_daily_delete'))) %}
+    {% set can_download = (can_download if can_download is defined else (is_admin or session.get('user_permissions', {}).get('can_material_inbound_daily_download'))) %}
+
+    <div class="container-fluid mt-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show py-2" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+            <h5 class="mb-0 w-100 text-center"><i class="fa fa-calendar-check-o me-2 text-primary"></i>资材入库登录</h5>
+            <div class="d-flex flex-wrap gap-2 w-100 justify-content-center">
+                <span class="badge bg-secondary stat-badge">明细 <span id="statTotal">0</span></span>
+                <span class="badge bg-success stat-badge">已入库 <span id="statDone">0</span></span>
+                <span class="badge bg-danger stat-badge">入库不足 <span id="statShort">0</span></span>
+                <span class="badge bg-warning text-dark stat-badge">未入库 <span id="statPending">0</span></span>
+                <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.material_inbound') }}">
+                    <i class="fa fa-sign-in me-1"></i>资材仓库入库
+                </a>
+            </div>
+        </div>
+
+        <!-- 上传 / 筛选工具条 -->
+        <div class="card">
+            <div class="card-body py-3">
+                <div class="row g-2 align-items-end flex-nowrap">
+                    <div class="col-auto">
+                        <div class="toolbar-label text-nowrap">归属日期（入库日期）区间</div>
+                        <div class="d-flex align-items-center gap-1">
+                            <input type="date" class="form-control form-control-sm" id="planDate" style="width: 150px;">
+                            <span class="text-muted small">至</span>
+                            <input type="date" class="form-control form-control-sm" id="planDateEnd" style="width: 150px;">
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <div class="toolbar-label text-nowrap">入库状态</div>
+                        <select class="form-select form-select-sm" id="filterStatus" style="width: 120px;">
+                            <option value="">全部</option>
+                            <option value="pending">未入库</option>
+                            <option value="short">入库不足</option>
+                            <option value="done">已入库</option>
+                        </select>
+                    </div>
+                    <div class="col">
+                        <div class="toolbar-label text-nowrap">关键字（P/N / 位置 / 备注）</div>
+                        <input type="text" class="form-control form-control-sm" id="filterKeyword" placeholder="输入后按回车或点查询">
+                    </div>
+                    <div class="col-auto d-flex flex-nowrap gap-2">
+                        <button class="btn btn-primary btn-sm text-nowrap" id="btnQuery"><i class="fa fa-search me-1"></i>查询</button>
+                        <button class="btn btn-outline-secondary btn-sm text-nowrap" id="btnReset"><i class="fa fa-refresh me-1"></i>重置</button>
+                        <a class="btn btn-outline-info btn-sm text-nowrap" href="{{ url_for('main.material_inbound_daily_template') }}">
+                            <i class="fa fa-file-excel-o me-1"></i>下载模板
+                        </a>
+                        {% if can_download %}
+                        <button class="btn btn-outline-success btn-sm text-nowrap" id="btnExport"><i class="fa fa-download me-1"></i>导出Excel</button>
+                        {% endif %}
+                        {% if can_upload %}
+                        <button class="btn btn-success btn-sm text-nowrap" id="btnUpload"><i class="fa fa-upload me-1"></i>Excel上传</button>
+                        {% endif %}
+                        {% if can_add %}
+                        <button class="btn btn-outline-primary btn-sm text-nowrap" id="btnAdd"><i class="fa fa-plus me-1"></i>手动新增</button>
+                        {% endif %}
+                    </div>
+                </div>
+                <input type="file" id="excelFile" accept=".xlsx,.xls" class="d-none">
+                <div class="progress mt-2 d-none" id="uploadProgressWrap" style="height: 6px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" id="uploadProgress" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 明细清单 -->
+        <div class="card">
+            <div class="card-header bg-primary text-white py-2 text-center">
+                <span class="small text-dark"><i class="fa fa-list-ul me-2"></i>资材入库清单（可查看入库时间与操作人员）</span>
+                {% if can_delete %}
+                <button class="btn btn-danger btn-sm py-0 ms-2" id="btnBatchDelete"><i class="fa fa-trash-o me-1"></i>批量删除</button>
+                {% endif %}
+            </div>
+            <div class="card-body p-0">
+                <div id="listWrap">
+                    <table class="table table-hover table-sm align-middle text-center" id="listTable">
+                        <thead>
+                            <tr>
+                                {% if can_delete %}<th style="width:36px;"><input type="checkbox" id="checkAll"></th>{% endif %}
+                                <th class="sortable" data-sort="part_no">京信PNO<i class="fa fa-sort text-muted"></i></th>
+                                <th class="sortable" data-sort="quantity">计划数量<i class="fa fa-sort text-muted"></i></th>
+                                <th class="sortable" data-sort="location">位置<i class="fa fa-sort text-muted"></i></th>
+                                <th class="sortable" data-sort="remark">备注<i class="fa fa-sort text-muted"></i></th>
+                                <th class="sortable" data-sort="inbound_date">入库日期<i class="fa fa-sort text-muted"></i></th>
+                                <th class="sortable" data-sort="status">入库状态<i class="fa fa-sort text-muted"></i></th>
+                                <th class="sortable" data-sort="inbound_qty">实收数量<i class="fa fa-sort text-muted"></i></th>
+                                <th class="sortable" data-sort="inbound_at">入库时间<i class="fa fa-sort text-muted"></i></th>
+                                <th class="sortable" data-sort="inbound_by_name">操作人员<i class="fa fa-sort text-muted"></i></th>
+                                {% if can_edit or can_delete %}<th>操作</th>{% endif %}
+                            </tr>
+                        </thead>
+                        <tbody id="listBody">
+                            <tr><td colspan="11" class="text-center text-muted py-4">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增/编辑模态框 -->
+    <div class="modal fade" id="itemModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h5 class="modal-title small w-100 text-center" id="itemModalTitle">新增明细</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="itemId">
+                    <div class="mb-2">
+                        <label class="form-label small mb-1 d-block text-center">京信PNO <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="itemPartNo" placeholder="如 91606-G6030">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1 d-block text-center">数量 <span class="text-danger">*</span></label>
+                        <input type="number" class="form-control" id="itemQty" min="0" step="1" value="0">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1 d-block text-center">位置</label>
+                        <input type="text" class="form-control" id="itemLocation" placeholder="如 A区-01架">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1 d-block text-center">备注</label>
+                        <input type="text" class="form-control" id="itemRemark" placeholder="选填">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1 d-block text-center">入库日期 <span class="text-danger">*</span></label>
+                        <input type="date" class="form-control" id="itemInboundDate">
+                    </div>
+                </div>
+                <div class="modal-footer py-2 justify-content-center">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="btnSaveItem">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+    (function () {
+        var CSRF = document.querySelector('meta[name="csrf-token"]');
+        CSRF = CSRF ? CSRF.getAttribute('content') : '';
+        var CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+        var CAN_DELETE = {{ 'true' if can_delete else 'false' }};
+        var items = [];
+        var sortKey = '';
+        var sortDir = ''; // '' | 'asc' | 'desc'
+        // 数值列：按数字比较；其余按文本比较
+        var NUM_COLS = { quantity: 1, inbound_qty: 1 };
+
+        function esc(s) {
+            return String(s === null || s === undefined ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+        function today() {
+            var d = new Date();
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+        function toast(msg, ok) {
+            var div = document.createElement('div');
+            div.className = 'alert alert-' + (ok ? 'success' : 'danger') + ' position-fixed top-0 start-50 translate-middle-x mt-3 shadow';
+            div.style.zIndex = 2000;
+            div.style.minWidth = '260px';
+            div.textContent = msg;
+            document.body.appendChild(div);
+            setTimeout(function () { div.remove(); }, 2600);
+        }
+        function postJSON(url, payload) {
+            return fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify(payload || {})
+            }).then(function (r) { return r.json(); });
+        }
+
+        // ---------------- 查询与渲染 ----------------
+        function queryParams() {
+            var p = new URLSearchParams();
+            var start = document.getElementById('planDate').value;
+            var end = document.getElementById('planDateEnd').value;
+            if (!start && !end) { start = today(); }
+            if (start) { p.set('plan_date', start); }
+            if (end) { p.set('plan_date_end', end); }
+            var st = document.getElementById('filterStatus').value;
+            if (st) { p.set('status', st); }
+            var kw = document.getElementById('filterKeyword').value.trim();
+            if (kw) { p.set('keyword', kw); }
+            return p;
+        }
+
+        function loadList() {
+            var body = document.getElementById('listBody');
+            body.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-4">加载中...</td></tr>';
+            fetch('{{ url_for("main.material_inbound_daily_data") }}?' + queryParams().toString())
+                .then(function (r) { return r.json(); })
+                .then(function (res) {
+                    if (!res.success) { toast(res.error || '查询失败', false); return; }
+                    items = res.items || [];
+                    renderSummary(res.summary || {});
+                    renderList();
+                })
+                .catch(function () { toast('网络错误', false); });
+        }
+
+        function renderSummary(s) {
+            document.getElementById('statTotal').textContent = s.total || 0;
+            document.getElementById('statDone').textContent = s.done || 0;
+            document.getElementById('statShort').textContent = s.short || 0;
+            document.getElementById('statPending').textContent = s.pending || 0;
+        }
+
+        // 状态渲染：pending=未入库，short=入库不足（红色），done=已入库（绿色）
+        function statusPill(st) {
+            if (st === 'done') { return '<span class="status-pill status-done">已入库</span>'; }
+            if (st === 'short') { return '<span class="status-pill status-short">入库不足</span>'; }
+            return '<span class="status-pill status-pending">未入库</span>';
+        }
+
+        function renderList() {
+            var body = document.getElementById('listBody');
+            var colCount = 11;
+            applySort();
+            if (!items.length) {
+                body.innerHTML = '<tr><td colspan="' + colCount + '" class="text-center text-muted py-4">暂无入库明细，请调整筛选条件或上传/手动新增</td>';
+                return;
+            }
+            var buf = '';
+            for (var i = 0; i < items.length; i++) {
+                var it = items[i];
+                var done = it.status === 'done';
+                var short = it.status === 'short';
+                buf += '<tr class="' + (done ? 'row-done' : (short ? 'row-short' : '')) + '">';
+                if (CAN_DELETE) {
+                    buf += '<td>' + (done || short ? '' : '<input type="checkbox" class="row-check" value="' + it.id + '">') + '</td>';
+                }
+                buf += '<td class="part-no">' + esc(it.part_no) + '</td>';
+                buf += '<td>' + it.quantity + '</td>';
+                buf += '<td>' + esc(it.location) + '</td>';
+                buf += '<td>' + esc(it.remark) + '</td>';
+                buf += '<td>' + esc(it.inbound_date) + '</td>';
+                buf += '<td>' + statusPill(it.status) + '</td>';
+                if (short) {
+                    var lack = Math.max(0, (it.quantity || 0) - (it.inbound_qty || 0));
+                    buf += '<td>' + (it.inbound_qty || 0) + '<div class="small qty-short">还差 ' + lack + '</div></td>';
+                } else {
+                    buf += '<td>' + (done ? it.inbound_qty : '') + '</td>';
+                }
+                buf += '<td>' + esc(it.inbound_at) + '</td>';
+                buf += '<td>' + esc(it.inbound_by_name) + '</td>';
+                if (CAN_EDIT || CAN_DELETE) {
+                    buf += '<td class="text-nowrap">';
+                    if (CAN_EDIT && !done && !short) {
+                        buf += '<button class="btn btn-outline-primary btn-sm py-0 px-2 me-1 btn-edit" data-id="' + it.id + '"><i class="fa fa-pencil"></i></button>';
+                    }
+                    if (CAN_DELETE && !done && !short) {
+                        buf += '<button class="btn btn-outline-danger btn-sm py-0 px-2 btn-del" data-id="' + it.id + '"><i class="fa fa-trash-o"></i></button>';
+                    }
+                    buf += '</td>';
+                }
+                buf += '</tr>';
+            }
+            // <template> 一次性解析 + replaceChildren 批量替换，仅触发一次重排
+            var tpl = document.createElement('template');
+            tpl.innerHTML = buf;
+            body.replaceChildren(tpl.content);
+        }
+
+        // ---------------- 排序 ----------------
+        function applySort() {
+            if (!sortKey || !sortDir) { return; }
+            var isNum = !!NUM_COLS[sortKey];
+            var dir = sortDir === 'asc' ? 1 : -1;
+            items.sort(function (a, b) {
+                var va, vb;
+                if (isNum) {
+                    va = parseFloat(a[sortKey]);
+                    vb = parseFloat(b[sortKey]);
+                    va = isNaN(va) ? -Infinity : va;
+                    vb = isNaN(vb) ? -Infinity : vb;
+                    return (va - vb) * dir;
+                }
+                va = String(a[sortKey] === null || a[sortKey] === undefined ? '' : a[sortKey]);
+                vb = String(b[sortKey] === null || b[sortKey] === undefined ? '' : b[sortKey]);
+                return va.localeCompare(vb, 'zh') * dir;
+            });
+        }
+
+        function updateSortIcons() {
+            document.querySelectorAll('#listTable th.sortable').forEach(function (th) {
+                var icon = th.querySelector('i');
+                th.classList.remove('sort-asc', 'sort-desc');
+                if (!icon) { return; }
+                if (th.getAttribute('data-sort') === sortKey && sortDir) {
+                    th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+                    icon.className = sortDir === 'asc' ? 'fa fa-sort-asc' : 'fa fa-sort-desc';
+                } else {
+                    icon.className = 'fa fa-sort text-muted';
+                }
+            });
+        }
+
+        document.querySelectorAll('#listTable th.sortable').forEach(function (th) {
+            th.addEventListener('click', function () {
+                var key = th.getAttribute('data-sort');
+                if (sortKey !== key) { sortKey = key; sortDir = 'asc'; }
+                else if (sortDir === 'asc') { sortDir = 'desc'; }
+                else if (sortDir === 'desc') { sortKey = ''; sortDir = ''; }
+                else { sortDir = 'asc'; }
+                updateSortIcons();
+                renderList();
+            });
+        });
+
+        // ---------------- 上传 ----------------
+        var fileInput = document.getElementById('excelFile');
+        var btnUpload = document.getElementById('btnUpload');
+        if (btnUpload) {
+            btnUpload.addEventListener('click', function () { fileInput.click(); });
+        }
+        fileInput.addEventListener('change', function () {
+            if (!fileInput.files.length) { return; }
+            var fd = new FormData();
+            fd.append('file', fileInput.files[0]);
+            fd.append('mode', 'overwrite');
+            var wrap = document.getElementById('uploadProgressWrap');
+            var bar = document.getElementById('uploadProgress');
+            wrap.classList.remove('d-none');
+            bar.style.width = '20%';
+            fetch('{{ url_for("main.material_inbound_daily_upload") }}', {
+                method: 'POST', headers: { 'X-CSRFToken': CSRF }, body: fd
+            }).then(function (r) { return r.json(); })
+              .then(function (res) {
+                  bar.style.width = '100%';
+                  setTimeout(function () { wrap.classList.add('d-none'); bar.style.width = '0%'; }, 500);
+                  if (res.success) {
+                      var msg = '上传完成：新增 ' + res.created + ' 条，更新 ' + res.updated + ' 条';
+                      if (res.dates && res.dates.length) { msg += '（日期：' + res.dates.join('、') + '）'; }
+                      if (res.locked) { msg += '，跳过已入库 ' + res.locked + ' 条'; }
+                      if (res.skipped) { msg += '，跳过 ' + res.skipped + ' 条'; }
+                      if (res.invalid_rows && res.invalid_rows.length) { msg += '；无效行 ' + res.invalid_rows.length + ' 行已忽略'; }
+                      toast(msg, true);
+                      loadList();
+                  } else {
+                      toast(res.error || '上传失败', false);
+                  }
+                  fileInput.value = '';
+              })
+              .catch(function () {
+                  wrap.classList.add('d-none');
+                  toast('上传失败', false);
+                  fileInput.value = '';
+              });
+        });
+
+        // ---------------- 新增/编辑 ----------------
+        var modalEl = document.getElementById('itemModal');
+        var modal = new bootstrap.Modal(modalEl);
+        function openModal(it) {
+            document.getElementById('itemId').value = it ? it.id : '';
+            document.getElementById('itemModalTitle').textContent = it ? '编辑明细' : '新增明细';
+            document.getElementById('itemPartNo').value = it ? it.part_no : '';
+            document.getElementById('itemQty').value = it ? it.quantity : 0;
+            document.getElementById('itemLocation').value = it ? it.location : '';
+            document.getElementById('itemRemark').value = it ? it.remark : '';
+            document.getElementById('itemInboundDate').value = it ? (it.inbound_date || '') : (document.getElementById('planDate').value || today());
+            modal.show();
+        }
+        var btnAdd = document.getElementById('btnAdd');
+        if (btnAdd) { btnAdd.addEventListener('click', function () { openModal(null); }); }
+
+        document.getElementById('btnSaveItem').addEventListener('click', function () {
+            var payload = {
+                id: document.getElementById('itemId').value || null,
+                plan_date: document.getElementById('planDate').value || today(),
+                part_no: document.getElementById('itemPartNo').value.trim(),
+                quantity: document.getElementById('itemQty').value,
+                location: document.getElementById('itemLocation').value.trim(),
+                remark: document.getElementById('itemRemark').value.trim(),
+                inbound_date: document.getElementById('itemInboundDate').value
+            };
+            if (!payload.part_no) { toast('请填写京信PNO', false); return; }
+            if (!payload.inbound_date) { toast('请填写入库日期', false); return; }
+            postJSON('{{ url_for("main.material_inbound_daily_save") }}', payload).then(function (res) {
+                if (res.success) { modal.hide(); toast('保存成功', true); loadList(); }
+                else { toast(res.error || '保存失败', false); }
+            }).catch(function () { toast('保存失败', false); });
+        });
+
+        // ---------------- 行内操作 ----------------
+        document.getElementById('listBody').addEventListener('click', function (e) {
+            var btn = e.target.closest('button');
+            if (!btn) { return; }
+            var id = btn.getAttribute('data-id');
+            if (btn.classList.contains('btn-edit')) {
+                var it = items.find(function (x) { return String(x.id) === String(id); });
+                if (it) { openModal(it); }
+            } else if (btn.classList.contains('btn-del')) {
+                if (!confirm('确定删除该条明细？')) { return; }
+                postJSON('{{ url_for("main.material_inbound_daily_delete") }}', { ids: [id] }).then(function (res) {
+                    if (res.success) { toast('已删除', true); loadList(); }
+                    else { toast(res.error || '删除失败', false); }
+                });
+            }
+        });
+
+        // 批量删除
+        var btnBatch = document.getElementById('btnBatchDelete');
+        if (btnBatch) {
+            btnBatch.addEventListener('click', function () {
+                var ids = [];
+                document.querySelectorAll('.row-check').forEach(function (c) {
+                    if (c.checked && c.value) { ids.push(c.value); }
+                });
+                if (!ids.length) { toast('请先勾选要删除的明细', false); return; }
+                if (!confirm('确定删除选中的 ' + ids.length + ' 条明细？')) { return; }
+                postJSON('{{ url_for("main.material_inbound_daily_delete") }}', { ids: ids }).then(function (res) {
+                    if (res.success) { toast('已删除 ' + res.deleted + ' 条', true); loadList(); }
+                    else { toast(res.error || '删除失败', false); }
+                });
+            });
+        }
+        var checkAll = document.getElementById('checkAll');
+        if (checkAll) {
+            checkAll.addEventListener('change', function () {
+                document.querySelectorAll('.row-check').forEach(function (c) { c.checked = checkAll.checked; });
+            });
+        }
+        // 勾选行时同步表头全选框状态
+        document.getElementById('listBody').addEventListener('change', function (e) {
+            if (!e.target.classList.contains('row-check')) { return; }
+            var all = document.querySelectorAll('.row-check');
+            var checked = document.querySelectorAll('.row-check:checked');
+            if (checkAll) {
+                checkAll.checked = all.length > 0 && checked.length === all.length;
+                checkAll.indeterminate = checked.length > 0 && checked.length < all.length;
+            }
+        });
+
+        // ---------------- 筛选 / 导出 ----------------
+        document.getElementById('btnQuery').addEventListener('click', loadList);
+        document.getElementById('btnReset').addEventListener('click', function () {
+            document.getElementById('planDate').value = today();
+            document.getElementById('planDateEnd').value = today();
+            document.getElementById('filterStatus').value = '';
+            document.getElementById('filterKeyword').value = '';
+            loadList();
+        });
+        document.getElementById('filterKeyword').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { loadList(); }
+        });
+        document.getElementById('planDate').addEventListener('change', loadList);
+        document.getElementById('planDateEnd').addEventListener('change', loadList);
+        document.getElementById('filterStatus').addEventListener('change', loadList);
+
+        var btnExport = document.getElementById('btnExport');
+        if (btnExport) {
+            btnExport.addEventListener('click', function () {
+                window.location.href = '{{ url_for("main.material_inbound_daily_export") }}?' + queryParams().toString();
+            });
+        }
+
+        // 初始化：日期区间默认当天
+        document.getElementById('planDate').value = today();
+        document.getElementById('planDateEnd').value = today();
+        loadList();
+    })();
+    </script>
+</body>
+</html>

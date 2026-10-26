@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>管换算 - 大焱资料管理系统</title>
+    <!-- 预加载关键CSS资源 -->
+    <link rel="preload" href="{{ url_for('static', filename='css/bootstrap.min.css') }}" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="{{ url_for('static', filename='css/font-awesome.min.css') }}" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <!-- 引入Bootstrap CSS -->
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <!-- 引入Font Awesome -->
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
+    <!-- 引入自定义样式 -->
+    {% include '_styles.html' %}
+    <style>
+        .card {
+            margin-bottom: 20px;
+        }
+        .alert {
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .btn {
+            margin-right: 10px;
+        }
+        .table-responsive {
+            margin-top: 20px;
+        }
+        .table th {
+            background-color: #f8f9fa;
+        }
+        .table td {
+            vertical-align: middle;
+        }
+        .result-highlight {
+            font-weight: bold;
+        }
+        .text-success {
+            color: #198754;
+        }
+        .text-danger {
+            color: #dc3545;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .spinner-border {
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+
+    <div class="container-fluid mt-4">
+        <!-- 消息提示 -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 主内容区域 -->
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title">管换算</h5>
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" enctype="multipart/form-data" id="uploadForm">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <div class="form-group">
+                                <label for="excelFile" class="form-label">上传Excel文件</label>
+                                <input type="file" class="form-control" id="excelFile" name="excelFile" accept=".xls, .xlsx" required>
+                                <div class="form-text">请上传包含车种、EO、品番、LOT、数量信息的Excel文件</div>
+                                <div class="invalid-feedback" id="excelFileError">请选择一个有效的Excel文件</div>
+                            </div>
+                            <div class="form-group">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fa fa-upload me-2"></i> 上传并计算
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="window.location.reload()">
+                                    <i class="fa fa-refresh me-2"></i> 重置
+                                </button>
+                                <button type="button" class="btn btn-warning" id="skipButton">
+                                    <i class="fa fa-skip-forward me-2"></i> 跳过
+                                </button>
+                            </div>
+                        </form>
+                        
+                        <!-- 验证结果提示 -->
+        <div class="alert alert-danger mt-3" id="validationAlert" style="display: none;"></div>
+        
+        <!-- 数据清除提示 -->
+        <div class="alert alert-info mt-3" id="clearAlert" style="display: none;">
+            <i class="fa fa-info-circle me-2"></i>
+            <span id="clearAlertMessage">计算结果已清除</span>
+        </div>
+                        
+                        <!-- 加载中状态 -->
+                        <div class="loading" id="loading">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">计算中...</span>
+                            </div>
+                            <span>正在计算中，请稍候...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 计算结果表格 -->
+        <div class="row" id="resultSection" style="display: none;">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">计算结果</h5>
+                        <div>
+                            <button type="button" class="btn btn-success" id="downloadResult">
+                                <i class="fa fa-download me-2"></i> 下载结果
+                            </button>
+                            <button type="button" class="btn btn-danger ms-2" id="deleteResult">
+                                <i class="fa fa-trash me-2"></i> 删除结果
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Detail_Kind</th>
+                                        <th>KscPno</th>
+                                        <th>Part_Name</th>
+                                        <th>取值</th>
+                                        <th>波纹管品番</th>
+                                        <th>Usage</th>
+                                        <th>Length</th>
+                                        <th>结果</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="resultTableBody">
+                                    <!-- 结果将通过JavaScript动态填充 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 预加载关键JS资源（仅 bootstrap 为首屏必需；xlsx/FileSaver 改为导出时按需加载） -->
+    <link rel="preload" href="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}" as="script">
+    <!-- 引入Bootstrap JS -->
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    <script>
+    // 按需加载外部脚本（兼容 Win7/老内核）
+    window.__bomLoadScript = window.__bomLoadScript || function (src) {
+        return new Promise(function (resolve, reject) {
+            var existing = document.querySelector('script[data-bom-src="' + src + '"]');
+            if (existing && existing.dataset.loaded === '1') { resolve(); return; }
+            var s = document.createElement('script');
+            s.src = src; s.async = true; s.setAttribute('data-bom-src', src);
+            s.onload = function () { s.dataset.loaded = '1'; resolve(); };
+            s.onerror = function () { s.parentNode && s.parentNode.removeChild(s); reject(new Error('load failed: ' + src)); };
+            document.head.appendChild(s);
+        });
+    };
+    // 导出所需的 xlsx + FileSaver，仅在点击导出时加载一次
+    window.__bomEnsureExportLibs = window.__bomEnsureExportLibs || function () {
+        if (window.XLSX && window.saveAs) { return Promise.resolve(); }
+        return Promise.all([
+            window.__bomLoadScript('{{ url_for("static", filename="js/xlsx.full.min.js") }}'),
+            window.__bomLoadScript('{{ url_for("static", filename="js/FileSaver.min.js") }}')
+        ]);
+    };
+    </script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const uploadForm = document.getElementById('uploadForm');
+            const loading = document.getElementById('loading');
+            const resultSection = document.getElementById('resultSection');
+            const resultTableBody = document.getElementById('resultTableBody');
+            const downloadResult = document.getElementById('downloadResult');
+            
+            let calculationResults = [];
+            
+            // 页面加载时不获取保存结果，因为我们不再保存数据到数据库
+            
+            // 显示数据清除提示
+            function showClearAlert() {
+                const clearAlert = document.getElementById('clearAlert');
+                if (clearAlert) {
+                    clearAlert.style.display = 'block';
+                    // 3秒后自动隐藏
+                    setTimeout(() => {
+                        clearAlert.style.display = 'none';
+                    }, 3000);
+                }
+            }
+            
+            // 页面卸载时清除计算结果
+            window.addEventListener('beforeunload', function() {
+                calculationResults = [];
+            });
+            
+            // 监听页面切换（通过导航链接）
+            document.addEventListener('click', function(e) {
+                const target = e.target.closest('a');
+                if (target && target.getAttribute('href') && !target.getAttribute('href').startsWith('#')) {
+                    calculationResults = [];
+                    // 显示清除提示
+                    showClearAlert();
+                }
+            });
+            
+            // 重置按钮点击时显示清除提示
+            const resetButton = document.querySelector('button.btn-secondary');
+            if (resetButton) {
+                resetButton.addEventListener('click', function() {
+                    calculationResults = [];
+                    showClearAlert();
+                });
+            }
+            
+            // 表单验证函数
+            function validateForm() {
+                const fileInput = document.getElementById('excelFile');
+                const file = fileInput.files[0];
+                const validationAlert = document.getElementById('validationAlert');
+                
+                // 隐藏之前的验证提示
+                validationAlert.style.display = 'none';
+                fileInput.classList.remove('is-invalid');
+                
+                // 检查是否选择了文件
+                if (!file) {
+                    validationAlert.textContent = '请选择要上传的Excel文件';
+                    validationAlert.style.display = 'block';
+                    fileInput.classList.add('is-invalid');
+                    return false;
+                }
+                
+                // 检查文件格式
+                const fileName = file.name.toLowerCase();
+                if (!fileName.endsWith('.xls') && !fileName.endsWith('.xlsx')) {
+                    validationAlert.textContent = '请上传有效的Excel文件（.xls 或 .xlsx格式）';
+                    validationAlert.style.display = 'block';
+                    fileInput.classList.add('is-invalid');
+                    return false;
+                }
+                
+                // 检查文件大小（限制为10MB）
+                if (file.size > 10 * 1024 * 1024) {
+                    validationAlert.textContent = '文件大小不能超过10MB';
+                    validationAlert.style.display = 'block';
+                    fileInput.classList.add('is-invalid');
+                    return false;
+                }
+                
+                return true;
+            }
+            
+            // 文件选择事件，实时验证
+            const fileInput = document.getElementById('excelFile');
+            if (fileInput) {
+                fileInput.addEventListener('change', function() {
+                    validateForm();
+                });
+            }
+            
+            // 表单提交事件
+            if (uploadForm) {
+                uploadForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    
+                    // 表单验证
+                    if (!validateForm()) {
+                        return;
+                    }
+                    
+                    const formData = new FormData(this);
+                    const file = fileInput.files[0];
+                    
+                    // 显示加载状态
+                    loading.style.display = 'block';
+                    resultSection.style.display = 'none';
+                    
+                    // 发送文件到后端API
+                    fetch('/api/tube_calculator/upload', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        // 隐藏加载状态
+                        loading.style.display = 'none';
+                        
+                        if (data.success) {
+                            // 保存计算结果
+                            calculationResults = data.results;
+                            
+                            // 填充结果表格
+                            resultTableBody.innerHTML = '';
+                            if (data.results.length > 0) {
+                                data.results.forEach(item => {
+                                    // 计算波纹管品番：取值列拼接上Length列（不足三位数的前面补0）
+                                    const lengthStr = String(item.Length).padStart(3, '0');
+                                    const tubePartNo = `${item['取值']}${lengthStr}`;
+                                    
+                                    const row = document.createElement('tr');
+                                    row.innerHTML = `
+                                        <td>${item.Detail_Kind}</td>
+                                        <td>${item.KscPno}</td>
+                                        <td>${item.Part_Name}</td>
+                                        <td>${item['取值']}</td>
+                                        <td>${tubePartNo}</td>
+                                        <td>${item.Usage}</td>
+                                        <td>${item.Length}</td>
+                                        <td class="result-highlight ${item.结果 > 0 ? 'text-success' : ''}">${item.结果}</td>
+                                    `;
+                                    resultTableBody.appendChild(row);
+                                });
+                                // 显示结果
+                                resultSection.style.display = 'block';
+                            } else {
+                                // 显示没有找到匹配资材数据的提示
+                                const validationAlert = document.getElementById('validationAlert');
+                                validationAlert.className = 'alert alert-warning mt-3';
+                                validationAlert.textContent = '没有找到匹配的资材数据，请检查Excel文件中的品番和EO是否正确，或确保已上传对应的基础资料';
+                                validationAlert.style.display = 'block';
+                            }
+                        } else {
+                            // 显示错误提示
+                            const validationAlert = document.getElementById('validationAlert');
+                            validationAlert.className = 'alert alert-danger mt-3';
+                            validationAlert.textContent = '计算失败：' + (data.error || '未知错误');
+                            validationAlert.style.display = 'block';
+                        }
+                    })
+                    .catch(error => {
+                        // 隐藏加载状态
+                        loading.style.display = 'none';
+                        // 显示网络错误提示
+                        const validationAlert = document.getElementById('validationAlert');
+                        validationAlert.className = 'alert alert-danger mt-3';
+                        validationAlert.textContent = '网络错误，请检查网络连接后重试';
+                        validationAlert.style.display = 'block';
+                        console.error('错误:', error);
+                    });
+                });
+            }
+            
+            // 下载结果按钮点击事件
+            if (downloadResult) {
+                downloadResult.addEventListener('click', function() {
+                    if (calculationResults.length === 0) {
+                        alert('没有可下载的结果');
+                        return;
+                    }
+
+                    // 按需加载导出库后再生成文件
+                    window.__bomEnsureExportLibs().then(function () {
+                    // 准备导出数据，确保列顺序与页面一致
+                    const exportData = calculationResults.map(item => {
+                        // 计算波纹管品番：取值列拼接上Length列（不足三位数的前面补0）
+                        const lengthStr = String(item.Length).padStart(3, '0');
+                        const tubePartNo = `${item['取值']}${lengthStr}`;
+                        return {
+                            'Detail_Kind': item.Detail_Kind,
+                            'KscPno': item.KscPno,
+                            'Part_Name': item.Part_Name,
+                            '取值': item['取值'],
+                            '波纹管品番': tubePartNo,
+                            'Usage': item.Usage,
+                            'Length': item.Length,
+                            '结果': item.结果
+                        };
+                    });
+                    
+                    // 创建Excel工作簿
+                    const workbook = XLSX.utils.book_new();
+                    const worksheet = XLSX.utils.json_to_sheet(exportData);
+                    XLSX.utils.book_append_sheet(workbook, worksheet, '管换算结果');
+                    
+                    // 生成Excel文件并下载
+                    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+                    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    // 生成包含北京时间戳的文件名，避免重复
+                    const now = new Date();
+                    // 调整为北京时间（UTC+8）
+                    const beijingTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+                    const timestamp = beijingTime.toISOString().replace(/[:.]/g, '-');
+                    a.download = `管换算结果_${timestamp}.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    }).catch(function (err) {
+                        console.error('导出库加载失败:', err);
+                        alert('导出组件加载失败，请检查网络后重试');
+                    });
+                });
+            }
+            
+            // 删除结果按钮点击事件
+            const deleteResult = document.getElementById('deleteResult');
+            if (deleteResult) {
+                deleteResult.addEventListener('click', function() {
+                    if (calculationResults.length === 0) {
+                        alert('没有可删除的结果');
+                        return;
+                    }
+                    
+                    if (!confirm('确定要删除计算结果吗？此操作不可恢复。')) {
+                        return;
+                    }
+                    
+                    // 显示加载状态
+                    loading.style.display = 'block';
+                    
+                    // 发送删除请求
+                    fetch('/api/tube_calculator/delete', {
+                        method: 'DELETE'
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        // 隐藏加载状态
+                        loading.style.display = 'none';
+                        
+                        if (data.success) {
+                            // 清空本地结果
+                            calculationResults = [];
+                            // 清空表格
+                            resultTableBody.innerHTML = '';
+                            // 隐藏结果区域
+                            resultSection.style.display = 'none';
+                            alert(data.message);
+                        } else {
+                            alert('删除失败：' + (data.error || '未知错误'));
+                        }
+                    })
+                    .catch(error => {
+                        // 隐藏加载状态
+                        loading.style.display = 'none';
+                        alert('网络错误，请检查网络连接后重试');
+                        console.error('错误:', error);
+                    });
+                });
+            }
+            
+            // 跳过按钮点击事件
+            const skipButton = document.getElementById('skipButton');
+            if (skipButton) {
+                skipButton.addEventListener('click', function() {
+                    // 检查是否有文件被上传
+                    const fileInput = document.getElementById('excelFile');
+                    const file = fileInput.files[0];
+                    
+                    // 如果没有上传文件，直接显示提示信息，不发送请求
+                    if (!file) {
+                        const validationAlert = document.getElementById('validationAlert');
+                        validationAlert.className = 'alert alert-warning mt-3';
+                        validationAlert.textContent = '没有已成功上传的资料可进行计算处理。';
+                        validationAlert.style.display = 'block';
+                        resultSection.style.display = 'none';
+                        return;
+                    }
+                    
+                    // 弹出确认提示框，明确告知用户跳过操作的后果
+                    if (!confirm('确定要跳过当前资料上传步骤吗？\n\n跳过后果：\n1. 未上传的资料将不参与本次计算\n2. 系统将优先对已成功上传的资料进行计算处理\n3. 本次计算结果将只包含已上传资料的数据\n\n请确认是否继续跳过？')) {
+                        return;
+                    }
+                    
+                    // 隐藏之前的验证提示
+                    const validationAlert = document.getElementById('validationAlert');
+                    validationAlert.style.display = 'none';
+                    
+                    // 显示加载状态
+                    loading.style.display = 'block';
+                    resultSection.style.display = 'none';
+                    
+                    // 发送跳过请求到服务器
+                    fetch('/api/tube_calculator/skip', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        // 隐藏加载状态
+                        loading.style.display = 'none';
+                        
+                        if (data.success) {
+                            // 保存计算结果
+                            calculationResults = data.results || [];
+                            
+                            // 填充结果表格
+                            resultTableBody.innerHTML = '';
+                            if (calculationResults.length > 0) {
+                                calculationResults.forEach(item => {
+                                    // 计算波纹管品番：取值列拼接上Length列（不足三位数的前面补0）
+                                    const lengthStr = String(item.Length).padStart(3, '0');
+                                    const tubePartNo = `${item['取值']}${lengthStr}`;
+                                    
+                                    const row = document.createElement('tr');
+                                    row.innerHTML = `
+                                        <td>${item.Detail_Kind}</td>
+                                        <td>${item.KscPno}</td>
+                                        <td>${item.Part_Name}</td>
+                                        <td>${item['取值']}</td>
+                                        <td>${tubePartNo}</td>
+                                        <td>${item.Usage}</td>
+                                        <td>${item.Length}</td>
+                                        <td class="result-highlight ${item.结果 > 0 ? 'text-success' : ''}">${item.结果}</td>
+                                    `;
+                                    resultTableBody.appendChild(row);
+                                });
+                                // 显示结果
+                                resultSection.style.display = 'block';
+                                
+                                // 显示跳过成功提示
+                                const validationAlert = document.getElementById('validationAlert');
+                                validationAlert.className = 'alert alert-info mt-3';
+                                validationAlert.textContent = '已跳过资料上传步骤，系统已对已成功上传的资料进行计算处理。';
+                                validationAlert.style.display = 'block';
+                            } else {
+                                // 显示没有已上传资料的提示
+                                const validationAlert = document.getElementById('validationAlert');
+                                validationAlert.className = 'alert alert-warning mt-3';
+                                validationAlert.textContent = '没有已成功上传的资料可进行计算处理。';
+                                validationAlert.style.display = 'block';
+                            }
+                        } else {
+                            // 显示错误提示
+                            const validationAlert = document.getElementById('validationAlert');
+                            validationAlert.className = 'alert alert-danger mt-3';
+                            validationAlert.textContent = '跳过失败：' + (data.error || '未知错误');
+                            validationAlert.style.display = 'block';
+                        }
+                    })
+                    .catch(error => {
+                        // 隐藏加载状态
+                        loading.style.display = 'none';
+                        // 显示网络错误提示
+                        const validationAlert = document.getElementById('validationAlert');
+                        validationAlert.className = 'alert alert-danger mt-3';
+                        validationAlert.textContent = '网络错误，请检查网络连接后重试';
+                        validationAlert.style.display = 'block';
+                        console.error('错误:', error);
+                    });
+                });
+            }
+        });
+    </script>
+</body>
+</html>

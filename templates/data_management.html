@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>数据备份管理 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .card { margin-bottom: 20px; }
+        .table th { background-color: #f8f9fa; white-space: nowrap; font-size: 0.85rem; }
+        .table td { font-size: 0.85rem; }
+        .table-responsive { max-height: 480px; overflow: auto; }
+        .badge-ok { background-color: #d1e7dd; color: #0f5132; }
+        .badge-err { background-color: #f8d7da; color: #842029; }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    <div class="container-fluid mt-4">
+        <div class="d-flex justify-content-between flex-wrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+            <h1 class="h3 mb-0"><i class="fa fa-database text-primary me-2"></i>数据备份管理</h1>
+            <span class="text-muted small">数据备份管理</span>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 备份与恢复（仅管理员） -->
+        {% if session.get('is_admin') %}
+        <div class="card border-info">
+            <div class="card-header bg-info text-white">
+                <i class="fa fa-shield me-1"></i> 数据库备份与恢复
+            </div>
+            <div class="card-body">
+                <div class="row align-items-end">
+                    <div class="col-md-4">
+                        <div class="mb-2">
+                            <span class="text-muted small">当前数据库状态</span>
+                            <div id="dbStatsBox" class="mt-1 small">
+                                <span class="text-muted">加载中…</span>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-info" id="backupDownloadBtn">
+                            <i class="fa fa-download me-1"></i> 下载当前数据库备份快照
+                        </button>
+                        <div class="form-text">SQLite 在线快照；空闲页占比 ≥20% 且可回收 ≥200MB 时后台自动 VACUUM。</div>
+                        <!-- 整库备份进度（后台任务 + 轮询） -->
+                        <div id="backupProgressBox" class="mt-2 d-none">
+                            <div class="progress" style="height: 20px;">
+                                <div id="backupProgressBar"
+                                     class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                                     role="progressbar" style="width: 0%;" aria-valuemin="0"
+                                     aria-valuemax="100">0%</div>
+                            </div>
+                            <div id="backupProgressMsg" class="form-text mt-1 text-muted">准备中…</div>
+                        </div>
+                    </div>
+                    <div class="col-md-5">
+                        <form id="restoreForm">
+                            <div class="input-group">
+                                <input type="file" class="form-control form-control-sm" id="snapshotFile"
+                                       accept=".db" required>
+                                <button type="submit" class="btn btn-warning btn-sm" id="restoreBtn">
+                                    <i class="fa fa-upload me-1"></i> 恢复（覆盖当前数据）
+                                </button>
+                            </div>
+                            <div class="form-text text-danger">恢复将用快照覆盖当前全部业务数据，请谨慎操作。</div>
+                            <!-- 恢复进度：上传进度条 + 服务器端各阶段进度 -->
+                            <div id="restoreProgressBox" class="mt-2 d-none">
+                                <div class="progress" style="height: 20px;">
+                                    <div id="restoreProgressBar"
+                                         class="progress-bar progress-bar-striped progress-bar-animated bg-warning"
+                                         role="progressbar" style="width: 0%;" aria-valuemin="0"
+                                         aria-valuemax="100">0%</div>
+                                </div>
+                                <div id="restoreProgressMsg" class="form-text mt-1 text-muted">准备中…</div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 自动备份到网盘（定时全量 / 增量，配置持久化于 instance/auto_backup_config.json） -->
+        {% if session.get('is_admin') %}
+        <div class="card border-success">
+            <div class="card-header bg-success text-white">
+                <i class="fa fa-cloud-upload me-1"></i> 自动备份到网盘（定时全量 / 增量）
+            </div>
+            <div class="card-body">
+                <form id="autoBackupForm" class="row g-3 align-items-end mb-3">
+                    <div class="col-md-2">
+                        <label class="form-label" for="abEnabled">启用自动备份</label>
+                        <select class="form-select" id="abEnabled" name="enabled">
+                            <option value="0" {% if not (backup_config or {}).get('enabled') %}selected{% endif %}>关闭</option>
+                            <option value="1" {% if (backup_config or {}).get('enabled') %}selected{% endif %}>开启</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="abTargetDir">网盘备份目录（UNC 盘符 / 本地，如 Z:\backup 或 \\192.168.1.10\share\bom3）</label>
+                        <input type="text" class="form-control" id="abTargetDir" name="target_dir"
+                               value="{{ (backup_config or {}).get('target_dir','') }}"
+                               placeholder="Z:\backup 或 \\\\server\\share\\bom3_backup">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label" for="abMode">备份模式</label>
+                        <select class="form-select" id="abMode" name="mode">
+                            <option value="both" {% if (backup_config or {}).get('mode') == 'both' %}selected{% endif %}>全量+增量</option>
+                            <option value="full" {% if (backup_config or {}).get('mode') == 'full' %}selected{% endif %}>仅全量</option>
+                            <option value="incr" {% if (backup_config or {}).get('mode') == 'incr' %}selected{% endif %}>仅增量</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label" for="abFullTime">每日全量时刻</label>
+                        <input type="time" class="form-control" id="abFullTime" name="full_time"
+                               value="{{ (backup_config or {}).get('full_time','21:30') }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label" for="abIncrInterval">增量间隔（分钟）</label>
+                        <input type="number" class="form-control" id="abIncrInterval" name="incr_interval" min="10" step="10"
+                               value="{{ (backup_config or {}).get('incr_interval', 60) }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label" for="abKeepFull">保留全量份数</label>
+                        <input type="number" class="form-control" id="abKeepFull" name="keep_full" min="1" step="1"
+                               value="{{ (backup_config or {}).get('keep_full', 30) }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label" for="abKeepIncr">保留增量份数</label>
+                        <input type="number" class="form-control" id="abKeepIncr" name="keep_incr" min="1" step="1"
+                               value="{{ (backup_config or {}).get('keep_incr', 90) }}">
+                    </div>
+                    <div class="col-md-8">
+                        <button type="button" class="btn btn-success" id="abSaveBtn">
+                            <i class="fa fa-save me-1"></i>保存配置
+                        </button>
+                        <button type="button" class="btn btn-primary" id="abRunFullBtn">
+                            <i class="fa fa-cubes me-1"></i>立即全量备份
+                        </button>
+                        <button type="button" class="btn btn-info" id="abRunIncrBtn">
+                            <i class="fa fa-plus-square me-1"></i>立即增量备份
+                        </button>
+                        <span class="text-muted small ms-2">调度线程每 60 秒检查：全量按每日时刻，增量按间隔自动执行。</span>
+                    </div>
+                    <div class="col-12 border-top pt-2">
+                        <label class="form-label" for="abRestoreFile">增量恢复（上传 incr_*.xlsx 即可将增量数据重新写回数据库，按 LOT/批次号/来源文件+行号自动去重）</label>
+                        <div class="input-group">
+                            <input type="file" class="form-control" id="abRestoreFile"
+                                   accept=".xlsx" placeholder="选择增量备份文件">
+                            <button type="button" class="btn btn-warning" id="abRestoreBtn">
+                                <i class="fa fa-upload me-1"></i>增量恢复
+                            </button>
+                        </div>
+                    </div>
+                </form>
+
+                <h6 class="border-bottom pb-1">备份历史（最近 {{ (backup_history|default([]))|length }} 条）</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered table-striped" id="abHistoryTable">
+                        <thead>
+                            <tr>
+                                <th>时间</th><th>类型</th><th>文件名</th><th>大小</th><th>目标目录</th><th>状态</th><th>说明</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for h in (backup_history|default([])) %}
+                            <tr>
+                                <td>{{ h.get('time','') }}</td>
+                                <td>{{ h.get('type','') }}</td>
+                                <td class="text-break">{{ h.get('file','') }}</td>
+                                <td>{{ h.get('size',0) }}</td>
+                                <td class="text-break">{{ h.get('target','') }}</td>
+                                <td>
+                                    {% if h.get('status')=='SUCCESS' %}<span class="badge bg-success">成功</span>
+                                    {% else %}<span class="badge bg-danger">失败</span>{% endif %}
+                                </td>
+                                <td class="text-break">{{ h.get('error','') }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="7" class="text-center text-muted py-3">暂无自动备份记录，保存配置并开启后由调度线程自动执行，也可点击「立即全量/增量备份」。</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        <!-- 按功能 / 指定表导出数据库（仅管理员） -->
+        {% if session.get('is_admin') %}
+        <div class="card border-primary">
+            <div class="card-header bg-primary text-white">
+                <i class="fa fa-table me-1"></i> 按功能模块 / 指定表导出数据库
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <!-- 按功能模块导出 -->
+                    <div class="col-lg-5">
+                        <h6 class="border-bottom pb-1">按功能模块导出</h6>
+                        <label class="form-label" for="expFunc">功能模块</label>
+                        <select class="form-select form-select-sm mb-2" id="expFunc">
+                            <option value="">加载中…</option>
+                        </select>
+                        <div id="expFuncTables" class="form-text mb-2 text-muted">选择功能模块后显示其涉及的数据表。</div>
+                        <button type="button" class="btn btn-primary btn-sm" id="expFuncBtn" disabled>
+                            <i class="fa fa-download me-1"></i>导出该功能数据库
+                        </button>
+                    </div>
+                    <!-- 指定表导出 -->
+                    <div class="col-lg-7">
+                        <h6 class="border-bottom pb-1">指定表导出</h6>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="text-muted small">勾选需要导出的数据表（可多选）</span>
+                            <span>
+                                <button type="button" class="btn btn-outline-secondary btn-sm py-0" id="expSelAll">全选</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm py-0" id="expSelNone">清空</button>
+                            </span>
+                        </div>
+                        <div id="expTableBox" class="border rounded p-2"
+                             style="max-height: 200px; overflow:auto; font-size:0.85rem;">
+                            <span class="text-muted">加载中…</span>
+                        </div>
+                        <div class="mt-2">
+                            <button type="button" class="btn btn-primary btn-sm" id="expTableBtn" disabled>
+                                <i class="fa fa-download me-1"></i>导出所选表
+                            </button>
+                            <span id="expSelInfo" class="text-muted small ms-2">已选 0 张表</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="row g-3 align-items-end mt-1 border-top pt-2">
+                    <div class="col-md-3">
+                        <label class="form-label" for="expFormat">导出格式</label>
+                        <select class="form-select form-select-sm" id="expFormat">
+                            <option value="db">数据库快照(.db)</option>
+                            <option value="xlsx">Excel工作簿(.xlsx)</option>
+                            <option value="csv">CSV压缩包(.zip)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-9">
+                        <div class="form-text">
+                            .db 为 SQLite 快照（仅含所选表，可直接被本系统恢复查看）；.xlsx 每表一个 Sheet；
+                            .zip 内每表一个 csv（UTF-8-SIG，Excel 可直接打开）。需整库备份请使用上方「下载当前数据库备份快照」。
+                        </div>
+                    </div>
+                </div>
+                <!-- 导出进度（后台任务 + 轮询，避免长任务无反馈） -->
+                <div id="expProgressBox" class="mt-2 d-none">
+                    <div class="progress" style="height: 20px;">
+                        <div id="expProgressBar"
+                             class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                             role="progressbar" style="width: 0%;" aria-valuemin="0"
+                             aria-valuemax="100">0%</div>
+                    </div>
+                    <div id="expProgressMsg" class="form-text mt-1 text-muted">准备中…</div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+        // ---------- 整库备份下载（后台任务 + 进度轮询 + 完成后下载） ----------
+        // 通用长任务轮询：启动后台导出 → 轮询进度 → 完成后触发下载。
+        // progressUrl/resultUrl 由调用方给出，避免每个导出重复写轮询逻辑。
+        function runLongExport(opts) {
+            const box = document.getElementById(opts.boxId);
+            const bar = document.getElementById(opts.barId);
+            const msg = document.getElementById(opts.msgId);
+            const btn = opts.btn;
+            let timer = null;
+
+            function setProgress(pct, text) {
+                pct = Math.max(0, Math.min(100, Math.round(pct || 0)));
+                bar.style.width = pct + '%';
+                bar.textContent = pct + '%';
+                if (text) { msg.textContent = text; }
+            }
+
+            bar.classList.remove('bg-success', 'bg-danger');
+            bar.classList.add('progress-bar-animated');
+            setProgress(0, '正在启动…');
+            box.classList.remove('d-none');
+            if (btn) { btn.disabled = true; }
+
+            // 轮询服务器端进度
+            function poll() {
+                fetch(opts.progressUrl, { headers: { 'Accept': 'application/json' } })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d.success) { throw new Error(d.error || '进度查询失败'); }
+                        const p = d.progress || {};
+                        setProgress(p.percent, p.message || '');
+                        if (p.running) {
+                            timer = setTimeout(poll, 1000);
+                            return;
+                        }
+                        clearTimeout(timer);
+                        bar.classList.remove('progress-bar-animated');
+                        if (p.success) {
+                            bar.classList.remove('bg-info', 'bg-primary');
+                            bar.classList.add('bg-success');
+                            setProgress(100, '导出完成，开始下载…');
+                            // 完成后跳转结果接口触发浏览器下载
+                            window.location.href = opts.resultUrl;
+                            setTimeout(function() {
+                                box.classList.add('d-none');
+                                if (btn) { btn.disabled = false; }
+                            }, 2500);
+                        } else {
+                            bar.classList.remove('bg-info', 'bg-primary');
+                            bar.classList.add('bg-danger');
+                            msg.textContent = p.message || p.error || '导出失败';
+                            if (btn) { btn.disabled = false; }
+                        }
+                    })
+                    .catch(err => {
+                        clearTimeout(timer);
+                        bar.classList.remove('progress-bar-animated', 'bg-info', 'bg-primary');
+                        bar.classList.add('bg-danger');
+                        msg.textContent = '进度查询失败：' + err.message;
+                        if (btn) { btn.disabled = false; }
+                    });
+            }
+            poll();
+        }
+
+        const backupDownloadBtn = document.getElementById('backupDownloadBtn');
+        if (backupDownloadBtn) {
+            const backupProgressUrl = '{{ url_for("main.data_management_backup_download_progress") }}';
+            const backupResultUrl = '{{ url_for("main.data_management_backup_download_result") }}';
+            const backupStartUrl = '{{ url_for("main.data_management_backup_download") }}';
+            backupDownloadBtn.addEventListener('click', function() {
+                if (backupDownloadBtn.disabled) { return; }
+                backupDownloadBtn.disabled = true;
+                fetch(backupStartUrl, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                })
+                .then(r => r.json())
+                .then(d => {
+                    if (!d.success) { throw new Error(d.error || '备份启动失败'); }
+                    runLongExport({
+                        boxId: 'backupProgressBox', barId: 'backupProgressBar',
+                        msgId: 'backupProgressMsg', btn: backupDownloadBtn,
+                        progressUrl: backupProgressUrl, resultUrl: backupResultUrl
+                    });
+                })
+                .catch(err => {
+                    alert('备份失败：' + err.message);
+                    backupDownloadBtn.disabled = false;
+                });
+            });
+        }
+
+
+        // ---------- 恢复（上传进度条 + 服务器恢复阶段进度轮询） ----------
+        const restoreForm = document.getElementById('restoreForm');
+        if (restoreForm) {
+            const restoreBtn = document.getElementById('restoreBtn');
+            const progressBox = document.getElementById('restoreProgressBox');
+            const progressBar = document.getElementById('restoreProgressBar');
+            const progressMsg = document.getElementById('restoreProgressMsg');
+            let pollTimer = null;
+
+            function setProgress(pct, msg) {
+                pct = Math.max(0, Math.min(100, Math.round(pct)));
+                progressBar.style.width = pct + '%';
+                progressBar.textContent = pct + '%';
+                if (msg) { progressMsg.textContent = msg; }
+            }
+
+            // 轮询服务器端恢复进度
+            function pollRestoreProgress() {
+                fetch('/data_management/backup/restore/progress', {
+                    headers: { 'Accept': 'application/json' }
+                })
+                .then(r => r.json())
+                .then(d => {
+                    if (!d.success) { return; }
+                    const p = d.progress || {};
+                    setProgress(p.percent || 0, p.message || '');
+                    if (p.running) {
+                        pollTimer = setTimeout(pollRestoreProgress, 1000);
+                    } else {
+                        clearTimeout(pollTimer);
+                        restoreBtn.disabled = false;
+                        progressBar.classList.remove('progress-bar-animated');
+                        if (p.success) {
+                            progressBar.classList.remove('bg-warning');
+                            progressBar.classList.add('bg-success');
+                            setProgress(100, '恢复完成，请刷新页面后重新查询');
+                            alert('数据库已从快照恢复，并已完成结构与默认数据初始化。');
+                            location.reload();
+                        } else {
+                            progressBar.classList.remove('bg-warning');
+                            progressBar.classList.add('bg-danger');
+                            alert('恢复失败：' + (p.error || '未知错误'));
+                        }
+                    }
+                })
+                .catch(() => { pollTimer = setTimeout(pollRestoreProgress, 1500); });
+            }
+
+            restoreForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const file = document.getElementById('snapshotFile').files[0];
+                if (!file) { alert('请选择 .db 备份快照'); return; }
+                if (!confirm('恢复将覆盖当前全部业务数据，确定继续？')) return;
+
+                clearTimeout(pollTimer);
+                progressBox.classList.remove('d-none');
+                progressBar.classList.remove('bg-success', 'bg-danger');
+                progressBar.classList.add('bg-warning', 'progress-bar-animated');
+                setProgress(0, '正在上传快照文件…');
+                restoreBtn.disabled = true;
+
+                const fd = new FormData();
+                fd.append('snapshot', file);
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/data_management/backup/restore');
+                xhr.setRequestHeader('X-CSRFToken', csrfToken);
+                // 上传阶段进度（0-50%）
+                xhr.upload.onprogress = function(evt) {
+                    if (evt.lengthComputable) {
+                        const pct = (evt.loaded / evt.total) * 50;
+                        setProgress(pct, '上传中 ' + Math.round(pct * 2) + '%');
+                    }
+                };
+                xhr.upload.onload = function() {
+                    setProgress(55, '上传完成，正在后台恢复…');
+                };
+                xhr.onload = function() {
+                    try {
+                        const resp = JSON.parse(xhr.responseText);
+                        if (!resp.success) {
+                            restoreBtn.disabled = false;
+                            progressBar.classList.remove('progress-bar-animated', 'bg-warning');
+                            progressBar.classList.add('bg-danger');
+                            setProgress(100, '启动失败');
+                            alert(resp.error || '恢复启动失败');
+                            return;
+                        }
+                        setProgress(60, '正在恢复…');
+                        pollTimer = setTimeout(pollRestoreProgress, 800);
+                    } catch (err) {
+                        restoreBtn.disabled = false;
+                        alert('恢复请求失败');
+                    }
+                };
+                xhr.onerror = function() {
+                    restoreBtn.disabled = false;
+                    alert('恢复请求失败（网络错误）');
+                };
+                xhr.send(fd);
+            });
+        }
+
+        // ---------- 数据库维护状态展示 ----------
+        const dbStatsBox = document.getElementById('dbStatsBox');
+        if (dbStatsBox) {
+            fetch('/data_management/stats')
+                .then(r => r.json())
+                .then(d => {
+                    if (!d.success) { dbStatsBox.textContent = '状态获取失败：' + (d.error || '未知错误'); return; }
+                    const s = d.stats;
+                    const ratioKb = (s.reclaimable_mb * 1024).toFixed(0);
+                    dbStatsBox.innerHTML =
+                        '<div>文件大小 <b>' + s.file_mb + '</b> MB</div>' +
+                        '<div>空闲页 ' + s.freelist_count.toLocaleString() + ' 页' +
+                        '（占比 ' + (s.free_ratio * 100).toFixed(1) + '%）</div>' +
+                        '<div>可回收 <b>' + ratioKb + '</b> KB' +
+                        (s.free_ratio >= 0.2 && s.reclaimable_mb >= 200
+                            ? '<span class="badge bg-warning text-dark ms-1">待VACUUM</span>'
+                            : '<span class="badge bg-success ms-1">正常</span>') +
+                        '</div>';
+                })
+                .catch(() => { dbStatsBox.textContent = '状态加载失败'; });
+        }
+
+        // ---------- 自动备份到网盘（配置保存 / 立即执行 / 刷新历史） ----------
+        const abForm = document.getElementById('autoBackupForm');
+        const abSaveBtn = document.getElementById('abSaveBtn');
+        const abRunFullBtn = document.getElementById('abRunFullBtn');
+        const abRunIncrBtn = document.getElementById('abRunIncrBtn');
+        function abPost(url, payload, okMsg, btn) {
+            if (btn) { btn.disabled = true; }   // 防重复触发耗时备份
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(d => {
+                if (btn) { btn.disabled = false; }
+                if (d.success) {
+                    alert(okMsg || '操作成功');
+                    location.reload();   // 刷新以展示最新备份历史
+                } else {
+                    alert('操作失败：' + (d.error || '未知错误'));
+                }
+            })
+            .catch(err => {
+                if (btn) { btn.disabled = false; }
+                alert('请求失败：' + err);
+            });
+        }
+        if (abSaveBtn) {
+            abSaveBtn.addEventListener('click', function() {
+                const payload = {
+                    enabled: document.getElementById('abEnabled')?.value === '1',
+                    target_dir: document.getElementById('abTargetDir')?.value.trim() || '',
+                    mode: document.getElementById('abMode')?.value || 'both',
+                    full_time: document.getElementById('abFullTime')?.value || '21:30',
+                    incr_interval: parseInt(document.getElementById('abIncrInterval')?.value || '60', 10),
+                    keep_full: parseInt(document.getElementById('abKeepFull')?.value || '30', 10),
+                    keep_incr: parseInt(document.getElementById('abKeepIncr')?.value || '90', 10)
+                };
+                if (payload.enabled && !payload.target_dir) {
+                    alert('启用自动备份前请填写网盘备份目录（target_dir）');
+                    return;
+                }
+                abPost('/data_management/backup/auto/config', payload, '自动备份配置已保存', abSaveBtn);
+            });
+        }
+        if (abRunFullBtn) {
+            abRunFullBtn.addEventListener('click', function() {
+                abPost('/data_management/backup/auto/run', {type: 'full'}, '全量备份已执行', abRunFullBtn);
+            });
+        }
+        if (abRunIncrBtn) {
+            abRunIncrBtn.addEventListener('click', function() {
+                abPost('/data_management/backup/auto/run', {type: 'incr'}, '增量备份已执行', abRunIncrBtn);
+            });
+        }
+        // 增量恢复：上传 incr_*.xlsx 重新写回数据库
+        const abRestoreBtn = document.getElementById('abRestoreBtn');
+        if (abRestoreBtn) {
+            abRestoreBtn.addEventListener('click', function() {
+                const file = document.getElementById('abRestoreFile')?.files?.[0];
+                if (!file) { alert('请先选择增量备份文件（incr_*.xlsx）'); return; }
+                if (abRestoreBtn.disabled) { return; }   // 防重复
+                const fd = new FormData();
+                fd.append('file', file);
+                abRestoreBtn.disabled = true;
+                fetch('/data_management/backup/auto/restore-incr', {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': csrfToken },
+                    body: fd
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    abRestoreBtn.disabled = false;
+                    if (d.success) {
+                        const s = d.stat || {};
+                        alert('增量恢复完成：\n'
+                            + '投入明细 新增 ' + s.invest_added + ' / 跳过重复 ' + s.invest_skipped + '\n'
+                            + '上传批次 新增 ' + s.batch_added + ' / 跳过重复 ' + s.batch_skipped + '\n'
+                            + '数据记录 新增 ' + s.record_added + ' / 跳过重复 ' + s.record_skipped);
+                        location.reload();
+                    } else {
+                        alert('增量恢复失败：' + (d.error || '未知错误'));
+                    }
+                })
+                .catch(function(err) { alert('请求失败：' + err); });
+            });
+        }
+
+        // ---------- 按功能模块 / 指定表导出 ----------
+        const expFunc = document.getElementById('expFunc');
+        if (expFunc) {
+            const expFuncBtn = document.getElementById('expFuncBtn');
+            const expFuncTables = document.getElementById('expFuncTables');
+            const expTableBox = document.getElementById('expTableBox');
+            const expTableBtn = document.getElementById('expTableBtn');
+            const expSelInfo = document.getElementById('expSelInfo');
+            const expFormat = document.getElementById('expFormat');
+            let expTablesMap = {};   // 表名 -> 被引用的功能模块名（用于提示）
+
+            function expUpdateFuncInfo() {
+                const name = expFunc.value;
+                const cfg = expTablesMap;
+                if (!name || !cfg[name]) {
+                    expFuncTables.textContent = '选择功能模块后显示其涉及的数据表。';
+                    expFuncBtn.disabled = true;
+                    return;
+                }
+                const tables = cfg[name].tables || [];
+                expFuncTables.innerHTML = '涉及数据表：' + tables.map(function(t) {
+                    return '<code>' + t + '</code>';
+                }).join('、') + '　<span class="text-muted">（' + (cfg[name].desc || '') + '）</span>';
+                expFuncBtn.disabled = tables.length === 0;
+            }
+
+            function expUpdateSel() {
+                const n = expTableBox.querySelectorAll('input[type=checkbox]:checked').length;
+                expSelInfo.textContent = '已选 ' + n + ' 张表';
+                expTableBtn.disabled = n === 0;
+            }
+
+            function expDownload(payload, btn) {
+                if (btn.disabled) { return; }
+                btn.disabled = true;
+                // 启动后台导出任务，随后轮询进度并在完成后下载结果
+                fetch('/data_management/backup/export/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    body: JSON.stringify(payload)
+                })
+                .then(function(r) {
+                    return r.json().then(function(d) {
+                        if (!r.ok || !d.success) {
+                            throw new Error(d.error || '导出启动失败');
+                        }
+                        return d;
+                    });
+                })
+                .then(function() {
+                    runLongExport({
+                        boxId: 'expProgressBox', barId: 'expProgressBar',
+                        msgId: 'expProgressMsg', btn: btn,
+                        progressUrl: '/data_management/backup/export/progress',
+                        resultUrl: '/data_management/backup/export/result'
+                    });
+                })
+                .catch(function(err) {
+                    alert('导出失败：' + err.message);
+                    btn.disabled = false;
+                    expUpdateFuncInfo();
+                    expUpdateSel();
+                });
+            }
+
+            fetch('/data_management/backup/export/tables')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (!d.success) {
+                        expFunc.innerHTML = '<option value="">清单加载失败</option>';
+                        expTableBox.innerHTML = '<span class="text-danger">加载失败：' + (d.error || '未知错误') + '</span>';
+                        return;
+                    }
+                    expTablesMap = d.functions || {};
+                    const names = Object.keys(expTablesMap);
+                    expFunc.innerHTML = '<option value="">请选择功能模块…</option>' +
+                        names.map(function(n) { return '<option value="' + n + '">' + n + '</option>'; }).join('');
+                    expFunc.disabled = false;
+
+                    const tables = d.tables || [];
+                    if (!tables.length) {
+                        expTableBox.innerHTML = '<span class="text-muted">未读取到数据表</span>';
+                    } else {
+                        expTableBox.innerHTML = tables.map(function(t) {
+                            return '<label class="form-check form-check-inline" style="min-width:180px;">'
+                                + '<input class="form-check-input exp-table-cb" type="checkbox" value="' + t + '">'
+                                + '<span class="form-check-label">' + t + '</span></label>';
+                        }).join('');
+                        expTableBox.querySelectorAll('.exp-table-cb').forEach(function(cb) {
+                            cb.addEventListener('change', expUpdateSel);
+                        });
+                    }
+                    expFormat.disabled = false;
+                })
+                .catch(function() {
+                    expTableBox.innerHTML = '<span class="text-danger">清单加载失败</span>';
+                });
+
+            expFunc.addEventListener('change', expUpdateFuncInfo);
+            expFuncBtn.addEventListener('click', function() {
+                expDownload({ function: expFunc.value, format: expFormat.value }, expFuncBtn);
+            });
+            expTableBtn.addEventListener('click', function() {
+                const sel = Array.prototype.map.call(
+                    expTableBox.querySelectorAll('input[type=checkbox]:checked'),
+                    function(cb) { return cb.value; });
+                expDownload({ tables: sel, format: expFormat.value }, expTableBtn);
+            });
+            document.getElementById('expSelAll')?.addEventListener('click', function() {
+                expTableBox.querySelectorAll('input[type=checkbox]').forEach(function(cb) { cb.checked = true; });
+                expUpdateSel();
+            });
+            document.getElementById('expSelNone')?.addEventListener('click', function() {
+                expTableBox.querySelectorAll('input[type=checkbox]').forEach(function(cb) { cb.checked = false; });
+                expUpdateSel();
+            });
+        }
+    </script>
+</body>
+</html>

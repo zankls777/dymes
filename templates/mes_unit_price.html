@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>{{ page_title }} - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+</head>
+<body>
+    <div class="container-fluid mt-4">
+        {% include '_navbar.html' %}
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="card-title mb-0"><i class="fa fa-jpy mr-1 text-primary"></i>{{ page_title }}</h5>
+                            <div class="d-flex gap-2">
+                                <!-- 客户主数据维护入口（从计划登录页迁移至此） -->
+                                <button type="button" class="btn btn-outline-secondary" id="btn-cust-manage">
+                                    <i class="fa fa-cog mr-1"></i> 客户维护
+                                </button>
+                                {% if can_add %}
+                                <button type="button" class="btn btn-primary" id="btn-add">
+                                    <i class="fa fa-plus mr-1"></i> 新增
+                                </button>
+                                <button type="button" class="btn btn-outline-success" id="btn-upload">
+                                    <i class="fa fa-file-excel-o mr-1"></i> Excel上传
+                                </button>
+                                <input type="file" id="file-upload" accept=".xlsx,.xls" style="display:none;">
+                                <button type="button" class="btn btn-outline-secondary" id="btn-template">
+                                    <i class="fa fa-download mr-1"></i> 下载模板
+                                </button>
+                                {% endif %}
+                                {% if can_download %}
+                                <button type="button" class="btn btn-success" id="btn-export">
+                                    <i class="fa fa-download mr-1"></i> 导出CSV
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- 筛选 -->
+                        <div class="row mb-3 g-2">
+                            <div class="col-md-3">
+                                <input type="text" class="form-control" id="filter-keyword"
+                                       placeholder="品番 / 车种 / 客户">
+                            </div>
+                            <div class="col-auto">
+                                <input type="date" class="form-control" id="filter-date-from" title="起始生效日期">
+                            </div>
+                            <div class="col-auto align-self-center text-muted">至</div>
+                            <div class="col-auto">
+                                <input type="date" class="form-control" id="filter-date-to" title="结束生效日期">
+                            </div>
+                            <div class="col-auto">
+                                <button class="btn btn-outline-primary" id="btn-search">
+                                    <i class="fa fa-search mr-1"></i> 查询
+                                </button>
+                                <button class="btn btn-outline-secondary" id="btn-reset">
+                                    <i class="fa fa-refresh mr-1"></i> 重置
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="table table-hover table-sm align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>生效日期</th>
+                                        <th>品番</th>
+                                        <th>车种</th>
+                                        <th>单价</th>
+                                        <th>币种</th>
+                                        <th>客户</th>
+                                        <th>备注</th>
+                                        <th>操作人</th>
+                                        <th>更新时间</th>
+                                        <th style="width:150px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="list-tbody">
+                                    <tr><td colspan="10" class="text-center text-muted py-4">加载中…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="text-muted small" id="page-info"></div>
+                            <nav>
+                                <ul class="pagination pagination-sm mb-0" id="pager"></ul>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 单价倍数规则 -->
+        <div class="row mt-3">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="card-title mb-0"><i class="fa fa-sliders mr-1 text-warning"></i>单价倍数规则
+                                <small class="text-muted ml-2">按时间区间 + 作业者设置单价调整倍数（如 1.5 倍），生产入库时自动匹配</small>
+                            </h5>
+                            {% if can_add %}
+                            <button type="button" class="btn btn-primary" id="btn-mult-add">
+                                <i class="fa fa-plus mr-1"></i> 新增规则
+                            </button>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-sm align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>开始日期</th>
+                                        <th>结束日期</th>
+                                        <th>作业者</th>
+                                        <th>品番</th>
+                                        <th>倍数</th>
+                                        <th>备注</th>
+                                        <th>操作人</th>
+                                        <th style="width:150px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="mult-tbody">
+                                    <tr><td colspan="8" class="text-center text-muted py-4">加载中…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 客户维护弹窗 -->
+    <div class="modal fade" id="cust-modal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">客户主数据维护</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-2 align-items-end mb-3">
+                        <input type="hidden" id="c-id">
+                        <div class="col-md-3">
+                            <label class="form-label">客户代码 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="c-code" maxlength="50">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">客户名称 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="c-name" maxlength="100">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">排序号</label>
+                            <input type="number" class="form-control" id="c-sort" value="0">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">启用</label>
+                            <select class="form-select" id="c-active">
+                                <option value="1">启用</option>
+                                <option value="0">停用</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <button type="button" class="btn btn-primary w-100" id="btn-cust-save">保存</button>
+                        </div>
+                    </div>
+                    <div class="table-responsive" style="max-height:340px;overflow:auto;">
+                        <table class="table table-sm table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>客户代码</th>
+                                    <th>客户名称</th>
+                                    <th>排序号</th>
+                                    <th>状态</th>
+                                    <th style="width:130px;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cust-tbody">
+                                <tr><td colspan="5" class="text-center text-muted py-3">加载中…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 倍数规则弹窗 -->
+    <div class="modal fade" id="mult-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="mult-modal-title">新增倍数规则</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="m-id">
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label">生效开始日期 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="m-start">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">生效结束日期 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="m-end">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">作业者</label>
+                            <select class="form-select" id="m-operator">
+                                <option value="">全部作业者</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">品番</label>
+                            <input type="text" class="form-control" id="m-pno" maxlength="50" placeholder="留空=全部品番">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">倍数 <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="m-multiplier" min="0.0001" step="0.0001" value="1.5">
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">备注</label>
+                        <textarea class="form-control" id="m-remark" rows="2" maxlength="500"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-mult-save">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增/编辑弹窗 -->
+    <div class="modal fade" id="item-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modal-title">新增</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="f-id">
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label">生效日期 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="f-date">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">品番 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="f-pno" maxlength="50">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">车种</label>
+                            <input type="text" class="form-control" id="f-vehicle" maxlength="100">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">单价</label>
+                            <input type="number" class="form-control" id="f-price" min="0" step="0.0001" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">币种</label>
+                            <select class="form-select" id="f-currency">
+                                <option value="CNY">CNY 人民币</option>
+                                <option value="JPY">JPY 日元</option>
+                                <option value="USD">USD 美元</option>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">客户</label>
+                            <input type="text" class="form-control" id="f-customer" maxlength="100">
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">备注</label>
+                        <textarea class="form-control" id="f-remark" rows="2" maxlength="500"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-save">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+    (function () {
+        const API = '{{ api_base }}';
+        const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+        const CAN_DELETE = {{ 'true' if can_delete else 'false' }};
+        const PER_PAGE = 20;
+        const COLS = 10;
+        let curPage = 1;
+        let cache = {};
+
+        const modal = new bootstrap.Modal(document.getElementById('item-modal'));
+        const custModal = new bootstrap.Modal(document.getElementById('cust-modal'));
+        const tbody = document.getElementById('list-tbody');
+
+        function esc(s) {
+            return (s === null || s === undefined) ? '' : String(s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+        function money(v) {
+            return (Number(v) || 0).toFixed(4);
+        }
+        // 返回当天日期字符串 YYYY-MM-DD（本地时区）
+        function todayStr() {
+            const d = new Date();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${d.getFullYear()}-${m}-${day}`;
+        }
+        function buildQs(extra) {
+            const qs = new URLSearchParams({page: curPage, per_page: PER_PAGE});
+            const kw = document.getElementById('filter-keyword').value.trim();
+            const df = document.getElementById('filter-date-from').value;
+            const dt = document.getElementById('filter-date-to').value;
+            if (kw) qs.set('keyword', kw);
+            if (df) qs.set('date_from', df);
+            if (dt) qs.set('date_to', dt);
+            if (extra) Object.keys(extra).forEach(k => qs.set(k, extra[k]));
+            return qs;
+        }
+
+        function load(page) {
+            curPage = page || 1;
+            fetch(API + '?' + buildQs().toString())
+                .then(r => r.json())
+                .then(res => {
+                    if (!res.success) { alert(res.message || '加载失败'); return; }
+                    renderRows(res.items);
+                    renderPager(res.page, res.pages, res.total);
+                })
+                .catch(() => { tbody.innerHTML = '<tr><td colspan="' + COLS + '" class="text-center text-danger py-4">加载失败</td></tr>'; });
+        }
+
+        function renderRows(items) {
+            cache = {};
+            items.forEach(i => { cache[i.id] = i; });
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="' + COLS + '" class="text-center text-muted py-4">暂无数据</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map(g => {
+                let ops = '';
+                if (CAN_EDIT) ops += `<button class="btn btn-sm btn-outline-primary mr-1" data-edit="${g.id}">编辑</button>`;
+                if (CAN_DELETE) ops += `<button class="btn btn-sm btn-outline-danger" data-del="${g.id}">删除</button>`;
+                return `<tr>
+                    <td>${esc(g.effective_date)}</td>
+                    <td>${esc(g.pno)}</td>
+                    <td>${esc(g.vehicle_type)}</td>
+                    <td class="text-end">${money(g.unit_price)}</td>
+                    <td>${esc(g.currency)}</td>
+                    <td>${esc(g.customer)}</td>
+                    <td>${esc(g.remark)}</td>
+                    <td>${esc(g.created_by_name)}</td>
+                    <td>${esc(g.updated_at) || '-'}</td>
+                    <td>${ops || '-'}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderPager(page, pages, total) {
+            document.getElementById('page-info').textContent = `共 ${total} 条，第 ${page}/${pages || 1} 页`;
+            const ul = document.getElementById('pager');
+            let html = '';
+            const mk = (p, label, disabled, active) =>
+                `<li class="page-item ${disabled ? 'disabled' : ''} ${active ? 'active' : ''}">
+                    <a class="page-link" href="#" data-page="${p}">${label}</a></li>`;
+            html += mk(page - 1, '上一页', page <= 1, false);
+            for (let p = 1; p <= pages; p++) {
+                if (p === 1 || p === pages || Math.abs(p - page) <= 2) {
+                    html += mk(p, p, false, p === page);
+                } else if (Math.abs(p - page) === 3) {
+                    html += '<li class="page-item disabled"><span class="page-link">…</span></li>';
+                }
+            }
+            html += mk(page + 1, '下一页', page >= pages, false);
+            ul.innerHTML = html;
+        }
+
+        function openModal(g) {
+            document.getElementById('modal-title').textContent = g ? '编辑' : '新增';
+            document.getElementById('f-id').value = g ? g.id : '';
+            document.getElementById('f-date').value = g ? g.effective_date : '';
+            document.getElementById('f-pno').value = g ? g.pno : '';
+            document.getElementById('f-vehicle').value = g ? g.vehicle_type : '';
+            document.getElementById('f-price').value = g ? g.unit_price : 0;
+            document.getElementById('f-currency').value = g ? (g.currency || 'CNY') : 'CNY';
+            document.getElementById('f-customer').value = g ? g.customer : '';
+            document.getElementById('f-remark').value = g ? g.remark : '';
+            modal.show();
+        }
+
+        // Excel 上传：按中文表头识别（品番/单价 必填；生效日期缺省今天、币种缺省 CNY）
+        function uploadExcel(file) {
+            if (!file) return;
+            const fd = new FormData();
+            fd.append('file', file);
+            const btn = document.getElementById('btn-upload');
+            btn.disabled = true;
+            fetch(API + '/upload', {method: 'POST', body: fd, headers: {'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content}})
+                .then(r => r.json())
+                .then(res => {
+                    btn.disabled = false;
+                    if (!res.success) { alert(res.message || '上传失败'); return; }
+                    let msg = `导入完成：成功 ${res.imported} 行，失败 ${res.failed} 行。`;
+                    if (res.errors && res.errors.length) {
+                        msg += '\n\n失败明细（前 ' + res.errors.length + ' 条）：\n'
+                             + res.errors.map(e => `第 ${e.row} 行：${e.message}`).join('\n');
+                    }
+                    alert(msg);
+                    load(1);
+                })
+                .catch(() => { btn.disabled = false; alert('上传失败'); });
+        }
+
+        function save() {
+            const id = document.getElementById('f-id').value;
+            const payload = {
+                effective_date: document.getElementById('f-date').value,
+                pno: document.getElementById('f-pno').value.trim(),
+                vehicle_type: document.getElementById('f-vehicle').value.trim(),
+                unit_price: parseFloat(document.getElementById('f-price').value) || 0,
+                currency: document.getElementById('f-currency').value,
+                customer: document.getElementById('f-customer').value.trim(),
+                remark: document.getElementById('f-remark').value.trim()
+            };
+            if (!payload.effective_date || !payload.pno) { alert('生效日期与品番为必填项'); return; }
+            fetch(id ? (API + '/' + id) : API, {
+                method: id ? 'PUT' : 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).then(r => r.json()).then(res => {
+                if (res.success) { modal.hide(); load(id ? curPage : 1); }
+                else alert(res.message || '保存失败');
+            }).catch(() => alert('保存失败'));
+        }
+
+        function del(id) {
+            if (!confirm('确认删除该记录？')) return;
+            fetch(API + '/' + id, {method: 'DELETE'})
+                .then(r => r.json())
+                .then(res => { if (res.success) load(curPage); else alert(res.message || '删除失败'); })
+                .catch(() => alert('删除失败'));
+        }
+
+        // ---------------- 客户主数据维护 ----------------
+        // 加载客户列表到维护弹窗
+        function loadCustAdmin() {
+            const tb = document.getElementById('cust-tbody');
+            tb.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">加载中…</td></tr>';
+            fetch('/mes/api/customers/admin')
+                .then(r => r.json())
+                .then(res => {
+                    if (!res.success) { tb.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">加载失败</td></tr>'; return; }
+                    if (!res.items.length) { tb.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">暂无客户</td></tr>'; return; }
+                    tb.innerHTML = res.items.map(c => `<tr>
+                        <td>${esc(c.cust_code)}</td>
+                        <td>${esc(c.cust_name)}</td>
+                        <td>${c.sort_no}</td>
+                        <td>${c.is_active ? '<span class="badge bg-success">启用</span>' : '<span class="badge bg-secondary">停用</span>'}</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary mr-1" data-cedit="${c.id}">编辑</button>
+                            <button class="btn btn-sm btn-outline-danger" data-cdel="${c.id}">删除</button>
+                        </td>
+                    </tr>`).join('');
+                    tb._items = res.items;
+                })
+                .catch(() => { tb.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">加载失败</td></tr>'; });
+        }
+
+        // 新增/更新客户
+        function saveCust() {
+            const payload = {
+                id: document.getElementById('c-id').value || null,
+                cust_code: document.getElementById('c-code').value.trim(),
+                cust_name: document.getElementById('c-name').value.trim(),
+                sort_no: parseInt(document.getElementById('c-sort').value, 10) || 0,
+                is_active: document.getElementById('c-active').value === '1'
+            };
+            if (!payload.cust_code || !payload.cust_name) { alert('客户代码与名称为必填项'); return; }
+            fetch('/mes/api/customers/admin', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).then(r => r.json()).then(res => {
+                if (res.success) { resetCustForm(); loadCustAdmin(); }
+                else alert(res.message || '保存失败');
+            }).catch(() => alert('保存失败'));
+        }
+
+        function resetCustForm() {
+            document.getElementById('c-id').value = '';
+            document.getElementById('c-code').value = '';
+            document.getElementById('c-name').value = '';
+            document.getElementById('c-sort').value = 0;
+            document.getElementById('c-active').value = '1';
+        }
+
+        document.getElementById('btn-cust-manage').addEventListener('click', () => {
+            resetCustForm();
+            loadCustAdmin();
+            custModal.show();
+        });
+        document.getElementById('btn-cust-save').addEventListener('click', saveCust);
+        document.getElementById('cust-tbody').addEventListener('click', e => {
+            const eid = e.target.getAttribute('data-cedit');
+            const did = e.target.getAttribute('data-cdel');
+            const items = document.getElementById('cust-tbody')._items || [];
+            if (eid) {
+                const c = items.find(x => String(x.id) === String(eid));
+                if (c) {
+                    document.getElementById('c-id').value = c.id;
+                    document.getElementById('c-code').value = c.cust_code;
+                    document.getElementById('c-name').value = c.cust_name;
+                    document.getElementById('c-sort').value = c.sort_no;
+                    document.getElementById('c-active').value = c.is_active ? '1' : '0';
+                }
+            } else if (did) {
+                if (!confirm('确认删除该客户？')) return;
+                fetch('/mes/api/customers/admin/' + did, {method: 'DELETE'})
+                    .then(r => r.json())
+                    .then(res => { if (res.success) loadCustAdmin(); else alert(res.message || '删除失败'); })
+                    .catch(() => alert('删除失败'));
+            }
+        });
+
+        document.getElementById('btn-search').addEventListener('click', () => load(1));
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            document.getElementById('filter-keyword').value = '';
+            document.getElementById('filter-date-from').value = '';
+            document.getElementById('filter-date-to').value = '';
+            load(1);
+        });
+        document.getElementById('filter-keyword').addEventListener('keydown', e => { if (e.key === 'Enter') load(1); });
+        const btnAdd = document.getElementById('btn-add');
+        if (btnAdd) btnAdd.addEventListener('click', () => openModal(null));
+        const btnUpload = document.getElementById('btn-upload');
+        const fileUpload = document.getElementById('file-upload');
+        if (btnUpload) btnUpload.addEventListener('click', () => fileUpload.click());
+        if (fileUpload) fileUpload.addEventListener('change', e => {
+            if (e.target.files.length) { uploadExcel(e.target.files[0]); e.target.value = ''; }
+        });
+        // 下载导入模板（服务端按标准列头生成 xlsx）
+        const btnTemplate = document.getElementById('btn-template');
+        if (btnTemplate) btnTemplate.addEventListener('click', () => {
+            window.location.href = API + '/template';
+        });
+        document.getElementById('btn-save').addEventListener('click', save);
+        const btnExport = document.getElementById('btn-export');
+        if (btnExport) btnExport.addEventListener('click', () => {
+            window.location.href = API + '/export?' + buildQs().toString();
+        });
+
+        tbody.addEventListener('click', e => {
+            const editId = e.target.getAttribute('data-edit');
+            const delId = e.target.getAttribute('data-del');
+            if (editId) {
+                if (cache[editId]) openModal(cache[editId]);
+            } else if (delId) {
+                del(delId);
+            }
+        });
+
+        document.getElementById('pager').addEventListener('click', e => {
+            e.preventDefault();
+            const p = e.target.getAttribute('data-page');
+            if (p && !e.target.closest('.disabled')) load(parseInt(p, 10));
+        });
+
+        // ---------------- 单价倍数规则 ----------------
+        // API = '/mes/api/price'，倍数规则接口为同一前缀下的 /multipliers
+        const API_ROOT = API.replace(/\/price$/, '');
+        const MULT_API = API + '/multipliers';
+        const OPERATORS_API = API_ROOT + '/production/operators';
+        const multModalEl = document.getElementById('mult-modal');
+        const multModal = new bootstrap.Modal(multModalEl);
+        const multTbody = document.getElementById('mult-tbody');
+        let multCache = {};
+
+        // 加载作业者下拉（用于倍数规则「作业者」选择）
+        function loadOperators() {
+            fetch(OPERATORS_API).then(r => r.json()).then(res => {
+                if (!res.success) return;
+                const sel = document.getElementById('m-operator');
+                sel.innerHTML = '<option value="">全部作业者</option>'
+                    + (res.items || []).map(o => `<option value="${esc(o.name)}">${esc(o.name)}</option>`).join('');
+            }).catch(() => {});
+        }
+
+        function fmtMult(v) {
+            return (Number(v) || 0).toFixed(2) + 'x';
+        }
+
+        function loadMultipliers() {
+            fetch(MULT_API).then(r => r.json()).then(res => {
+                if (!res.success) { multTbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">加载失败</td></tr>'; return; }
+                const items = res.items || [];
+                multCache = {};
+                items.forEach(i => { multCache[i.id] = i; });
+                if (!items.length) {
+                    multTbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无倍数规则</td></tr>';
+                    return;
+                }
+                multTbody.innerHTML = items.map(g => {
+                    let ops = '';
+                    if (CAN_EDIT) ops += `<button class="btn btn-sm btn-outline-primary mr-1" data-medit="${g.id}">编辑</button>`;
+                    if (CAN_DELETE) ops += `<button class="btn btn-sm btn-outline-danger" data-mdel="${g.id}">删除</button>`;
+                    return `<tr>
+                        <td>${esc(g.start_date)}</td>
+                        <td>${esc(g.end_date)}</td>
+                        <td>${esc(g.operator) || '<span class="text-muted">全部</span>'}</td>
+                        <td>${esc(g.pno) || '<span class="text-muted">全部</span>'}</td>
+                        <td class="text-end">${fmtMult(g.multiplier)}</td>
+                        <td>${esc(g.remark)}</td>
+                        <td>${esc(g.created_by_name)}</td>
+                        <td>${ops || '-'}</td>
+                    </tr>`;
+                }).join('');
+            }).catch(() => { multTbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">加载失败</td></tr>'; });
+        }
+
+        function openMultModal(g) {
+            document.getElementById('mult-modal-title').textContent = g ? '编辑倍数规则' : '新增倍数规则';
+            document.getElementById('m-id').value = g ? g.id : '';
+            document.getElementById('m-start').value = g ? g.start_date : '';
+            document.getElementById('m-end').value = g ? g.end_date : '';
+            document.getElementById('m-operator').value = g ? (g.operator || '') : '';
+            document.getElementById('m-pno').value = g ? g.pno : '';
+            document.getElementById('m-multiplier').value = g ? g.multiplier : 1.5;
+            document.getElementById('m-remark').value = g ? g.remark : '';
+            multModal.show();
+        }
+
+        function saveMultiplier() {
+            const id = document.getElementById('m-id').value;
+            const payload = {
+                start_date: document.getElementById('m-start').value,
+                end_date: document.getElementById('m-end').value,
+                operator: document.getElementById('m-operator').value,
+                pno: document.getElementById('m-pno').value.trim(),
+                multiplier: parseFloat(document.getElementById('m-multiplier').value) || 0,
+                remark: document.getElementById('m-remark').value.trim()
+            };
+            if (!payload.start_date || !payload.end_date) { alert('生效开始/结束日期为必填'); return; }
+            if (payload.multiplier <= 0) { alert('倍数必须大于 0'); return; }
+            if (id) payload.id = parseInt(id, 10);
+            fetch(MULT_API, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).then(r => r.json()).then(res => {
+                if (res.success) { multModal.hide(); loadMultipliers(); }
+                else alert(res.message || '保存失败');
+            }).catch(() => alert('保存失败'));
+        }
+
+        function delMultiplier(id) {
+            if (!confirm('确认删除该倍数规则？')) return;
+            fetch(MULT_API + '/' + id, {method: 'DELETE'})
+                .then(r => r.json())
+                .then(res => { if (res.success) loadMultipliers(); else alert(res.message || '删除失败'); })
+                .catch(() => alert('删除失败'));
+        }
+
+        const btnMultAdd = document.getElementById('btn-mult-add');
+        if (btnMultAdd) btnMultAdd.addEventListener('click', () => openMultModal(null));
+        document.getElementById('btn-mult-save').addEventListener('click', saveMultiplier);
+        multTbody.addEventListener('click', e => {
+            const editId = e.target.getAttribute('data-medit');
+            const delId = e.target.getAttribute('data-mdel');
+            if (editId) { if (multCache[editId]) openMultModal(multCache[editId]); }
+            else if (delId) { delMultiplier(delId); }
+        });
+
+        loadOperators();
+        loadMultipliers();
+
+        // 日期筛选默认取当天
+        document.getElementById('filter-date-from').value = todayStr();
+        document.getElementById('filter-date-to').value = todayStr();
+        load(1);
+    })();
+    </script>
+</body>
+</html>

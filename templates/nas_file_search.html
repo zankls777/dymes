@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>NAS文件搜索 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .card { margin-bottom: 12px; }
+        .card-header { padding: 0.45rem 0.9rem; font-weight: 600; }
+        .card-body { padding: 0.9rem; }
+        .table th { background-color: #f8f9fa; white-space: nowrap; }
+        .table td { vertical-align: middle; }
+        .table-sm th, .table-sm td { padding: 0.35rem 0.5rem; }
+        .step-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 22px; height: 22px; border-radius: 50%;
+            background: #0d6efd; color: #fff; font-size: 0.75rem;
+            margin-right: 6px;
+        }
+        .kpi-card {
+            border-left: 4px solid #0d6efd; background: #f8f9fa;
+            padding: 10px 14px; border-radius: 6px; text-align: center;
+        }
+        .kpi-card .num { font-size: 1.4rem; font-weight: 700; color: #0d6efd; }
+        .kpi-card .label { font-size: 0.78rem; color: #6c757d; }
+        .result-item td { font-size: 0.88rem; }
+        .file-list { list-style: none; padding-left: 0; margin: 0; }
+        .file-list li { padding: 2px 0; font-size: 0.85rem; }
+        .muted-tip { color: #98a2ab; font-size: 0.82rem; }
+        .status-found { color: #198754; font-weight: 600; }
+        .status-none { color: #dc3545; font-weight: 600; }
+        .wizard-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,.55);
+            z-index: 2000; display: none; align-items: center; justify-content: center;
+            padding: 16px;
+        }
+        .wizard-overlay.show { display: flex; }
+        .wizard-box {
+            background: #fff; border-radius: 12px; max-width: 560px; width: 100%;
+            max-height: 92vh; overflow-y: auto; box-shadow: 0 12px 40px rgba(0,0,0,.3);
+        }
+        .wizard-head {
+            background: linear-gradient(135deg,#0d6efd,#4da3ff); color: #fff;
+            padding: 16px 20px; border-radius: 12px 12px 0 0;
+        }
+        .wizard-body { padding: 18px 20px; }
+        .wizard-foot {
+            padding: 12px 20px; border-top: 1px solid #e9ecef;
+            display: flex; justify-content: flex-end; gap: 8px;
+        }
+        .loading-mask {
+            display: none; position: fixed; inset: 0; background: rgba(255,255,255,.7);
+            z-index: 1900; align-items: center; justify-content: center;
+        }
+        .loading-mask.show { display: flex; }
+    </style>
+</head>
+<body class="nas-file-search-page">
+    {% include '_navbar.html' %}
+
+    <div class="container-fluid mt-3">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+            <h5 class="mb-0"><i class="fa fa-server me-1"></i> NAS文件搜索</h5>
+            <div class="d-flex align-items-center gap-2">
+                <span id="nasStatus" class="badge {{ 'bg-success' if nas_configured else 'bg-secondary' }}">
+                    {{ 'NAS 已配置' if nas_configured else 'NAS 未配置' }}
+                </span>
+                {% if can_config %}
+                <button class="btn btn-outline-primary btn-sm" id="btnConfig">
+                    <i class="fa fa-cog me-1"></i>NAS 配置
+                </button>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 搜索配置说明 -->
+        <div class="alert alert-light border mb-2 py-2">
+            <i class="fa fa-info-circle text-primary me-1"></i>
+            上传包含 <b>品番</b> 与 <b>EO</b> 两列的 Excel，系统据此在 NAS 上搜索对应的
+            <b>SubList</b> 与 <b>UsageList</b> 文件；搜索到后可勾选并一键导入「文件管理」。
+        </div>
+
+        {% if can_search %}
+        <!-- 步骤1：上传 Excel -->
+        <div class="card">
+            <div class="card-header"><span class="step-badge">1</span>上传搜索清单（Excel）</div>
+            <div class="card-body">
+                <div class="row g-2 align-items-end">
+                    <div class="col-12 col-md-6">
+                        <label class="form-label mb-1">选择文件（.xls / .xlsx，需含「品番」「EO」列）</label>
+                        <input type="file" class="form-control form-control-sm" id="excelFile" accept=".xls,.xlsx">
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <button class="btn btn-primary btn-sm" id="btnParse">
+                            <i class="fa fa-upload me-1"></i>上传并解析
+                        </button>
+                        {% if can_import %}
+                        <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#manualAddModal">
+                            <i class="fa fa-plus me-1"></i>手动新规
+                        </button>
+                        {% endif %}
+                        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('nas.download_template') }}">
+                            <i class="fa fa-download me-1"></i>下载模板
+                        </a>
+                    </div>
+                </div>
+                <div id="parseInfo" class="mt-2 muted-tip"></div>
+            </div>
+        </div>
+
+        <!-- 步骤2：搜索 NAS -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span><span class="step-badge">2</span>在 NAS 中搜索</span>
+                <div class="d-flex align-items-center gap-2">
+                    <select class="form-select form-select-sm" id="searchMode" style="width:auto;">
+                        <option value="strict">品番 + EO 同时匹配</option>
+                        <option value="loose">仅按品番匹配</option>
+                    </select>
+                    <button class="btn btn-success btn-sm" id="btnSearch" disabled>
+                        <i class="fa fa-search me-1"></i>开始搜索
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-2 mb-2">
+                    <div class="col-6 col-md-3">
+                        <div class="kpi-card"><div class="num" id="kpiItems">0</div><div class="label">待搜索品番数</div></div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="kpi-card"><div class="num" id="kpiFound">0</div><div class="label">匹配成功</div></div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="kpi-card"><div class="num" id="kpiFiles">0</div><div class="label">命中文件数</div></div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="kpi-card"><div class="num" id="kpiMissing">0</div><div class="label">未找到</div></div>
+                    </div>
+                </div>
+                <div class="table-responsive" style="max-height: 56vh; overflow:auto;">
+                    <table class="table table-sm table-hover table-bordered">
+                        <thead>
+                            <tr>
+                                <th style="width:40px;"><input type="checkbox" id="checkAll"></th>
+                                <th style="width:60px;">序号</th>
+                                <th>品番</th>
+                                <th style="width:90px;">EO</th>
+                                <th style="width:90px;">状态</th>
+                                <th>匹配到的 NAS 文件</th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultBody">
+                            <tr><td colspan="6" class="text-center text-muted py-4">请先上传并解析 Excel</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 步骤3：导入 -->
+        {% if can_import %}
+        <div class="card">
+            <div class="card-header"><span class="step-badge">3</span>导入文件管理</div>
+            <div class="card-body d-flex align-items-center flex-wrap gap-2">
+                <button class="btn btn-primary btn-sm" id="btnImport" disabled>
+                    <i class="fa fa-file-import me-1"></i>导入选中的文件
+                </button>
+                <button class="btn btn-outline-success btn-sm" id="btnZip" disabled>
+                    <i class="fa fa-file-archive-o me-1"></i>打包下载
+                </button>
+                <span class="muted-tip" id="selectedTip">已选 0 个文件</span>
+                <span class="ms-auto muted-tip">导入后可在「文件管理」页面查看</span>
+            </div>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="alert alert-warning">您没有 NAS 文件搜索的操作权限，请联系管理员开通。</div>
+        {% endif %}
+    </div>
+
+    <!-- 配置向导 -->
+    <div class="wizard-overlay {{ '' if nas_configured else 'show' }}" id="wizard">
+        <div class="wizard-box">
+            <div class="wizard-head">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="fa fa-server me-1"></i>群晖 NAS 连接配置</h6>
+                    <button type="button" class="btn-close btn-close-white" id="wizardClose" aria-label="关闭"></button>
+                </div>
+                <div class="small mt-1" id="wizardHint">
+                    首次使用需填写群晖 NAS 的 WebDAV 账号信息（登录后可直接进入，无需重复配置）。
+                </div>
+            </div>
+            <div class="wizard-body">
+                <div class="mb-2">
+                    <label class="form-label mb-1">NAS 地址（WebDAV URL）<span class="text-danger">*</span></label>
+                    <input type="text" class="form-control form-control-sm" id="cfgUrl"
+                           placeholder="例如：https://192.168.1.10:5006" value="{{ nas_config.url }}">
+                    <div class="form-text">群晖需在「控制面板 → 文件服务 → WebDAV」中启用，默认端口 5005(HTTP)/5006(HTTPS)。</div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label mb-1">DSM 地址（选填，启用索引秒搜）</label>
+                    <input type="text" class="form-control form-control-sm" id="cfgDsmUrl"
+                           placeholder="例如：http://192.168.1.10:5000" value="{{ nas_config.dsm_url }}">
+                    <div class="form-text">填写 DSM 主端口地址后走文件索引搜索（秒级）；留空则回退 WebDAV 全量扫描（较慢）。</div>
+                </div>
+                <div class="row g-2">
+                    <div class="col-12 col-md-6">
+                        <label class="form-label mb-1">账号<span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm" id="cfgUser"
+                               placeholder="群晖登录账号" value="{{ nas_config.username }}" autocomplete="off">
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label mb-1">密码<span class="text-danger">*</span></label>
+                        <input type="password" class="form-control form-control-sm" id="cfgPass"
+                               placeholder="{{ '留空则不修改' if nas_config.has_password else '群晖登录密码' }}" autocomplete="new-password">
+                    </div>
+                </div>
+                <div class="row g-2 mt-1">
+                    <div class="col-12 col-md-6">
+                        <label class="form-label mb-1">认证方式</label>
+                        <select class="form-select form-select-sm" id="cfgAuth">
+                            <option value="basic" {{ 'selected' if nas_config.auth_type == 'basic' }}>Basic（默认）</option>
+                            <option value="digest" {{ 'selected' if nas_config.auth_type == 'digest' }}>Digest</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-2">
+                    <label class="form-label mb-1">
+                        搜索目录（可多选）
+                        <button type="button" class="btn btn-link btn-sm p-0 ms-1" id="btnPickDirs">选择目录</button>
+                    </label>
+                    <div id="selectedDirs" class="form-control form-control-sm" style="min-height:38px;height:auto;">
+                        <span class="text-muted small">未选择任何目录</span>
+                    </div>
+                    <div class="form-text">点击「选择目录」浏览 NAS 并勾选要搜索的文件夹（可多选），避免手填路径出错。</div>
+                </div>
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="cfgVerify" {{ 'checked' if nas_config.verify_ssl }}>
+                    <label class="form-check-label small" for="cfgVerify">
+                        校验 HTTPS 证书（自签名证书请取消勾选）
+                    </label>
+                </div>
+                <div id="cfgMsg" class="mt-2 small"></div>
+            </div>
+            <div class="wizard-foot">
+                <button class="btn btn-outline-secondary btn-sm" id="btnTest">
+                    <i class="fa fa-plug me-1"></i>测试连接
+                </button>
+                <button class="btn btn-primary btn-sm" id="btnSaveCfg">
+                    <i class="fa fa-save me-1"></i>保存配置
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-mask" id="loadingMask">
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status"></div>
+            <div class="mt-2" id="loadingText">处理中...</div>
+        </div>
+    </div>
+
+    <!-- 手动新规 -->
+    <div class="modal fade" id="manualAddModal" tabindex="-1" aria-labelledby="manualAddModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="manualAddModalLabel">手动录入品番与EO</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="manualAddForm">
+                        <div class="mb-3">
+                            <label for="manualData" class="form-label">批量输入品番与EO</label>
+                            <textarea class="form-control" id="manualData" rows="10" placeholder="请输入或粘贴数据，每行：品番 和 EO（逗号或空格分隔）
+示例：
+91800-XB010AG,d1
+91800-XB010AH c2"></textarea>
+                            <div class="form-text">支持批量输入，每行一条数据（品番 与 EO 用逗号或空格分隔）；系统将同时生成 SubList 与 UsageList</div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="manualAddSubmit">确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 目录选择弹窗 -->
+    <div class="wizard-overlay" id="dirPicker" style="z-index:2100;">
+        <div class="wizard-box" style="max-width:640px;">
+            <div class="wizard-head">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="fa fa-folder-open me-1"></i>选择搜索目录</h6>
+                    <button type="button" class="btn-close btn-close-white" id="dirPickerClose" aria-label="关闭"></button>
+                </div>
+                <div class="small mt-1">浏览 NAS 文件夹，勾选需要搜索的目录（可多选）。</div>
+            </div>
+            <div class="wizard-body">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="dirUp">
+                        <i class="fa fa-level-up me-1"></i>上级
+                    </button>
+                    <div id="dirCrumb" class="small text-truncate" style="flex:1;">/</div>
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="dirAddCur">
+                        <i class="fa fa-plus me-1"></i>添加当前目录
+                    </button>
+                </div>
+                <div id="dirList" class="border rounded" style="max-height:46vh;overflow:auto;">
+                    <div class="text-center text-muted py-4">加载中...</div>
+                </div>
+                <div class="mt-2">
+                    <div class="small text-muted mb-1">已选目录：</div>
+                    <div id="dirPicked" class="d-flex flex-wrap gap-1"></div>
+                </div>
+            </div>
+            <div class="wizard-foot">
+                <button class="btn btn-outline-secondary btn-sm" id="dirCancel">取消</button>
+                <button class="btn btn-primary btn-sm" id="dirConfirm">
+                    <i class="fa fa-check me-1"></i>确定
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+    (function () {
+        const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+        const CAN_CONFIG = {{ 'true' if can_config else 'false' }};
+        const CAN_SEARCH = {{ 'true' if can_search else 'false' }};
+        const CAN_IMPORT = {{ 'true' if can_import else 'false' }};
+
+        let parsedItems = [];   // [{subpno, eo}]
+        let searchResults = []; // [{subpno, eo, files:[{name,path,file_type,size_kb}], found}]
+        // 已选择的搜索目录（多选）
+        let selectedRoots = {{ (nas_config.roots if nas_config.roots else ['/']) | tojson }};
+
+        const $ = (id) => document.getElementById(id);
+
+        function showLoading(text) {
+            $('loadingText').textContent = text || '处理中...';
+            $('loadingMask').classList.add('show');
+        }
+        function hideLoading() { $('loadingMask').classList.remove('show'); }
+
+        function api(url, options) {
+            options = options || {};
+            options.headers = Object.assign({
+                'X-CSRFToken': CSRF,
+                'X-Requested-With': 'XMLHttpRequest'
+            }, options.headers || {});
+            if (options.json) {
+                options.method = options.method || 'POST';
+                options.headers['Content-Type'] = 'application/json';
+                options.body = JSON.stringify(options.json);
+            }
+            return fetch(url, options).then(r => r.json());
+        }
+
+        // ---------- 配置向导 ----------
+        function openWizard() { $('wizard').classList.add('show'); }
+        function closeWizard() {
+            if (!$('nasStatus').classList.contains('bg-success')) {
+                alert('请先完成 NAS 配置后再关闭');
+                return;
+            }
+            $('wizard').classList.remove('show');
+        }
+        $('btnConfig') && $('btnConfig').addEventListener('click', openWizard);
+        $('wizardClose').addEventListener('click', closeWizard);
+
+        function collectCfg() {
+            return {
+                url: $('cfgUrl').value.trim(),
+                dsm_url: $('cfgDsmUrl').value.trim(),
+                username: $('cfgUser').value.trim(),
+                password: $('cfgPass').value,
+                auth_type: $('cfgAuth').value,
+                roots: selectedRoots.slice(),
+                verify_ssl: $('cfgVerify').checked
+            };
+        }
+        function setCfgMsg(text, ok) {
+            const el = $('cfgMsg');
+            el.className = 'mt-2 small ' + (ok ? 'text-success' : 'text-danger');
+            el.textContent = text || '';
+        }
+
+        // ---------- 已选目录展示 ----------
+        function renderSelectedDirs() {
+            const box = $('selectedDirs');
+            if (!box) return;
+            if (!selectedRoots.length) {
+                box.innerHTML = '<span class="text-muted small">未选择任何目录</span>';
+                return;
+            }
+            box.innerHTML = selectedRoots.map((p, i) =>
+                '<span class="badge bg-primary me-1 mb-1">' + esc(p) +
+                ' <span class="dir-remove" data-idx="' + i + '" style="cursor:pointer;">&times;</span></span>'
+            ).join('');
+            box.querySelectorAll('.dir-remove').forEach(el => {
+                el.addEventListener('click', function () {
+                    selectedRoots.splice(parseInt(this.dataset.idx, 10), 1);
+                    renderSelectedDirs();
+                });
+            });
+        }
+
+        // ---------- 目录选择器 ----------
+        let curDirPath = '/';
+        let curParentPath = null;
+        let pickedDirs = [];
+
+        function openDirPicker() {
+            // 预填当前已选目录
+            pickedDirs = selectedRoots.slice();
+            renderPickedDirs();
+            $('dirPicker').classList.add('show');
+            loadDir('/');
+        }
+        function closeDirPicker() { $('dirPicker').classList.remove('show'); }
+
+        function cfgForDir() {
+            // 目录浏览使用配置向导中的连接信息（未保存时也能浏览）
+            return {
+                url: $('cfgUrl').value.trim(),
+                username: $('cfgUser').value.trim(),
+                password: $('cfgPass').value,
+                auth_type: $('cfgAuth').value,
+                verify_ssl: $('cfgVerify').checked
+            };
+        }
+
+        function loadDir(path) {
+            const list = $('dirList');
+            list.innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm"></span> 加载中...</div>';
+            const payload = cfgForDir();
+            payload.path = path;
+            api('{{ url_for("nas.api_list_dirs") }}', { json: payload })
+                .then(res => {
+                    if (!res.success) {
+                        list.innerHTML = '<div class="text-center text-danger py-3">' + esc(res.message || '读取失败') + '</div>';
+                        return;
+                    }
+                    curDirPath = res.path;
+                    curParentPath = res.parent;
+                    $('dirCrumb').textContent = res.path;
+                    $('dirUp').disabled = !res.parent;
+                    if (!res.dirs.length) {
+                        list.innerHTML = '<div class="text-center text-muted py-3">该目录下没有子文件夹</div>';
+                    } else {
+                        list.innerHTML = res.dirs.map(d => {
+                            const checked = pickedDirs.indexOf(d.path) >= 0 ? 'checked' : '';
+                            return '<div class="d-flex align-items-center px-2 py-1 border-bottom dir-row">' +
+                                '<input type="checkbox" class="form-check-input me-2 dir-check" data-path="' + esc(d.path) + '" ' + checked + '>' +
+                                '<i class="fa fa-folder text-warning me-1"></i>' +
+                                '<a href="javascript:;" class="text-decoration-none text-truncate dir-enter" data-path="' + esc(d.path) + '">' + esc(d.name) + '</a>' +
+                                '</div>';
+                        }).join('');
+                        list.querySelectorAll('.dir-check').forEach(cb => cb.addEventListener('change', function () {
+                            const p = this.dataset.path;
+                            if (this.checked) { if (pickedDirs.indexOf(p) < 0) pickedDirs.push(p); }
+                            else { pickedDirs = pickedDirs.filter(x => x !== p); }
+                            renderPickedDirs();
+                        }));
+                        list.querySelectorAll('.dir-enter').forEach(a => a.addEventListener('click', function () {
+                            loadDir(this.dataset.path);
+                        }));
+                    }
+                })
+                .catch(() => {
+                    list.innerHTML = '<div class="text-center text-danger py-3">读取失败，请稍后重试</div>';
+                });
+        }
+
+        function renderPickedDirs() {
+            const box = $('dirPicked');
+            if (!pickedDirs.length) {
+                box.innerHTML = '<span class="text-muted small">无</span>';
+                return;
+            }
+            box.innerHTML = pickedDirs.map((p, i) =>
+                '<span class="badge bg-primary">' + esc(p) +
+                ' <span class="dir-remove" data-idx="' + i + '" style="cursor:pointer;">&times;</span></span>'
+            ).join('');
+            box.querySelectorAll('.dir-remove').forEach(el => {
+                el.addEventListener('click', function () {
+                    pickedDirs.splice(parseInt(this.dataset.idx, 10), 1);
+                    renderPickedDirs();
+                    // 同步当前列表勾选状态
+                    document.querySelectorAll('.dir-check').forEach(cb => {
+                        cb.checked = pickedDirs.indexOf(cb.dataset.path) >= 0;
+                    });
+                });
+            });
+        }
+
+        $('btnPickDirs') && $('btnPickDirs').addEventListener('click', function () {
+            if (!$('cfgUrl').value.trim() || !$('cfgUser').value.trim()) {
+                setCfgMsg('请先填写 NAS 地址与账号', false);
+                return;
+            }
+            openDirPicker();
+        });
+        $('dirPickerClose') && $('dirPickerClose').addEventListener('click', closeDirPicker);
+        $('dirCancel') && $('dirCancel').addEventListener('click', closeDirPicker);
+        $('dirUp') && $('dirUp').addEventListener('click', function () {
+            if (curParentPath !== null) loadDir(curParentPath);
+        });
+        $('dirAddCur') && $('dirAddCur').addEventListener('click', function () {
+            if (pickedDirs.indexOf(curDirPath) < 0) {
+                pickedDirs.push(curDirPath);
+                renderPickedDirs();
+            }
+        });
+        $('dirConfirm') && $('dirConfirm').addEventListener('click', function () {
+            selectedRoots = pickedDirs.slice();
+            renderSelectedDirs();
+            closeDirPicker();
+        });
+        renderSelectedDirs();
+
+        $('btnTest').addEventListener('click', function () {
+            const cfg = collectCfg();
+            if (!cfg.url || !cfg.username) { setCfgMsg('请先填写地址与账号', false); return; }
+            showLoading('正在测试连接...');
+            api('{{ url_for("nas.api_test_connection") }}', { json: cfg })
+                .then(res => setCfgMsg(res.message, res.success))
+                .catch(() => setCfgMsg('测试失败，请稍后重试', false))
+                .finally(hideLoading);
+        });
+
+        $('btnSaveCfg').addEventListener('click', function () {
+            const cfg = collectCfg();
+            if (!cfg.url || !cfg.username) { setCfgMsg('请先填写地址与账号', false); return; }
+            showLoading('正在保存配置...');
+            api('{{ url_for("nas.api_save_config") }}', { json: cfg })
+                .then(res => {
+                    setCfgMsg(res.message, res.success);
+                    if (res.success) {
+                        $('nasStatus').textContent = 'NAS 已配置';
+                        $('nasStatus').className = 'badge bg-success';
+                        $('cfgPass').value = '';
+                        $('cfgPass').placeholder = '留空则不修改';
+                        setTimeout(() => $('wizard').classList.remove('show'), 600);
+                    }
+                })
+                .catch(() => setCfgMsg('保存失败，请稍后重试', false))
+                .finally(hideLoading);
+        });
+
+        // ---------- 步骤1：解析 Excel ----------
+        function putRowsIntoResults(res) {
+            // res: {items:[{subpno,eo}], count, errors} 或 {items:[...], count:1}
+            parsedItems = res.items || [];
+            searchResults = [];
+            applyItemsInfo(res.count, res.errors);
+        }
+
+        function applyItemsInfo(count, errors) {
+            $('parseInfo').innerHTML = '已载入 <b>' + count + '</b> 组品番+EO' +
+                (errors && errors.length ? '，' + errors.length + ' 行异常' : '');
+            $('kpiItems').textContent = parsedItems.length;
+            $('kpiFound').textContent = '0';
+            $('kpiFiles').textContent = '0';
+            $('kpiMissing').textContent = '0';
+            $('btnSearch').disabled = parsedItems.length === 0;
+            renderResults([]);
+        }
+
+        $('btnParse') && $('btnParse').addEventListener('click', function () {
+            const fileInput = $('excelFile');
+            if (!fileInput.files || !fileInput.files[0]) { alert('请选择 Excel 文件'); return; }
+            const fd = new FormData();
+            fd.append('file', fileInput.files[0]);
+            showLoading('正在解析 Excel...');
+            api('{{ url_for("nas.api_parse_excel") }}', { method: 'POST', body: fd })
+                .then(res => {
+                    if (!res.success) { alert(res.message || '解析失败'); return; }
+                    putRowsIntoResults(res);
+                })
+                .catch(() => alert('解析失败，请稍后重试'))
+                .finally(hideLoading);
+        });
+
+        // ---------- 手动新规（批量输入） ----------
+        $('manualAddSubmit') && $('manualAddSubmit').addEventListener('click', function () {
+            const manualData = $('manualData');
+            const inputData = manualData.value.trim();
+            if (!inputData) { alert('请输入或粘贴NAS文件数据'); return; }
+
+            // 解析输入：每行「品番,EO」，分隔符支持逗号、空格或制表符
+            const lines = inputData.split('\n').filter(line => line.trim() !== '');
+            const parsedData = [];
+            for (const line of lines) {
+                const fields = line.trim().split(/[\s,]+/).filter(f => f !== '');
+                if (fields.length < 2) {
+                    alert('数据格式错误: ' + line + '\n每行需包含2个字段: 品番 EO（用逗号或空格分隔）');
+                    return;
+                }
+                parsedData.push({ subpno: fields[0] || '', eo: fields[1] || '' });
+            }
+            if (!parsedData.length) { alert('没有有效数据'); return; }
+
+            showLoading('正在处理...');
+            api('{{ url_for("nas.api_create_manual") }}', { json: { rows: parsedData } })
+                .then(res => {
+                    if (!res.success) { alert(res.message || '处理失败'); return; }
+                    // 与 Excel 上传一致：载入待搜索列表
+                    putRowsIntoResults({ items: res.items, count: res.count, errors: res.errors });
+                    const modal = bootstrap.Modal.getInstance($('manualAddModal'));
+                    if (modal) modal.hide();
+                    manualData.value = '';
+                })
+                .catch(() => alert('处理失败，请稍后重试'))
+                .finally(hideLoading);
+        });
+
+        // ---------- 步骤2：搜索 ----------
+        $('btnSearch') && $('btnSearch').addEventListener('click', function () {
+            if (!parsedItems.length) { alert('请先上传并解析 Excel'); return; }
+            if (!selectedRoots.length) { alert('请先在 NAS 配置中选择搜索目录'); return; }
+            showLoading('正在 NAS 中搜索，请稍候...');
+            api('{{ url_for("nas.api_search") }}', {
+                json: { items: parsedItems, mode: $('searchMode').value, roots: selectedRoots }
+            })
+                .then(res => {
+                    if (!res.success) { alert(res.message || '搜索失败'); return; }
+                    searchResults = res.results || [];
+                    $('kpiItems').textContent = res.total_items;
+                    $('kpiFound').textContent = res.total_found;
+                    $('kpiFiles').textContent = res.total_files;
+                    $('kpiMissing').textContent = res.total_items - res.total_found;
+                    renderResults(searchResults);
+                })
+                .catch(() => alert('搜索失败，请稍后重试'))
+                .finally(hideLoading);
+        });
+
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        function renderResults(results) {
+            const tbody = $('resultBody');
+            if (!results || !results.length) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">暂无搜索结果</td></tr>';
+                updateSelectedTip();
+                return;
+            }
+            let html = '';
+            results.forEach((r, idx) => {
+                const statusHtml = r.found
+                    ? '<span class="status-found">已找到 ' + r.files.length + '</span>'
+                    : '<span class="status-none">未找到</span>';
+                let filesHtml = '<span class="muted-tip">—</span>';
+                if (r.files && r.files.length) {
+                    filesHtml = '<ul class="file-list">' + r.files.map(f =>
+                        '<li><input type="checkbox" class="file-check" data-idx="' + idx +
+                        '" data-path="' + esc(f.path) + '" data-name="' + esc(f.name) + '" checked>' +
+                        ' <i class="fa fa-file-excel-o text-success"></i> ' +
+                        esc(f.name) + ' <span class="muted-tip">(' + esc(f.file_type) + ', ' +
+                        f.size_kb + ' KB)</span></li>'
+                    ).join('') + '</ul>';
+                }
+                html += '<tr class="result-item">' +
+                    '<td></td>' +
+                    '<td>' + (idx + 1) + '</td>' +
+                    '<td>' + esc(r.subpno) + '</td>' +
+                    '<td>' + esc(r.eo) + '</td>' +
+                    '<td>' + statusHtml + '</td>' +
+                    '<td>' + filesHtml + '</td>' +
+                    '</tr>';
+            });
+            tbody.innerHTML = html;
+            tbody.querySelectorAll('.file-check').forEach(cb => cb.addEventListener('change', updateSelectedTip));
+            updateSelectedTip();
+        }
+
+        $('checkAll') && $('checkAll').addEventListener('change', function () {
+            document.querySelectorAll('.file-check').forEach(cb => { cb.checked = this.checked; });
+            updateSelectedTip();
+        });
+
+        function getSelectedFiles() {
+            const files = [];
+            document.querySelectorAll('.file-check:checked').forEach(cb => {
+                files.push({ path: cb.dataset.path, name: cb.dataset.name });
+            });
+            return files;
+        }
+
+        function updateSelectedTip() {
+            const n = getSelectedFiles().length;
+            const tip = $('selectedTip');
+            if (tip) tip.textContent = '已选 ' + n + ' 个文件';
+            const btn = $('btnImport');
+            if (btn) btn.disabled = n === 0;
+            const zipBtn = $('btnZip');
+            if (zipBtn) zipBtn.disabled = n === 0;
+        }
+
+        // ---------- 步骤3：导入 ----------
+        $('btnImport') && $('btnImport').addEventListener('click', function () {
+            const files = getSelectedFiles();
+            if (!files.length) { alert('请先勾选要导入的文件'); return; }
+            if (!confirm('确认导入选中的 ' + files.length + ' 个文件到「文件管理」？')) return;
+            showLoading('正在下载并导入，请稍候...');
+            api('{{ url_for("nas.api_import") }}', { json: { files: files } })
+                .then(res => {
+                    if (!res.success) { alert(res.message || '导入失败'); return; }
+                    let msg = '导入完成：成功 ' + res.success_count + ' 个';
+                    if (res.duplicate_count) msg += '，重复 ' + res.duplicate_count + ' 个';
+                    if (res.failed_count) msg += '，失败 ' + res.failed_count + ' 个';
+                    if (res.failed && res.failed.length) {
+                        msg += '\n\n失败明细：\n' + res.failed.map(f => f.name + '：' + f.reason).join('\n');
+                    }
+                    alert(msg);
+                })
+                .catch(() => alert('导入失败，请稍后重试'))
+                .finally(hideLoading);
+        });
+
+        // ---------- 步骤3：打包下载 ----------
+        $('btnZip') && $('btnZip').addEventListener('click', function () {
+            const files = getSelectedFiles();
+            if (!files.length) { alert('请先勾选要下载的文件'); return; }
+            if (!confirm('确认将选中的 ' + files.length + ' 个文件打包下载为 ZIP？')) return;
+            showLoading('正在打包，请稍候...');
+            const token = document.querySelector('meta[name="csrf-token"]');
+            fetch('{{ url_for("nas.api_download_zip") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': token ? token.getAttribute('content') : ''
+                },
+                body: JSON.stringify({ files: files })
+            })
+                .then(resp => {
+                    const ctype = resp.headers.get('Content-Type') || '';
+                    if (!resp.ok || ctype.indexOf('application/json') >= 0) {
+                        // 后端返回 JSON 错误
+                        return resp.json().then(d => {
+                            throw new Error((d && d.message) || '打包失败');
+                        });
+                    }
+                    const failedNum = resp.headers.get('X-Failed-Count');
+                    return resp.blob().then(blob => {
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'NAS文件_' +
+                            new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.zip';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        setTimeout(() => URL.revokeObjectURL(url), 2000);
+                        if (failedNum && failedNum !== '0') {
+                            alert('打包完成，但有 ' + failedNum + ' 个文件下载失败，未包含在压缩包中。');
+                        }
+                    });
+                })
+                .catch(e => alert(e.message || '打包失败，请稍后重试'))
+                .finally(hideLoading);
+        });
+    })();
+    </script>
+</body>
+</html>

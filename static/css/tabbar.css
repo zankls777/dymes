@@ -1,0 +1,165 @@
+/* ============================================================
+ * 顶部横向标签页导航栏（Tab Bar）
+ * 参考样式：浅色标签区 + 当前项蓝色下划线 + 悬停显示关闭 ×
+ * 布局：桌面端左侧留出 200px 侧栏宽度（侧栏折叠时由 body 类同步收窄）
+ * ============================================================ */
+
+.app-tabbar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 46px;
+    padding: 0 12px;
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    user-select: none;
+    /* 桌面端侧栏偏移由 body padding-left 统一驱动，这里只负责高度占位 */
+}
+
+/* 标签可横向滚动容器：隐藏原生滚动条，保留滚轮/拖拽滚动 */
+.app-tabbar-scroll {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;          /* Firefox */
+    -ms-overflow-style: none;       /* 旧版 Edge/IE */
+}
+.app-tabbar-scroll::-webkit-scrollbar { display: none; } /* Chrome/Safari */
+
+/* ---------------- 单个标签 ---------------- */
+.app-tab {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    max-width: 200px;
+    padding: 0 12px;
+    height: 100%;
+    font-size: 0.875rem;
+    color: #4b5563;
+    background: transparent;
+    border: none;
+    border-radius: 4px 4px 0 0;
+    cursor: pointer;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color 0.18s ease, background 0.18s ease;
+}
+
+/* 未激活标签的关闭按钮默认隐藏，悬停/激活/聚焦时显示（与截图一致） */
+.app-tab:hover { color: #1d4ed8; background: #f3f6ff; }
+.app-tab.is-active { color: #1d4ed8; font-weight: 600; }
+
+/* 当前标签底部蓝色下划线（截图核心特征） */
+.app-tab.is-active::after {
+    content: "";
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 0;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: #2f80ed;
+}
+
+.app-tab-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 150px;
+}
+
+/* 关闭按钮 × */
+.app-tab-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    font-size: 12px;
+    line-height: 1;
+    color: #9ca3af;
+    background: transparent;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.app-tab:hover .app-tab-close,
+.app-tab.is-active .app-tab-close,
+.app-tab-close:focus-visible { opacity: 1; }
+.app-tab-close:hover { background: #e5e7eb; color: #ef4444; }
+
+/* ---------------- 拖拽排序 ---------------- */
+.app-tab.is-dragging { opacity: 0.45; cursor: grabbing; }
+/* 拖拽时经过的目标标签：左侧显示插入指示条 */
+.app-tab.drop-before::before,
+.app-tab.drop-after::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    width: 2px;
+    background: #2f80ed;
+    border-radius: 1px;
+}
+.app-tab.drop-before::before { left: -3px; }
+.app-tab.drop-after::before { right: -3px; }
+
+/* ---------------- 右键菜单 ---------------- */
+.app-tabbar-menu {
+    position: fixed;
+    z-index: 1300;
+    min-width: 152px;
+    padding: 5px 0;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+    font-size: 0.85rem;
+    display: none;
+}
+.app-tabbar-menu.show { display: block; }
+.app-tabbar-menu button {
+    display: block;
+    width: 100%;
+    padding: 8px 14px;
+    border: none;
+    background: transparent;
+    color: #374151;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.app-tabbar-menu button:hover { background: #f3f6ff; color: #1d4ed8; }
+.app-tabbar-menu button:disabled { color: #cbd5e1; cursor: not-allowed; background: transparent; }
+.app-tabbar-menu .menu-sep { height: 1px; margin: 5px 0; background: #f1f5f9; }
+
+/* ---------------- 响应式：移动端（<768px） ---------------- */
+/* 侧栏在移动端为抽屉式，标签栏转为全宽横向滚动条，并跟随顶部汉堡按钮下移 */
+@media (max-width: 767.98px) {
+    .app-tabbar {
+        position: fixed;
+        top: 0;
+        /* 左侧从汉堡按钮右侧起排（按钮宽 44px + 左右各 12px 间距），
+           避免整条标签栏覆盖按钮导致移动端导航栏无法点击打开 */
+        left: 68px;
+        right: 0;
+        z-index: 1040;
+        height: 46px;
+        padding: 0 8px;
+    }
+    body { padding-top: 102px; } /* 46px 标签栏 + 56px 原移动端偏移 */
+    .app-tab { max-width: 160px; }
+    .app-tab-title { max-width: 110px; }
+    /* 触屏无悬停：关闭按钮常显，避免无法关闭标签 */
+    .app-tab-close { opacity: 1; }
+}

@@ -1,0 +1,26 @@
+# Excel导入配置
+# 是否启用自动去重（默认：true）
+EXCEL_AUTO_DEDUP=true
+
+# 是否启用严格去重模式（默认：false）
+# 严格模式下，相同LOT号但数量不同的行会自动合并数量
+EXCEL_DEDUP_STRICT=false
+
+# 是否启用数量合并（默认：true）
+# 当相同LOT号的其他字段相同时，自动累加数量
+EXCEL_QUANTITY_MERGE=true
+
+# 数据库配置
+# 数据库类型：sqlite 或 mysql
+DATABASE_TYPE=sqlite
+
+# MySQL配置（当DATABASE_TYPE=mysql时使用）
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=xinyushidai
+MYSQL_DATABASE=SubList
+
+# 应用配置
+SECRET_KEY=your-secret-key-here
+FLASK_CONFIG=development

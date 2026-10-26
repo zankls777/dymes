@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>权限组管理</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <style>
+        body { background: #f5f6fa; }
+        .layout { display: flex; gap: 16px; padding: 16px; }
+        .panel { background: #fff; border: 1px solid #e3e6ef; border-radius: 8px; padding: 16px; }
+        .panel-groups { width: 300px; flex: none; }
+        .panel-main { flex: 1; min-width: 0; }
+        .group-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .group-item:hover { background: #f0f3fa; }
+        .group-item.active { background: #e3ecff; }
+        .group-item .badge { font-size: 11px; }
+        .module-block { border: 1px solid #eceef5; border-radius: 6px; margin-bottom: 10px; }
+        .module-header { background: #f7f8fc; padding: 8px 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; }
+        .module-header input { margin-right: 8px; }
+        .perm-list { padding: 8px 12px 12px 32px; display: flex; flex-wrap: wrap; gap: 10px 22px; }
+        .perm-item { display: flex; align-items: center; gap: 6px; min-width: 180px; }
+        .perm-type { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: #eef1f8; color: #667; }
+        .perm-type.page { background: #e6f4ea; color: #2e7d32; }
+        .perm-item.denied label { text-decoration: line-through; color: #d9534f; }
+        .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+        .empty-tip { color: #98a0b3; padding: 30px; text-align: center; }
+        .overrides-hint { font-size: 12px; color: #8a8f9e; }
+        .member-list { border: 1px solid #eceef5; border-radius: 6px; }
+        .member-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #f2f4f9; }
+        .member-row:last-child { border-bottom: none; }
+        .member-row:hover { background: #f7f9fd; }
+        .member-name { flex: 1; min-width: 0; }
+        .member-name .sub { font-size: 12px; color: #98a0b3; }
+        .member-count { font-size: 12px; color: #8a8f9e; }
+    </style>
+</head>
+<body>
+{% include '_navbar.html' %}
+<div class="layout">
+    <!-- 左侧：权限组列表 -->
+    <div class="panel panel-groups">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <strong>权限组列表</strong>
+            <button class="btn btn-sm btn-primary" onclick="GroupUI.openGroupModal()">新增权限组</button>
+        </div>
+        <div id="groupList"></div>
+    </div>
+
+    <!-- 右侧：权限配置 / 成员管理 -->
+    <div class="panel panel-main">
+        <div class="toolbar">
+            <h6 class="mb-0" id="currentGroupTitle">请选择权限组</h6>
+            <span class="overrides-hint" id="inheritHint"></span>
+            <div class="ms-auto">
+                <button class="btn btn-sm btn-outline-secondary" id="btnPermAllOn" onclick="GroupUI.selectAll(true)">全选</button>
+                <button class="btn btn-sm btn-outline-secondary" id="btnPermAllOff" onclick="GroupUI.selectAll(false)">全不选</button>
+                <button class="btn btn-sm btn-success" onclick="GroupUI.savePermissions()" id="btnSavePerm" disabled>保存权限</button>
+                <button class="btn btn-sm btn-success d-none" onclick="GroupUI.saveMembers()" id="btnSaveMember" disabled>保存成员</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="GroupUI.deleteGroup()" id="btnDelGroup" disabled>删除权限组</button>
+            </div>
+        </div>
+        <ul class="nav nav-tabs mb-3" id="groupTabs">
+            <li class="nav-item">
+                <a class="nav-link active" data-bs-toggle="tab" href="#tabPerm" onclick="GroupUI.switchTab('perm')">权限配置</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#tabMember" onclick="GroupUI.switchTab('member')">成员管理</a>
+            </li>
+        </ul>
+        <div class="tab-content">
+            <div class="tab-pane fade show active" id="tabPerm">
+                <div id="permissionTree"><div class="empty-tip">从左侧选择权限组后配置权限</div></div>
+            </div>
+            <div class="tab-pane fade" id="tabMember">
+                <div class="d-flex align-items-center mb-2" style="gap:8px;">
+                    <input class="form-control form-control-sm" style="max-width:220px;" id="memberSearch"
+                           placeholder="搜索用户名/姓名/部门" oninput="GroupUI.filterMembers()">
+                    <span class="member-count" id="memberCount"></span>
+                </div>
+                <div id="memberList"><div class="empty-tip">从左侧选择权限组后管理成员</div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 权限组编辑弹窗 -->
+<div class="modal fade" id="groupModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title" id="groupModalTitle">新增权限组</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <input type="hidden" id="groupEditId">
+        <div class="mb-2"><label class="form-label">权限组名称 <span class="text-danger">*</span></label>
+          <input class="form-control" id="groupName"></div>
+        <div class="mb-2"><label class="form-label">权限组编码 <span class="text-danger">*</span></label>
+          <input class="form-control" id="groupCode" placeholder="如 editor_group"></div>
+        <div class="mb-2"><label class="form-label">描述</label>
+          <input class="form-control" id="groupDesc"></div>
+        <div class="mb-2"><label class="form-label">排序号</label>
+          <input type="number" class="form-control" id="groupSort" value="0"></div>
+        <div class="mb-2 form-check" id="groupActiveWrap">
+          <input type="checkbox" class="form-check-input" id="groupActive" checked>
+          <label class="form-check-label" for="groupActive">启用</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button class="btn btn-primary" onclick="GroupUI.saveGroup()">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+<script>
+const GroupUI = (function () {
+    let catalogTree = [];
+    let groups = [];
+    let currentGroupId = null;
+    let groupPermMap = { own: {}, effective: {} };
+    let allUsers = [];
+    let memberSet = new Set();
+    let currentTab = 'perm';
+
+    async function api(url, options) {
+        const res = await fetch(url, Object.assign({
+            headers: { 'Content-Type': 'application/json' }
+        }, options || {}));
+        return res.json();
+    }
+
+    async function loadCatalog() {
+        const data = await api('/rbac/api/catalog');
+        if (data.success) catalogTree = data.tree;
+    }
+
+    async function loadUsers() {
+        const data = await api('/api/user-mgmt/list?size=200');
+        if (data.success) allUsers = data.data || [];
+    }
+
+    async function loadGroups() {
+        const data = await api('/rbac/api/groups');
+        if (!data.success) return;
+        groups = data.groups;
+        renderGroupList();
+    }
+
+    function renderGroupList() {
+        const box = document.getElementById('groupList');
+        if (!groups.length) { box.innerHTML = '<div class="empty-tip">暂无权限组</div>'; return; }
+        box.innerHTML = groups.map(g => `
+            <div class="group-item ${g.id === currentGroupId ? 'active' : ''}" onclick="GroupUI.selectGroup(${g.id})">
+                <div>
+                    <div>${escapeHtml(g.name)}</div>
+                    <small class="text-muted">${escapeHtml(g.code)}</small>
+                </div>
+                ${g.is_builtin ? '<span class="badge bg-secondary">内置</span>' : ''}
+            </div>`).join('');
+    }
+
+    async function selectGroup(groupId) {
+        currentGroupId = groupId;
+        renderGroupList();
+        const group = groups.find(g => g.id === groupId);
+        document.getElementById('currentGroupTitle').textContent = group ? ('权限组：' + group.name) : '';
+        document.getElementById('btnSavePerm').disabled = false;
+        document.getElementById('btnSaveMember').disabled = false;
+        document.getElementById('btnDelGroup').disabled = !!group.is_builtin;
+
+        const [permData, memberData] = await Promise.all([
+            api(`/rbac/api/groups/${groupId}/permissions`),
+            api(`/rbac/api/groups/${groupId}/members`)
+        ]);
+        if (permData.success) {
+            groupPermMap = permData.data;
+            renderPermissionTree();
+        }
+        if (memberData.success) {
+            memberSet = new Set(memberData.user_ids || []);
+            renderMembers();
+        }
+    }
+
+    // ---------- Tab 切换 ----------
+    function switchTab(tab) {
+        currentTab = tab;
+        const isPerm = tab === 'perm';
+        document.getElementById('btnPermAllOn').classList.toggle('d-none', !isPerm);
+        document.getElementById('btnPermAllOff').classList.toggle('d-none', !isPerm);
+        document.getElementById('btnSavePerm').classList.toggle('d-none', !isPerm);
+        document.getElementById('btnSaveMember').classList.toggle('d-none', isPerm);
+    }
+
+    // ---------- 成员管理 ----------
+    function renderMembers() {
+        const box = document.getElementById('memberList');
+        if (!allUsers.length) { box.innerHTML = '<div class="empty-tip">暂无可分配用户</div>'; return; }
+        box.innerHTML = '<div class="member-list">' + allUsers.map(u => `
+            <div class="member-row" data-search="${escapeHtml((u.username || '') + ' ' + (u.full_name || '') + ' ' + (u.department || ''))}">
+                <input type="checkbox" class="form-check-input member-cb" data-uid="${u.id}"
+                       id="mem_${u.id}" ${memberSet.has(u.id) ? 'checked' : ''}
+                       onchange="GroupUI.onMemberToggle(${u.id}, this.checked)">
+                <label class="member-name mb-0" for="mem_${u.id}">
+                    ${escapeHtml(u.username)}
+                    <span class="sub">${escapeHtml(u.full_name || '')} ${u.department ? '· ' + escapeHtml(u.department) : ''}</span>
+                </label>
+                ${u.is_admin ? '<span class="badge bg-warning text-dark">管理员</span>' : ''}
+            </div>`).join('') + '</div>';
+        updateMemberCount();
+        document.getElementById('memberSearch').value = '';
+    }
+
+    function onMemberToggle(uid, checked) {
+        if (checked) memberSet.add(uid); else memberSet.delete(uid);
+        updateMemberCount();
+    }
+
+    function updateMemberCount() {
+        document.getElementById('memberCount').textContent = memberSet.size + ' 个成员';
+    }
+
+    function filterMembers() {
+        const kw = document.getElementById('memberSearch').value.trim().toLowerCase();
+        document.querySelectorAll('#memberList .member-row').forEach(row => {
+            const s = (row.dataset.search || '').toLowerCase();
+            row.style.display = (!kw || s.indexOf(kw) >= 0) ? '' : 'none';
+        });
+    }
+
+    async function saveMembers() {
+        if (!currentGroupId) return;
+        const data = await api(`/rbac/api/groups/${currentGroupId}/members`, {
+            method: 'POST', body: JSON.stringify({ user_ids: [...memberSet] })
+        });
+        if (data.success) {
+            alert('成员保存成功');
+            await selectGroup(currentGroupId);
+        } else {
+            alert(data.message || '保存失败');
+        }
+    }
+
+    function renderPermissionTree() {
+        const box = document.getElementById('permissionTree');
+        if (!catalogTree.length) { box.innerHTML = '<div class="empty-tip">权限目录为空</div>'; return; }
+        const own = groupPermMap.own || {};
+
+        box.innerHTML = catalogTree.map(mod => {
+            const items = mod.permissions.map(p => {
+                const isDeny = own[p.code] === 'deny';
+                const checked = own[p.code] === 'allow' || isDeny;
+                const tip = isDeny ? 'title="已在权限组中显式拒绝"' : '';
+                return `<div class="perm-item ${isDeny ? 'denied' : ''}" ${tip}>
+                    <input type="checkbox" class="form-check-input perm-cb" data-code="${p.code}"
+                           id="perm_${p.code}" ${checked ? 'checked' : ''}
+                           onchange="GroupUI.onPermToggle(this)">
+                    <label for="perm_${p.code}" class="mb-0">${escapeHtml(p.name)}</label>
+                    <span class="perm-type ${p.permission_type}">${p.permission_type === 'page' ? '页面' : '操作'}</span>
+                </div>`;
+            }).join('');
+            return `<div class="module-block">
+                <div class="module-header">
+                    <input type="checkbox" class="form-check-input" onclick="GroupUI.toggleModule(this)">
+                    <span>${escapeHtml(mod.module_name)}</span>
+                </div>
+                <div class="perm-list">${items}</div>
+            </div>`;
+        }).join('');
+        updateModuleHeaders();
+    }
+
+    function onPermToggle(cb) {
+        updateModuleHeaders();
+    }
+
+    function updateModuleHeaders() {
+        document.querySelectorAll('.module-block').forEach(block => {
+            const cbs = block.querySelectorAll('.perm-cb');
+            const all = [...cbs].every(c => c.checked);
+            const some = [...cbs].some(c => c.checked);
+            const head = block.querySelector('.module-header input');
+            head.checked = all;
+            head.indeterminate = !all && some;
+        });
+    }
+
+    function toggleModule(headCb) {
+        const block = headCb.closest('.module-block');
+        block.querySelectorAll('.perm-cb').forEach(cb => { cb.checked = headCb.checked; });
+        updateModuleHeaders();
+    }
+
+    function selectAll(checked) {
+        document.querySelectorAll('.perm-cb').forEach(cb => { cb.checked = checked; });
+        updateModuleHeaders();
+    }
+
+    function collectPermissions() {
+        const allows = [], denies = [];
+        document.querySelectorAll('.perm-cb').forEach(cb => {
+            if (cb.checked) allows.push(cb.dataset.code);
+        });
+        return { allows, denies };
+    }
+
+    async function savePermissions() {
+        if (!currentGroupId) return;
+        const payload = collectPermissions();
+        const data = await api(`/rbac/api/groups/${currentGroupId}/permissions`, {
+            method: 'POST', body: JSON.stringify(payload)
+        });
+        if (data.success) {
+            alert('权限保存成功');
+            await selectGroup(currentGroupId);
+        } else {
+            alert(data.message || '保存失败');
+        }
+    }
+
+    // ---------- 权限组增删改 ----------
+    function openGroupModal(groupId) {
+        const modal = new bootstrap.Modal(document.getElementById('groupModal'));
+        document.getElementById('groupEditId').value = groupId || '';
+        document.getElementById('groupActiveWrap').style.display = groupId ? '' : 'none';
+        if (groupId) {
+            const g = groups.find(x => x.id === groupId);
+            document.getElementById('groupModalTitle').textContent = '编辑权限组';
+            document.getElementById('groupName').value = g.name;
+            document.getElementById('groupCode').value = g.code;
+            document.getElementById('groupCode').disabled = true;
+            document.getElementById('groupDesc').value = g.description || '';
+            document.getElementById('groupSort').value = g.sort_order || 0;
+            document.getElementById('groupActive').checked = g.is_active !== false;
+        } else {
+            document.getElementById('groupModalTitle').textContent = '新增权限组';
+            document.getElementById('groupName').value = '';
+            document.getElementById('groupCode').value = '';
+            document.getElementById('groupCode').disabled = false;
+            document.getElementById('groupDesc').value = '';
+            document.getElementById('groupSort').value = 0;
+            document.getElementById('groupActive').checked = true;
+        }
+        modal.show();
+    }
+
+    async function saveGroup() {
+        const id = document.getElementById('groupEditId').value;
+        const payload = {
+            name: document.getElementById('groupName').value.trim(),
+            code: document.getElementById('groupCode').value.trim(),
+            description: document.getElementById('groupDesc').value.trim(),
+            sort_order: parseInt(document.getElementById('groupSort').value || '0')
+        };
+        if (id) payload.is_active = document.getElementById('groupActive').checked;
+        if (!payload.name || (!id && !payload.code)) { alert('请填写权限组名称与编码'); return; }
+        const data = await api(id ? `/rbac/api/groups/${id}` : '/rbac/api/groups', {
+            method: id ? 'PUT' : 'POST', body: JSON.stringify(payload)
+        });
+        if (data.success) {
+            bootstrap.Modal.getInstance(document.getElementById('groupModal')).hide();
+            await loadGroups();
+        } else {
+            alert(data.message || '保存失败');
+        }
+    }
+
+    async function deleteGroup() {
+        if (!currentGroupId) return;
+        if (!confirm('确定删除该权限组？')) return;
+        const data = await api(`/rbac/api/groups/${currentGroupId}`, { method: 'DELETE' });
+        if (data.success) {
+            currentGroupId = null;
+            document.getElementById('permissionTree').innerHTML = '<div class="empty-tip">从左侧选择权限组后配置权限</div>';
+            document.getElementById('memberList').innerHTML = '<div class="empty-tip">从左侧选择权限组后管理成员</div>';
+            document.getElementById('memberCount').textContent = '';
+            document.getElementById('currentGroupTitle').textContent = '请选择权限组';
+            document.getElementById('btnSavePerm').disabled = true;
+            document.getElementById('btnSaveMember').disabled = true;
+            document.getElementById('btnDelGroup').disabled = true;
+            await loadGroups();
+        } else {
+            alert(data.message || '删除失败');
+        }
+    }
+
+    function escapeHtml(s) {
+        return (s == null ? '' : String(s)).replace(/[&<>"']/g, m => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[m]));
+    }
+
+    async function init() {
+        await loadCatalog();
+        await loadUsers();
+        await loadGroups();
+        if (groups.length) selectGroup(groups[0].id);
+    }
+    document.addEventListener('DOMContentLoaded', init);
+
+    return { selectGroup, openGroupModal, saveGroup, deleteGroup, savePermissions,
+             toggleModule, onPermToggle, selectAll, switchTab, saveMembers,
+             onMemberToggle, filterMembers };
+})();
+</script>
+</body>
+</html>

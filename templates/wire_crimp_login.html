@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>压高登陆 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .card { margin-bottom: 20px; }
+        .table th { background-color: #f8f9fa; white-space: nowrap; }
+        .table td { vertical-align: middle; }
+        .page-title { font-size: 1.15rem; font-weight: 600; margin: 0; }
+
+        /* ---------- Excel 拖拽区 ---------- */
+        .upload-zone {
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            padding: 24px 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all .2s;
+            background-color: #f8fafc;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #0d6efd;
+            background-color: #f0f7ff;
+        }
+        .upload-zone .fa-cloud-upload { font-size: 2.2rem; color: #6c757d; }
+        .upload-zone:hover .fa-cloud-upload,
+        .upload-zone.dragover .fa-cloud-upload { color: #0d6efd; }
+        #uploadResult { display: none; max-height: 260px; overflow-y: auto; }
+
+        /* ---------- 列名徽标 ---------- */
+        .col-name-badge {
+            background-color: #eef2ff; color: #3858e9; border-radius: 4px;
+            padding: 2px 8px; font-size: .8rem; margin: 2px; display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    {% set permissions = session.get('user_permissions', {}) %}
+
+    <div class="container-fluid mt-4">
+        <!-- 标题与操作区 -->
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+            <h4 class="mb-0"><i class="fa fa-sliders me-2 text-primary"></i>压高登陆</h4>
+            <div class="d-flex gap-2">
+                <a href="{{ url_for('main.download_template', filename='AA.xlsx') }}" class="btn btn-outline-secondary btn-sm" target="_blank">
+                    <i class="fa fa-download me-1"></i>下载模板(AA.xlsx)
+                </a>
+                {% if session.get('is_admin') or permissions.get('can_wire_crimp_login_upload') %}
+                <button class="btn btn-warning btn-sm" id="openExcelBtn">
+                    <i class="fa fa-upload me-1"></i>Excel 导入
+                </button>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="alert alert-info small py-2 mb-3">
+            <i class="fa fa-info-circle me-1"></i>
+            上传 Excel 后，扫描录入页在扫描到<b>回路号 + 号机 + 线质 + 颜色 + 规格 + 端子</b>全部一致的线材时，自动拉取此处维护的压高；
+            无匹配时不显示压高。模板列：回路号 / 线质(如 AVSS) / 规格·颜色(如 0.50/B) / 端子名1/2(换行) / 号机名(如 M-15) / 压高(换行)。
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span><i class="fa fa-table me-1"></i>已维护压高（{{ crimp_total or 0 }} 条）</span>
+                <div class="d-flex gap-2">
+                    <span class="text-muted small align-self-center" id="selInfo" style="display:none;"></span>
+                    {% if session.get('is_admin') or permissions.get('can_wire_crimp_login_upload') %}
+                    <button class="btn btn-sm btn-outline-danger" id="deleteSelBtn" disabled>
+                        <i class="fa fa-trash me-1"></i>删除选中
+                    </button>
+                    {% endif %}
+                    <button class="btn btn-sm btn-outline-primary" id="refreshBtn"><i class="fa fa-refresh me-1"></i>刷新</button>
+                    <a href="{{ url_for('main.wire_crimp_login_download') }}"
+                       class="btn btn-sm btn-outline-success" title="下载全部压高数据">
+                        <i class="fa fa-file-excel-o me-1"></i>下载Excel
+                    </a>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height:65vh; overflow:auto;">
+                    <table class="table table-sm table-bordered table-hover mb-0" id="crimpTable">
+                        <thead class="table-light position-sticky top-0">
+                            <tr>
+                                <th style="width:36px;"><input type="checkbox" id="selectAll" title="全选"></th>
+                                <th>回路号</th><th>号机</th><th>线质</th><th>颜色</th><th>规格</th>
+                                <th>端子1</th><th>端子2</th><th>压高1</th><th>压高2</th><th>登录时间</th>
+                            </tr>
+                        </thead>
+                        <tbody id="crimpBody">
+                            <tr><td colspan="11" class="text-center text-muted py-3">加载中…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ Excel 导入弹窗 ============ -->
+    <div class="modal fade" id="excelImportModal" tabindex="-1" aria-hidden="true"
+         aria-labelledby="excelImportModalLabel" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title" id="excelImportModalLabel">
+                        <i class="fa fa-file-excel-o me-2"></i>Excel 批量导入压高
+                    </h5>
+                    <button type="button" class="btn-close js-excel-close" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="excelError" class="alert alert-danger py-2 small" style="display:none;"></div>
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="upload-zone" id="uploadZone">
+                            <i class="fa fa-cloud-upload"></i>
+                            <p class="mb-1 mt-2 fw-bold" id="uploadZoneText">点击选择 或 拖拽 Excel 文件到此处</p>
+                            <p class="text-muted mb-0 small">支持 .xlsx / .xls 格式</p>
+                            <input type="file" id="excelFile" name="file" accept=".xlsx,.xls" class="d-none">
+                        </div>
+                        <div class="mt-3">
+                            <div class="text-muted small mb-1">Excel 表头请使用以下列名（顺序不限）：</div>
+                            <div>
+                                <span class="col-name-badge">回路号</span>
+                                <span class="col-name-badge">线质</span>
+                                <span class="col-name-badge">规格/颜色</span>
+                                <span class="col-name-badge">端子名1/2</span>
+                                <span class="col-name-badge">号机名</span>
+                                <span class="col-name-badge">压高</span>
+                            </div>
+                        </div>
+                        <div id="uploadResult" class="alert alert-info mt-3 mb-0 py-2 small"></div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary js-excel-close">
+                        <i class="fa fa-times me-1"></i>取消
+                    </button>
+                    <button type="submit" form="uploadForm" class="btn btn-warning" id="uploadBtn" disabled>
+                        <i class="fa fa-upload me-1"></i>上传导入
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+    (function() {
+        const CSRF = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+        const canUpload = {{ 'true' if (session.get('is_admin') or permissions.get('can_wire_crimp_login_upload')) else 'false' }};
+
+        // HTML 转义，防止 XSS
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        }
+
+        // ---------- 已维护列表 ----------
+        const crimpBody = document.getElementById('crimpBody');
+        const selectAll = document.getElementById('selectAll');
+        const deleteSelBtn = document.getElementById('deleteSelBtn');
+        const selInfo = document.getElementById('selInfo');
+        let currentRows = [];   // 缓存当前列表，供删除后定位
+
+        // 格式化登录时间（UTC+8 ISO -> 本地可读，去掉 T/Z）
+        function fmtTime(iso) {
+            if (!iso) return '';
+            return String(iso).replace('T', ' ').replace(/\.\d+Z?$/, '').replace('Z', '');
+        }
+
+        // 同步「删除选中」按钮与计数状态
+        function syncSelState() {
+            const checked = crimpBody.querySelectorAll('input.row-check:checked');
+            const total = crimpBody.querySelectorAll('input.row-check').length;
+            if (deleteSelBtn) {
+                deleteSelBtn.disabled = checked.length === 0;
+            }
+            if (selInfo) {
+                if (checked.length) {
+                    selInfo.style.display = '';
+                    selInfo.textContent = `已选 ${checked.length} / ${total} 项`;
+                } else {
+                    selInfo.style.display = 'none';
+                }
+            }
+            if (selectAll) selectAll.checked = total > 0 && checked.length === total;
+        }
+
+        async function loadList() {
+            crimpBody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-3">加载中…</td></tr>';
+            if (selectAll) selectAll.checked = false;
+            try {
+                const resp = await fetch('/wire/crimp_login/data', { headers: { 'X-CSRFToken': CSRF } });
+                const data = await resp.json();
+                if (!data.success) {
+                    crimpBody.innerHTML = `<tr><td colspan="11" class="text-center text-danger py-3">${data.error || '加载失败'}</td></tr>`;
+                    syncSelState();
+                    return;
+                }
+                currentRows = data.rows || [];
+                if (!currentRows.length) {
+                    crimpBody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-3">暂无数据，请先 Excel 导入</td></tr>';
+                    syncSelState();
+                    return;
+                }
+                crimpBody.innerHTML = currentRows.map(r => `<tr>
+                    <td class="text-center"><input type="checkbox" class="row-check" value="${esc(r.id)}" data-id="${esc(r.id)}"></td>
+                    <td>${esc(r.circuit_no)}</td><td>${esc(r.machine_no)}</td>
+                    <td>${esc(r.wire)}</td>
+                    <td>${esc(r.color)}</td><td>${esc(r.sq)}</td>
+                    <td>${esc(r.tml1)}</td><td>${esc(r.tml2)}</td>
+                    <td>${esc(r.strip1)}</td><td>${esc(r.strip2)}</td>
+                    <td class="small text-muted">${esc(fmtTime(r.created_at))}</td>
+                </tr>`).join('');
+                // 行内复选框变化实时更新状态
+                crimpBody.querySelectorAll('input.row-check').forEach(cb =>
+                    cb.addEventListener('change', syncSelState));
+                syncSelState();
+            } catch (e) {
+                crimpBody.innerHTML = '<tr><td colspan="11" class="text-center text-danger py-3">网络错误</td></tr>';
+            }
+        }
+        document.getElementById('refreshBtn').addEventListener('click', loadList);
+        if (selectAll) {
+            selectAll.addEventListener('change', function() {
+                crimpBody.querySelectorAll('input.row-check').forEach(cb => cb.checked = this.checked);
+                syncSelState();
+            });
+        }
+        // 批量删除选中
+        if (deleteSelBtn) {
+            deleteSelBtn.addEventListener('click', async function() {
+                const ids = [...crimpBody.querySelectorAll('input.row-check:checked')].map(cb => cb.value);
+                if (!ids.length) return;
+                if (!confirm(`确定删除选中的 ${ids.length} 条压高记录？该操作不可恢复。`)) return;
+                this.disabled = true;
+                this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>删除中...';
+                try {
+                    const resp = await fetch('/wire/crimp_login/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify({ ids })
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        loadList();
+                    } else {
+                        alert(data.error || '删除失败');
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-trash me-1"></i>删除选中';
+                    }
+                } catch (err) {
+                    alert('网络错误，删除失败');
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-trash me-1"></i>删除选中';
+                }
+            });
+        }
+        loadList();
+
+        if (!canUpload) return;
+
+        // ---------- Excel 弹窗 ----------
+        const excelModalEl = document.getElementById('excelImportModal');
+        const excelModal = new bootstrap.Modal(excelModalEl);
+        const uploadZone = document.getElementById('uploadZone');
+        const uploadZoneText = document.getElementById('uploadZoneText');
+        const excelFile = document.getElementById('excelFile');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const uploadResult = document.getElementById('uploadResult');
+        const excelError = document.getElementById('excelError');
+
+        function resetExcelForm() {
+            document.getElementById('uploadForm').reset();
+            excelFile.value = '';
+            uploadBtn.disabled = true;
+            uploadZoneText.textContent = '点击选择 或 拖拽 Excel 文件到此处';
+            uploadResult.style.display = 'none';
+            uploadResult.className = 'alert alert-info mt-3 mb-0 py-2 small';
+            uploadResult.innerHTML = '';
+            excelError.style.display = 'none';
+            excelError.textContent = '';
+        }
+
+        document.getElementById('openExcelBtn').addEventListener('click', () => { resetExcelForm(); excelModal.show(); });
+        document.querySelectorAll('.js-excel-close').forEach(b => b.addEventListener('click', () => excelModal.hide()));
+
+        uploadZone.addEventListener('click', () => excelFile.click());
+        excelFile.addEventListener('change', function() {
+            uploadBtn.disabled = !this.files.length;
+            uploadZoneText.textContent = this.files.length ? this.files[0].name : '点击选择 或 拖拽 Excel 文件到此处';
+        });
+        ['dragenter', 'dragover'].forEach(ev => uploadZone.addEventListener(ev, e => { e.preventDefault(); uploadZone.classList.add('dragover'); }));
+        ['dragleave', 'drop'].forEach(ev => uploadZone.addEventListener(ev, e => { e.preventDefault(); uploadZone.classList.remove('dragover'); }));
+        uploadZone.addEventListener('drop', function(e) {
+            const f = e.dataTransfer.files && e.dataTransfer.files[0];
+            if (f) { excelFile.files = e.dataTransfer.files; uploadBtn.disabled = false; uploadZoneText.textContent = f.name; }
+        });
+
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            excelError.style.display = 'none';
+            if (!excelFile.files.length) { excelError.textContent = '请先选择 Excel 文件'; excelError.style.display = 'block'; return; }
+            const fd = new FormData();
+            fd.append('file', excelFile.files[0]);
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>导入中...';
+            uploadResult.style.display = 'none';
+            try {
+                const resp = await fetch('/wire/crimp_login/upload', { method: 'POST', headers: { 'X-CSRFToken': CSRF }, body: fd });
+                const data = await resp.json();
+                if (data.success) {
+                    excelModal.hide();
+                    resetExcelForm();
+                    uploadResult.className = 'alert alert-success mt-3 mb-0 py-2 small';
+                    uploadResult.innerHTML = `导入完成：共 <b>${data.total}</b> 行，自动去除重复 <b>${data.duplicates||0}</b> 条，新增 <b>${data.inserted}</b> 条，跳过已存在 <b>${data.skipped||0}</b> 条`;
+                    uploadResult.style.display = 'block';
+                    loadList();
+                } else {
+                    excelError.textContent = data.error || '导入失败';
+                    excelError.style.display = 'block';
+                }
+            } catch (err) {
+                excelError.textContent = '网络错误，导入失败，请重试';
+                excelError.style.display = 'block';
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.innerHTML = '<i class="fa fa-upload me-1"></i>上传导入';
+            }
+        });
+    })();
+    </script>
+</body>
+</html>

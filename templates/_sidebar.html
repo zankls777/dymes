@@ -1,0 +1,870 @@
+<!-- 侧边蓝色样式多级导航栏 -->
+<aside class="sidebar" id="sidebar">
+    <!-- 侧边栏头部 -->
+    <div class="sidebar-header">
+        <h3 class="sidebar-title">大焱资料管理系统</h3>
+        <div class="sidebar-actions">
+            <button class="sidebar-btn" id="export-menu">
+                <i class="fa fa-download"></i>
+            </button>
+            <button class="sidebar-btn" id="import-menu">
+                <i class="fa fa-upload"></i>
+            </button>
+            <input type="file" id="menu-file" accept=".json" style="display: none;">
+            <button class="sidebar-toggle" id="sidebar-toggle">
+                <i class="fa fa-bars"></i>
+            </button>
+        </div>
+    </div>
+    
+    <!-- 侧边栏菜单 -->
+    <nav class="sidebar-menu">
+        <ul class="menu-list">
+            <!-- 首页菜单 -->
+            {% if session.get('is_admin') or permissions.get('can_index') %}
+            <li class="menu-item active">
+                <a href="{{ url_for('main.index') }}" class="menu-link">
+                    <i class="fa fa-home"></i>
+                    <span>首页</span>
+                </a>
+            </li>
+            {% endif %}
+            
+            <!-- 文件管理菜单 -->
+            {% if session.get('is_admin') or permissions.get('can_file_management') %}
+            <li class="menu-item has-submenu">
+                <a href="#" class="menu-link">
+                    <i class="fa fa-folder"></i>
+                    <span>文件管理</span>
+                    <i class="fa fa-chevron-down menu-arrow"></i>
+                </a>
+                <ul class="submenu">
+                    <li class="menu-item">
+                        <a href="{{ url_for('main.file_management') }}" class="menu-link">
+                            <span>文件上传</span>
+                        </a>
+                    </li>
+                    {% if session.get('is_admin') or permissions.get('can_file_comparison') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('main.file_comparison') }}" class="menu-link">
+                            <span>文件对比</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if session.get('is_admin') or permissions.get('can_nas_file_search') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('nas.file_search_page') }}" class="menu-link">
+                            <span>NAS文件搜索</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    <li class="menu-item has-submenu">
+                        <a href="#" class="menu-link">
+                            <span>文件类型</span>
+                            <i class="fa fa-chevron-down menu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
+                            {% if session.get('is_admin') or permissions.get('can_sub_list') %}
+                            <li class="menu-item">
+                                <a href="{{ url_for('main.sub_list') }}" class="menu-link">
+                                    <span>SubList</span>
+                                </a>
+                            </li>
+                            {% endif %}
+                            {% if session.get('is_admin') or permissions.get('can_usage_list') %}
+                            <li class="menu-item">
+                                <a href="{{ url_for('main.usage_list') }}" class="menu-link">
+                                    <span>UsageList</span>
+                                </a>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            {% endif %}
+            
+            <!-- 成品管理菜单 -->
+            {% if session.get('is_admin') or permissions.get('can_products') %}
+            <li class="menu-item">
+                <a href="{{ url_for('main.products') }}" class="menu-link">
+                    <i class="fa fa-box"></i>
+                    <span>成品管理</span>
+                </a>
+            </li>
+            {% endif %}
+            
+            <!-- 车种管理菜单 -->
+            {% if session.get('is_admin') or permissions.get('can_vehicle_types') %}
+            <li class="menu-item">
+                <a href="{{ url_for('main.vehicle_types') }}" class="menu-link">
+                    <i class="fa fa-car"></i>
+                    <span>车种管理</span>
+                </a>
+            </li>
+            {% endif %}
+
+            <!-- MES业务菜单（4 个业务页面 + 结算清单） -->
+            {% if session.get('is_admin') or permissions.get('can_mes_plan')
+               or permissions.get('can_mes_production') or permissions.get('can_mes_quality')
+               or permissions.get('can_mes_price') or permissions.get('can_mes_group') %}
+            <li class="menu-item has-submenu">
+                <a href="#" class="menu-link">
+                    <i class="fa fa-industry"></i>
+                    <span>MES 业务</span>
+                    <i class="fa fa-chevron-down menu-arrow"></i>
+                </a>
+                <ul class="submenu">
+                    {% if session.get('is_admin') or permissions.get('can_mes_plan') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('mes_mod.plan_page') }}" class="menu-link">
+                            <span>计划登录</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if session.get('is_admin') or permissions.get('can_mes_production') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('mes_mod.production_page') }}" class="menu-link">
+                            <span>生产入库</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if session.get('is_admin') or permissions.get('can_mes_quality') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('mes_mod.quality_page') }}" class="menu-link">
+                            <span>品质检查</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if session.get('is_admin') or permissions.get('can_mes_price') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('mes_mod.price_page') }}" class="menu-link">
+                            <span>单价登录</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if session.get('is_admin') or permissions.get('can_mes_group') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('mes.group_page') }}" class="menu-link">
+                            <span>结算清单</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </li>
+            {% endif %}
+            
+
+            
+            <!-- 系统管理菜单 -->
+            {% if session.get('is_admin') or permissions.get('can_page') %}
+            <li class="menu-item has-submenu">
+                <a href="#" class="menu-link">
+                    <i class="fa fa-cog"></i>
+                    <span>系统管理</span>
+                    <i class="fa fa-chevron-down menu-arrow"></i>
+                </a>
+                <ul class="submenu">
+                    {% if session.get('is_admin') or permissions.get('can_system_management') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('main.user_management') }}" class="menu-link">
+                            <span>用户管理</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if session.get('is_admin') or permissions.get('can_system_management') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('rbac.role_management_page') }}" class="menu-link">
+                            <span>权限组</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if session.get('is_admin') %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('main.data_management') }}" class="menu-link">
+                            <span>数据管理（含自动备份到网盘）</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    <li class="menu-item">
+                        <a href="{{ url_for('main.menu_management') }}" class="menu-link">
+                            <span>菜单管理</span>
+                        </a>
+                    </li>
+                    <li class="menu-item">
+                        <a href="{{ url_for('main.operation_logs') }}" class="menu-link">
+                            <span>操作日志</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+            {% endif %}
+            
+            <!-- 管理员设置按钮 -->
+            <li class="menu-item admin-settings">
+                <a href="#" class="menu-link" id="admin-settings-btn">
+                    <i class="fa fa-lock"></i>
+                    <span>管理员设置</span>
+                </a>
+            </li>
+            
+            <!-- 退出登录 -->
+            <li class="menu-item logout">
+                <a href="{{ url_for('main.logout') }}" class="menu-link">
+                    <i class="fa fa-sign-out"></i>
+                    <span>退出登录</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+    
+    <!-- 菜单统计信息 -->
+    <div class="menu-stats">
+        <h4>菜单统计</h4>
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-value" id="total-menu-items">0</div>
+                <div class="stat-label">总菜单项</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="total-submenus">0</div>
+                <div class="stat-label">子菜单数</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="total-levels">0</div>
+                <div class="stat-label">菜单层级</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="current-date"></div>
+                <div class="stat-label">当前日期</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 系统说明板块 -->
+    <div class="system-info">
+        <h4>系统说明</h4>
+        <p>• 双击菜单项可进行编辑</p>
+        <p>• 管理员模式可修改菜单配置</p>
+        <p>• 所有修改自动保存到本地存储</p>
+        <div class="keyboard-shortcuts">
+            <h5>键盘快捷键</h5>
+            <div class="shortcut-item">
+                <span>保存修改</span>
+                <span class="shortcut-key">Enter</span>
+            </div>
+            <div class="shortcut-item">
+                <span>取消编辑</span>
+                <span class="shortcut-key">Escape</span>
+            </div>
+            <div class="shortcut-item">
+                <span>切换侧边栏</span>
+                <span class="shortcut-key">Alt + S</span>
+            </div>
+        </div>
+    </div>
+</aside>
+
+<!-- 管理员登录模态框 -->
+<div class="modal" id="admin-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">管理员登录</h3>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label" for="admin-password">管理员密码</label>
+                <input type="password" class="form-input" id="admin-password" placeholder="请输入管理员密码">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" id="admin-cancel">取消</button>
+            <button class="btn btn-primary" id="admin-login">登录</button>
+        </div>
+    </div>
+</div>
+
+<!-- 管理员模式指示器 -->
+<div class="admin-mode-indicator" id="admin-indicator" style="display: none;">
+    管理员模式
+</div>
+
+<!-- 侧边栏样式 -->
+<style>
+    /* 侧边栏基础样式 */
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 250px;
+        height: 100vh;
+        background: linear-gradient(180deg, #1e40af 0%, #3b82f6 100%);
+        color: #ffffff;
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        z-index: 1000;
+        overflow-y: auto;
+        box-shadow: 2px 0 15px rgba(0, 0, 0, 0.2);
+    }
+    
+    /* 侧边栏收起状态 */
+    .sidebar.collapsed {
+        transform: translateX(-250px);
+    }
+    
+    /* 侧边栏头部 */
+    .sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+    }
+    
+    .sidebar-title {
+        margin: 0;
+        font-size: 1.2rem;
+        font-weight: 600;
+        background: linear-gradient(90deg, #ffffff 0%, #93c5fd 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    /* 侧边栏操作按钮容器 */
+    .sidebar-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    /* 侧边栏按钮 */
+    .sidebar-btn {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #ffffff;
+        font-size: 1rem;
+        cursor: pointer;
+        padding: 0.5rem;
+        border-radius: 6px;
+        transition: all 0.3s ease;
+        backdrop-filter: blur(10px);
+    }
+    
+    .sidebar-btn:hover {
+        background: rgba(255, 255, 255, 0.2);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* 侧边栏切换按钮 */
+    .sidebar-toggle {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #ffffff;
+        font-size: 1.2rem;
+        cursor: pointer;
+        padding: 0.5rem;
+        border-radius: 6px;
+        transition: all 0.3s ease;
+        backdrop-filter: blur(10px);
+    }
+    
+    .sidebar-toggle:hover {
+        background: rgba(255, 255, 255, 0.2);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* 侧边栏菜单 */
+    .sidebar-menu {
+        padding: 1rem 0;
+    }
+    
+    .menu-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    
+    /* 菜单项 */
+    .menu-item {
+        position: relative;
+    }
+    
+    /* 菜单项链接 */
+    .menu-link {
+        display: flex;
+        align-items: center;
+        padding: 0.75rem 1.5rem;
+        color: #ffffff;
+        text-decoration: none;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        border-left: 3px solid transparent;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    /* 菜单项链接 hover 效果 */
+    .menu-link::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+        transition: left 0.5s ease;
+    }
+    
+    .menu-link:hover::before {
+        left: 100%;
+    }
+    
+    /* 菜单项图标 */
+    .menu-link i {
+        margin-right: 1rem;
+        font-size: 1.1rem;
+        width: 20px;
+        text-align: center;
+        transition: transform 0.3s ease;
+    }
+    
+    .menu-link:hover i {
+        transform: scale(1.1);
+    }
+    
+    /* 菜单项文本 */
+    .menu-link span {
+        flex: 1;
+        position: relative;
+        z-index: 1;
+    }
+    
+    /* 菜单编辑输入框 */
+    .menu-edit-input {
+        flex: 1;
+        background: rgba(255, 255, 255, 0.1);
+        border: 2px solid #3b82f6;
+        color: #ffffff;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.9rem;
+        outline: none;
+        transition: all 0.3s ease;
+    }
+    
+    .menu-edit-input:focus {
+        background: rgba(255, 255, 255, 0.2);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+    }
+    
+    /* 菜单项箭头 */
+    .menu-arrow {
+        margin-left: 0.5rem;
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        z-index: 1;
+    }
+    
+    /* 菜单项展开状态 */
+    .menu-item.open .menu-arrow {
+        transform: rotate(180deg);
+    }
+    
+    /* 菜单项悬停效果 */
+    .menu-item:hover > .menu-link {
+        background: rgba(59, 130, 246, 0.3);
+        transform: translateX(4px);
+    }
+    
+    /* 菜单项激活状态 */
+    .menu-item.active > .menu-link {
+        background: rgba(255, 255, 255, 0.15);
+        border-left-color: #3b82f6;
+        font-weight: 600;
+        box-shadow: inset 0 0 10px rgba(59, 130, 246, 0.3);
+    }
+    
+    /* 子菜单 */
+    .submenu {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        background: rgba(255, 255, 255, 0.05);
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    /* 子菜单展开状态 */
+    .menu-item.open > .submenu {
+        max-height: 500px;
+    }
+    
+    /* 子菜单项 */
+    .submenu .menu-item {
+        padding-left: 1rem;
+    }
+    
+    /* 子菜单项链接 */
+    .submenu .menu-link {
+        padding-left: 2.5rem;
+        font-size: 0.95rem;
+    }
+    
+    /* 退出登录菜单项 */
+    .menu-item.logout {
+        margin-top: auto;
+        position: absolute;
+        bottom: 0;
+        width: 100%;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+    }
+    
+    /* 管理员设置按钮 */
+    .admin-settings {
+        position: absolute;
+        bottom: 60px;
+        width: 100%;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+    }
+    
+    .admin-settings .menu-link {
+        justify-content: center;
+        font-size: 0.9rem;
+        padding: 0.75rem;
+    }
+    
+    /* 菜单统计信息 */
+    .menu-stats {
+        padding: 1rem;
+        margin: 1rem;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+    }
+    
+    .menu-stats h4 {
+        margin: 0 0 0.75rem 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #93c5fd;
+    }
+    
+    .stats-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+    }
+    
+    .stat-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 0.5rem;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 6px;
+        transition: all 0.3s ease;
+    }
+    
+    .stat-item:hover {
+        background: rgba(255, 255, 255, 0.1);
+        transform: translateY(-1px);
+    }
+    
+    .stat-value {
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: #3b82f6;
+    }
+    
+    .stat-label {
+        font-size: 0.8rem;
+        color: #93c5fd;
+        margin-top: 0.25rem;
+    }
+    
+    /* 系统说明板块 */
+    .system-info {
+        padding: 1rem;
+        margin: 1rem;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+    }
+    
+    .system-info h4 {
+        margin: 0 0 0.75rem 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #93c5fd;
+    }
+    
+    .system-info p {
+        margin: 0 0 0.5rem 0;
+        font-size: 0.85rem;
+        line-height: 1.4;
+        color: #e0f2fe;
+    }
+    
+    .keyboard-shortcuts {
+        margin-top: 0.75rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .keyboard-shortcuts h5 {
+        margin: 0 0 0.5rem 0;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #93c5fd;
+    }
+    
+    .shortcut-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.25rem 0;
+        font-size: 0.8rem;
+        color: #e0f2fe;
+    }
+    
+    .shortcut-key {
+        background: rgba(59, 130, 246, 0.3);
+        padding: 0.125rem 0.5rem;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 0.75rem;
+        color: #ffffff;
+    }
+    
+    /* 管理员模式指示器 */
+    .admin-mode-indicator {
+        position: fixed;
+        top: 1rem;
+        left: 1rem;
+        background: #ef4444;
+        color: #ffffff;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        z-index: 1001;
+        animation: pulse 2s infinite;
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+    }
+    
+    @keyframes pulse {
+        0% {
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+        }
+        70% {
+            box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+        }
+        100% {
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+        }
+    }
+    
+    /* 响应式设计 */
+    @media (max-width: 768px) {
+        .sidebar {
+            transform: translateX(-100%);
+            width: 280px;
+        }
+        
+        .sidebar.open {
+            transform: translateX(0);
+        }
+        
+        .sidebar-header {
+            padding: 0.75rem;
+        }
+        
+        .sidebar-title {
+            font-size: 1.1rem;
+        }
+        
+        .menu-link {
+            padding: 0.6rem 1rem;
+        }
+        
+        .submenu .menu-link {
+            padding-left: 2rem;
+        }
+        
+        .menu-stats,
+        .system-info {
+            margin: 0.75rem;
+            padding: 0.75rem;
+        }
+        
+        .stats-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+    
+    /* 滚动条样式 */
+    .sidebar::-webkit-scrollbar {
+        width: 6px;
+    }
+    
+    .sidebar::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+    }
+    
+    .sidebar::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 3px;
+        transition: all 0.3s ease;
+    }
+    
+    .sidebar::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.5);
+    }
+    
+    /* 模态框样式 */
+    .modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 2000;
+        backdrop-filter: blur(5px);
+        animation: fadeIn 0.3s ease;
+    }
+    
+    .modal.show {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .modal-content {
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+        padding: 2rem;
+        border-radius: 12px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        animation: slideUp 0.3s ease;
+        max-width: 400px;
+        width: 90%;
+    }
+    
+    .modal-header {
+        margin-bottom: 1.5rem;
+        text-align: center;
+    }
+    
+    .modal-title {
+        margin: 0;
+        font-size: 1.3rem;
+        font-weight: 600;
+        color: #ffffff;
+    }
+    
+    .modal-body {
+        margin-bottom: 1.5rem;
+    }
+    
+    .form-group {
+        margin-bottom: 1rem;
+    }
+    
+    .form-label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #93c5fd;
+    }
+    
+    .form-input {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.1);
+        color: #ffffff;
+        font-size: 1rem;
+        outline: none;
+        transition: all 0.3s ease;
+    }
+    
+    .form-input:focus {
+        border-color: #3b82f6;
+        background: rgba(255, 255, 255, 0.15);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+    }
+    
+    .modal-footer {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+    }
+    
+    .btn {
+        padding: 0.6rem 1.2rem;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .btn-primary {
+        background: #3b82f6;
+        color: #ffffff;
+    }
+    
+    .btn-primary:hover {
+        background: #2563eb;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    }
+    
+    .btn-secondary {
+        background: rgba(255, 255, 255, 0.1);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    .btn-secondary:hover {
+        background: rgba(255, 255, 255, 0.2);
+        transform: translateY(-1px);
+    }
+    
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+        to {
+            opacity: 1;
+        }
+    }
+    
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+
+<!-- 侧边栏脚本（L-8：外置为静态文件，延迟加载不阻塞首屏） -->
+<script defer src="{{ url_for('static', filename='js/sidebar-page.js') }}?v=20261012"></script>

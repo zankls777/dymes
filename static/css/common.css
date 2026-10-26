@@ -1,0 +1,635 @@
+    /* 性能优化CSS */
+    :root {
+        --primary-color: #007bff;
+        --secondary-color: #6c757d;
+        --success-color: #28a745;
+        --danger-color: #dc3545;
+        --warning-color: #ffc107;
+        --info-color: #17a2b8;
+        --light-color: #f8f9fa;
+        --dark-color: #343a40;
+        --border-radius: 0.375rem;
+        --box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        --transition: all 0.15s ease-in-out;
+    }
+
+    /* 使用 transform 而不是改变位置属性 */
+    .slide-in {
+        transform: translateX(-100%);
+        transition: transform 0.3s ease-in-out;
+    }
+
+    .slide-in.active {
+        transform: translateX(0);
+    }
+
+    /* 优化表格性能 */
+    .table-optimized {
+        table-layout: fixed;
+        width: 100%;
+    }
+
+    .table-optimized th,
+    .table-optimized td {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* 懒加载占位符 */
+    .lazy-placeholder {
+        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+        background-size: 200% 100%;
+        animation: loading 1.5s infinite;
+    }
+
+    @keyframes loading {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+
+    /* 响应式图片 */
+    .responsive-img {
+        max-width: 100%;
+        height: auto;
+        display: block;
+    }
+
+    /* 优化模态框性能 */
+    .modal-optimized {
+        will-change: transform, opacity;
+        transform: translateZ(0);
+    }
+
+    /* 减少重绘和重排 */
+    .no-repaint {
+        will-change: auto;
+        transform: translateZ(0);
+    }
+
+    /* 虚拟滚动容器 */
+    .virtual-scroll-container {
+        height: 400px;
+        overflow-y: auto;
+        position: relative;
+    }
+
+    .virtual-scroll-content {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+    }
+
+    /* 优化按钮性能 */
+    .btn-optimized {
+        position: relative;
+        overflow: hidden;
+        transition: var(--transition);
+    }
+
+    .btn-optimized:active {
+        transform: scale(0.98);
+    }
+
+    /* 响应式导航栏样式 */
+    body {
+        padding-top: 0;
+        padding-bottom: 40px;
+        margin: 0;
+    }
+    
+    /* 导航栏基础样式 - 所有屏幕通用（!important 防止 Bootstrap 默认 relative 覆盖） */
+    .navbar {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        z-index: 1030;
+        width: 100%;
+        height: auto;
+        min-height: 50px;
+        padding: 0.5rem 0;
+        margin: 0;
+        line-height: normal;
+    }
+    
+    /* 导航栏品牌 */
+    .navbar-brand {
+        height: 50px;
+        line-height: 50px;
+        padding: 0 15px 0 0;
+        margin: 0;
+        display: flex;
+        align-items: center;
+    }
+    
+    /* 导航栏切换按钮 - 触摸优化 */
+    .navbar-toggler {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 5px 10px;
+        margin: 0;
+    }
+    
+    /* 主容器为固定导航栏留出空间 */
+    .container-fluid {
+        padding-top: 0;
+        width: 100%;
+        /* 保留左右内边距，抵消 Bootstrap .row 的负外边距 */
+        padding-left: 15px;
+        padding-right: 15px;
+    }
+    
+    /* ================================================
+       桌面端样式 (≥768px) - 完整水平导航
+       ================================================ */
+    @media (min-width: 768px) {
+        .navbar {
+            height: 50px !important;
+            padding: 0 !important;
+            line-height: 50px !important;
+        }
+        
+        .navbar .container-fluid {
+            padding: 0 15px !important;
+            margin: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            width: 100% !important;
+        }
+        
+        .navbar-collapse {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            width: 100% !important;
+            flex: 1 !important;
+        }
+        
+        .navbar-nav {
+            margin: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        
+        .navbar-nav .nav-item {
+            display: flex !important;
+            align-items: center !important;
+        }
+        
+        .navbar-nav .nav-link {
+            padding: 0 15px !important;
+            margin: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        
+        .navbar-nav.ms-auto {
+            display: flex !important;
+            align-items: center !important;
+            margin-left: auto !important;
+            margin-right: 0 !important;
+            justify-content: flex-end !important;
+            width: auto !important;
+            min-width: fit-content !important;
+        }
+        
+        .navbar-nav.ms-auto .nav-item {
+            margin-right: 0 !important;
+            padding-right: 0 !important;
+        }
+    }
+    
+    /* ================================================
+       移动端样式 (<768px) - 汉堡菜单
+       ================================================ */
+    @media (max-width: 767.98px) {
+        .navbar .container-fluid {
+            padding: 0 12px !important;
+        }
+        
+        /* 折叠区域展开时全宽显示 */
+        .navbar-collapse {
+            margin-top: 8px;
+            padding: 8px 0;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        /* 导航项垂直堆叠，触摸友好 */
+        .navbar-nav {
+            margin: 0 !important;
+        }
+        
+        .navbar-nav .nav-item {
+            width: 100%;
+        }
+        
+        .navbar-nav .nav-link {
+            padding: 12px 16px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+        
+        /* 下拉菜单在移动端内联展开 */
+        .navbar-nav .dropdown-menu {
+            border: none;
+            border-radius: 0;
+            padding: 0;
+            background-color: rgba(0,0,0,0.15);
+            box-shadow: none;
+            width: 100%;
+        }
+        
+        .navbar-nav .dropdown-menu .dropdown-item {
+            padding: 12px 16px 12px 32px;
+            min-height: 44px;
+            white-space: nowrap;
+            color: rgba(255,255,255,0.9);
+        }
+        
+        .navbar-nav .dropdown-menu .dropdown-item:hover,
+        .navbar-nav .dropdown-menu .dropdown-item:focus {
+            background-color: rgba(255,255,255,0.1);
+            color: #fff;
+        }
+        
+        /* 右侧用户信息区域 */
+        .navbar-nav.ms-auto {
+            width: 100%;
+            border-top: 1px solid rgba(255,255,255,0.15);
+            margin-top: 8px;
+            padding-top: 8px;
+        }
+        
+        .navbar-nav.ms-auto .nav-user {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            padding: 8px 16px;
+            gap: 8px;
+        }
+        
+        .navbar-nav.ms-auto .btn {
+            margin-right: 0;
+        }
+        
+        /* 主容器 */
+        .container-fluid {
+            padding-top: 0 !important;
+        }
+    }
+    
+    /* 页面标题区域固定 - 桌面端 */
+    .card-header {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1020 !important;
+        background-color: white !important;
+        border-bottom: 1px solid #dee2e6 !important;
+        margin: 0 !important;
+        width: 100% !important;
+        padding: 10px 15px !important;
+    }
+    
+    /* 消息提示区域 - 默认样式 */
+    .alert {
+        margin-bottom: 20px !important;
+    }
+    
+    /* 在SubList页面固定消息提示 */
+    .sub-list-page .alert {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1025 !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        width: 100% !important;
+    }
+    
+    /* 资材量下载页面的消息提示位置调整 */
+    .material-download-page .alert {
+        margin-top: 20px !important;
+        margin-bottom: 20px !important;
+    }
+    
+    /* 文件管理页面的固定布局 */
+    .file-management-page .card-header {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1020 !important;
+        background-color: white !important;
+        border-bottom: 1px solid #dee2e6 !important;
+        margin: 0 !important;
+        width: 100% !important;
+        padding: 10px 15px !important;
+    }
+    
+    .file-management-page .alert {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1025 !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        width: 100% !important;
+    }
+    
+    /* 数据对比页面的固定布局 */
+    .file-comparison-page .card-header {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1020 !important;
+        background-color: white !important;
+        border-bottom: 1px solid #dee2e6 !important;
+        margin: 0 !important;
+        width: 100% !important;
+        padding: 10px 15px !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+    }
+    
+    /* 确保卡片容器也有正确的定位 */
+    .file-comparison-page .card {
+        position: relative !important;
+    }
+    
+    /* 固定标题容器（H-10：去掉 `.card-header *` 通配，避免对所有子元素
+       强制 sticky 造成的层叠上下文/重绘开销与元素跳动；仅固定容器本身
+       及尺寸固定的标题文本/图标） */
+    .file-comparison-page .card-header {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1020 !important;
+        background-color: white !important;
+    }
+
+    /* 标题内的行内元素随容器一起显示，但不再各自 sticky */
+    .file-comparison-page .card-header .card-title,
+    .file-comparison-page .card-header h1,
+    .file-comparison-page .card-header h2,
+    .file-comparison-page .card-header h3,
+    .file-comparison-page .card-header h4,
+    .file-comparison-page .card-header h5,
+    .file-comparison-page .card-header h6,
+    .file-comparison-page .card-header .fs-5,
+    .file-comparison-page .card-header i,
+    .file-comparison-page .card-header span {
+        position: relative;
+    }
+    
+    /* 确保整个卡片行都固定 */
+    .file-comparison-page .row:first-of-type {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1020 !important;
+        background-color: white !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+    
+    /* 确保列容器也固定 */
+    .file-comparison-page .col-lg-12:first-of-type {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1020 !important;
+        background-color: white !important;
+        padding: 0 !important;
+    }
+    
+    /* ================================================
+       移动端固定元素适配 (<768px)
+       ================================================ */
+    @media (max-width: 767.98px) {
+        .card-header,
+        .file-management-page .card-header,
+        .file-comparison-page .card-header,
+        .file-comparison-page .row:first-of-type,
+        .file-comparison-page .col-lg-12:first-of-type {
+            top: 0 !important;
+            position: sticky !important;
+        }
+        
+        .sub-list-page .alert,
+        .file-management-page .alert {
+            top: auto !important;
+            position: relative !important;
+            margin: 10px 0 !important;
+        }
+        
+        /* 移动端表格和容器适配 */
+        .table-container {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+    }
+    
+    /* 通用布局 */
+    .card {
+        margin-bottom: 20px;
+    }
+    .pagination {
+        margin-top: 20px;
+    }
+    .btn {
+        margin-right: 5px;
+        transition: all 0.3s ease;
+    }
+    .form-group {
+        margin-bottom: 10px;
+    }
+    .search-filters {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 10px;
+    }
+    .table-container {
+        overflow-x: auto;
+    }
+    .fixed-header {
+        position: sticky;
+        top: 0;
+        background-color: white;
+        z-index: 10;
+    }
+    .btn-group-sm .btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    
+    /* 加载指示器样式 */
+    .loader {
+        border: 3px solid #f3f3f3;
+        border-radius: 50%;
+        border-top: 3px solid #3498db;
+        width: 20px;
+        height: 20px;
+        animation: spin 1s linear infinite;
+        display: none;
+        margin-left: 10px;
+    }
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    /* 错误消息样式 */
+    .error-message {
+        color: red;
+        font-size: 0.9em;
+        margin-top: 5px;
+    }
+    
+    /* 权限标签样式 */
+    .permission-tag {
+        display: inline-block;
+        padding: 2px 8px;
+        margin: 1px;
+        border-radius: 4px;
+        background-color: #f0f0f0;
+        color: #333;
+        font-size: 0.85em;
+    }
+    
+    /* 删除模态框样式 */
+    .delete-modal .modal-content {
+        border-color: #dc3545;
+    }
+    .delete-modal .modal-header {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+    
+    /* 页面过渡：不再对 body 做 opacity 淡入。
+       原先 html.app-page-visited body { opacity:0; animation: fadeIn .5s } 会让
+       每次跨页切换都等待 0.5s 才显示内容，列表页数据量大时观感即为“卡”。
+       这里保留 keyframes 供其它场景按需复用，但不对 body 生效。 */
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    
+    /* 导航链接过渡效果 - 仅桌面端 */
+    /* 性能：卡片 hover 的 translateY + box-shadow 在大表格页会触发整卡重排/重绘，
+       列表页切换时叠加动画表现为卡顿，故移除卡片位移动画，仅保留颜色过渡。 */
+    @media (min-width: 768px) {
+        .nav-link {
+            transition: color 0.2s ease, background-color 0.2s ease;
+        }
+        .btn:hover {
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        .card {
+            transition: none;
+        }
+    }
+    
+    /* 固定列样式 */
+    .fixed-column {
+        position: sticky;
+        left: 0;
+        z-index: 10;
+        background-color: white;
+        border-right: 1px solid #e2e8f0;
+    }
+    .fixed-column-header {
+        position: sticky;
+        left: 0;
+        z-index: 20;
+        background-color: #f9fafb;
+        border-right: 1px solid #e2e8f0;
+    }
+    
+    /* 删除侧边栏边框 */
+    .sidebar {
+        border: none !important;
+    }
+    
+    /* 当表格行悬停时，固定列也应用悬停效果 */
+    @media (hover: hover) {
+        tr:hover .fixed-column {
+            background-color: #f5f7fa;
+        }
+    }
+    
+    /* 确保固定列的宽度足够 */
+    .fixed-column-width {
+        min-width: 120px;
+    }
+    
+    /* ================================================
+       移动端综合优化 (<768px)
+       ================================================ */
+    @media (max-width: 767.98px) {
+        .search-filters {
+            grid-template-columns: 1fr;
+        }
+        
+        /* 移动端禁用 hover 效果，使用触摸反馈 */
+        .nav-link {
+            transition: background-color 0.2s ease;
+        }
+        .nav-link:active {
+            background-color: rgba(255, 255, 255, 0.15);
+        }
+        
+        /* 移动端下拉菜单展开动画 */
+        .navbar-collapse.collapsing {
+            transition: height 0.3s ease;
+        }
+        
+        /* 移动端下拉菜单项点击反馈 */
+        .dropdown-item:active {
+            background-color: rgba(0, 0, 0, 0.1);
+        }
+        
+        /* 移动端按钮点击反馈 */
+        .btn:active {
+            transform: scale(0.97);
+        }
+        
+        /* 移动端卡片无 hover 效果 */
+        .card {
+            transition: box-shadow 0.2s ease;
+        }
+        
+        /* 移动端表格触摸优化 */
+        .table-container {
+            -webkit-overflow-scrolling: touch;
+            overflow-x: auto;
+        }
+        
+        /* 移动端字号微调 */
+        .navbar-brand {
+            font-size: 1rem;
+        }
+        
+        /* 防止移动端文本选中 */
+        .navbar,
+        .navbar * {
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        /* 确保导航栏内链接可选中和点击 */
+        .navbar a,
+        .navbar button {
+            -webkit-user-select: auto;
+            user-select: auto;
+        }
+    }
+    
+    /* 中等屏幕优化 (768px - 991px) */
+    @media (min-width: 768px) and (max-width: 991.98px) {
+        .navbar-nav .nav-link {
+            padding: 0 10px !important;
+            font-size: 0.9rem;
+        }
+        .navbar-brand {
+            font-size: 0.95rem;
+        }
+    }

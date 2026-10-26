@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>波纹管位置查询 - 免登录</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    <style>
+        body { background: #f4f6f8; }
+        .search-card {
+            max-width: 1100px; margin: 24px auto; background: #fff;
+            border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
+        }
+        .header-bar {
+            background: #1e6fbf; color: #fff; border-radius: 10px 10px 0 0;
+            padding: 14px 18px; display: flex; justify-content: space-between;
+            align-items: center; flex-wrap: wrap; gap: 8px;
+        }
+        .search-row { padding: 14px 18px; }
+        .search-input {
+            border-radius: 20px; padding-left: 16px; border: 1px solid #ced4da;
+        }
+        .table-responsive { max-height: 68vh; overflow: auto; }
+        .table { font-size: .9rem; margin-bottom: 0; }
+        .table thead th {
+            position: sticky; top: 0; background: #eef3f8; z-index: 1;
+            white-space: nowrap; font-weight: 600;
+        }
+        .pager { padding: 12px 18px; border-top: 1px solid #e9ecef; }
+        .footer-note {
+            text-align: center; color: #98a2ab; font-size: .78rem;
+            padding: 14px 0 18px;
+        }
+        .empty-tip { padding: 40px 0; text-align: center; color: #98a2ab; }
+        @media (max-width: 576px) {
+            .search-card { margin: 10px; }
+            .table { font-size: .8rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="search-card">
+    <div class="header-bar">
+        <div><i class="fa fa-map-marker me-1"></i> 波纹管位置查询</div>
+        <span class="small">共 <b>{{ total }}</b> 条记录 · 免登录开放查询</span>
+    </div>
+
+    <div class="search-row d-flex gap-2 align-items-center">
+        <input type="search" id="keyword" class="form-control search-input"
+               placeholder="输入关键词模糊查询（编号、名称、LOT、车种、图纸编号、回路等）"
+               autocomplete="off">
+        <button class="btn btn-primary" id="searchBtn"><i class="fa fa-search me-1"></i>查询</button>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover table-bordered">
+            <thead><tr id="tHead"></tr></thead>
+            <tbody id="tBody"></tbody>
+        </table>
+        <div id="emptyTip" class="empty-tip" style="display:none;">未找到匹配数据，请更换关键词重试。</div>
+    </div>
+
+    <div class="pager d-flex justify-content-between align-items-center">
+        <span class="small text-muted" id="pageInfo"></span>
+        <div class="btn-group">
+            <button class="btn btn-outline-secondary btn-sm" id="prevBtn"><i class="fa fa-chevron-left"></i></button>
+            <button class="btn btn-outline-secondary btn-sm" id="nextBtn"><i class="fa fa-chevron-right"></i></button>
+        </div>
+    </div>
+</div>
+
+<div class="footer-note">大焱资料管理系统 · 波纹管位置数据 · 支持移动端浏览 · <span id="today"></span></div>
+
+<script src="../static/js/bootstrap.bundle.min.js"></script>
+<script>
+const PAGESIZE = 20;
+let curPage = 1, totalCnt = 0, pagesCnt = 1;
+let cols = {{ columns | tojson }} || [];
+renderHead(cols);
+
+function renderHead(cols) {
+    document.getElementById('tHead').innerHTML =
+        '<th class="text-center" style="width:50px;">#</th>' +
+        cols.map(c => '<th>' + (c.display_name || c.field_key) + '</th>').join('');
+}
+
+function renderRows(rows) {
+    const body = document.getElementById('tBody');
+    document.getElementById('emptyTip').style.display = rows.length ? 'none' : 'block';
+    if (!rows.length) { body.innerHTML = ''; return; }
+    body.innerHTML = rows.map((r, i) => {
+        const start = (curPage - 1) * PAGESIZE;
+        let cells = cols.map(c => '<td>' + (r.data[c.field_key] ?? '') + '</td>').join('');
+        return '<tr><td class="text-center">' + (start + i + 1) + '</td>' + cells + '</tr>';
+    }).join('');
+}
+
+async function load(page) {
+    const kw = document.getElementById('keyword').value.trim();
+    try {
+        const res = await fetch('/corrugated_location/search/api?q=' + encodeURIComponent(kw) +
+                                '&page=' + page + '&per_page=' + PAGESIZE);
+        const d = await res.json();
+        if (!d.success) { document.getElementById('tBody').innerHTML =
+            '<tr><td class="empty-tip" colspan="99">查询失败：' + (d.error || '未知错误') + '</td></tr>'; return; }
+        curPage = d.page || 1; totalCnt = d.total || 0; pagesCnt = d.pages || 1;
+        cols = d.columns || cols;
+        renderHead(cols);
+        renderRows(d.items || []);
+        document.getElementById('pageInfo').textContent =
+            '第 ' + curPage + ' / ' + pagesCnt + ' 页 · 共 ' + totalCnt + ' 条';
+        document.getElementById('prevBtn').disabled = curPage <= 1;
+        document.getElementById('nextBtn').disabled = curPage >= pagesCnt;
+    } catch (e) {
+        document.getElementById('pageInfo').textContent = '加载失败：' + e.message;
+    }
+}
+
+document.getElementById('searchBtn').onclick = () => load(1);
+document.getElementById('keyword').onkeydown = e => { if (e.key === 'Enter') load(1); };
+document.getElementById('prevBtn').onclick = () => load(curPage - 1);
+document.getElementById('nextBtn').onclick = () => load(curPage + 1);
+
+// 自动更新日期
+(function() {
+    const el = document.getElementById('today');
+    if (!el) return;
+    function fmt() {
+        const d = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const days = ['日','一','二','三','四','五','六'];
+        el.textContent = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
+                         ' 星期' + days[d.getDay()];
+    }
+    fmt();
+    const t = setInterval(() => {
+        const d = new Date();
+        if (d.getHours() === 0 && d.getMinutes() === 0) fmt();
+    }, 60000);
+})();
+
+// 初始加载
+load(1);
+</script>
+</body>
+</html>

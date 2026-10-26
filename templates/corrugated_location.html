@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html data-bs-theme="light" lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>波纹管位置登录 - 大焱资料管理系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/font-awesome.min.css') }}">
+    {% include '_styles.html' %}
+    <style>
+        .card { margin-bottom: 20px; border-radius: 8px; }
+        .card-header { font-weight: 600; }
+        .table-preview { font-size: 0.85rem; }
+        .table-preview th { white-space: nowrap; background: #f8f9fa; }
+        .table-preview td { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .editable-cell { cursor: pointer; position: relative; }
+        .editable-cell:hover { background: #fff8e6; }
+        .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .config-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 4px 0; border-bottom: 1px dashed #dee2e6; }
+        .stat-chip { background: #e9ecef; border-radius: 4px; padding: 2px 8px; font-size: 0.85rem; color: #495057; }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    <div class="container-fluid py-3" style="padding-top: 20px;">
+        <div class="d-flex justify-content-between align-items-center flex-wrap mb-3">
+            <h2 class="h4 mb-0"><i class="fa fa-map-marker text-primary me-2"></i>波纹管位置登录</h2>
+            <span class="text-muted small">上传、预览、编辑波纹管位置数据；查询页免登录开放</span>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show">{{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 上传区 -->
+        <div class="card">
+            <div class="card-header bg-primary text-white"><i class="fa fa-upload me-1"></i> Excel 上传</div>
+            <div class="card-body">
+                <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
+                    <input type="file" class="form-control" id="excelFile" accept=".xlsx,.xls"
+                           style="max-width: 320px;">
+                    <button class="btn btn-primary" id="uploadBtn"><i class="fa fa-search me-1"></i>解析预览</button>
+                    <a href="{{ url_for('main.corrugated_location_template') }}" class="btn btn-outline-secondary">
+                        <i class="fa fa-download me-1"></i>下载录入模板</a>
+                    <span class="text-muted small">支持 .xlsx/.xls，列可自定义，自动识别「日期」列按日归档</span>
+                </div>
+                <div id="uploadMsg"></div>
+            </div>
+        </div>
+
+        <!-- 预览与编辑 -->
+        <div class="card">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap">
+                <span><i class="fa fa-table text-primary me-1"></i> 数据预览与编辑</span>
+                <span class="stat-chip">共 <b id="totalCount">{{ preview.total }}</b> 条</span>
+            </div>
+            <div class="card-body">
+                <div id="saveBar" class="toolbar mb-2" style="display:none;">
+                    <button class="btn btn-success btn-sm" id="saveBtn"><i class="fa fa-save me-1"></i>保存（覆盖旧数据）</button>
+                    <button class="btn btn-warning btn-sm" id="clearBtn"><i class="fa fa-trash me-1"></i>清空全部</button>
+                    <span class="text-muted small">保存后查询页立即生效；清空为不可逆操作</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-bordered table-hover table-preview mb-0" id="previewTable">
+                        <thead><tr id="previewHead"></tr></thead>
+                        <tbody id="previewBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 列配置（后台，管理员） -->
+        {% if session.get('is_admin') %}
+        <div class="card">
+            <div class="card-header bg-info text-white"><i class="fa fa-cog me-1"></i> 查询页列配置（后台）</div>
+            <div class="card-body">
+                <div id="configList"></div>
+                <button class="btn btn-primary btn-sm mt-2" id="saveConfigBtn">
+                    <i class="fa fa-save me-1"></i>保存列配置</button>
+                <span class="text-muted small ms-2">勾选列将在外部查询页显示，可修改显示名称与顺序（仅管理员）</span>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    <script>
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    // 初始数据（由后端渲染，避免首次空表）
+    const INIT = {
+        columns: {{ preview.columns | tojson }},
+        items: {{ preview['items'] | tojson }},
+        configs: {{ column_configs | tojson }},
+        visible: {{ visible_columns | tojson }}
+    };
+    let uploading = null;   // 当前解析结果（未保存）
+    let uploadingCols = null;  // 当前上传解析的实际列
+
+    function renderHead(columns) {
+        document.getElementById('previewHead').innerHTML =
+            '<th style="width:40px;">#</th>' +
+            columns.map(c => '<th>' + (c || '') + '</th>').join('') +
+            '<th style="width:120px;">操作</th>';
+    }
+
+    function renderRows(items, columns) {
+        const body = document.getElementById('previewBody');
+        if (!items.length) {
+            body.innerHTML = '<tr><td colspan="' + (columns.length + 2) + '" class="text-center text-muted py-4">暂无数据，请上传 Excel 或点击「解析预览」</td></tr>';
+            return;
+        }
+        body.innerHTML = items.map((it, i) => {
+            const cells = columns.map(c =>
+                '<td class="editable-cell" data-id="' + it.id + '" data-col="' + (c || '') + '">' + (it.data[c] ?? '') + '</td>');
+            return '<tr>' +
+                '<td>' + (i + 1) + '</td>' + cells.join('') +
+                '<td><button class="btn btn-warning btn-sm row-edit" data-id="' + it.id + '"><i class="fa fa-edit"></i></button> ' +
+                '<button class="btn btn-danger btn-sm row-del" data-id="' + it.id + '"><i class="fa fa-trash"></i></button></td>' +
+                '</tr>';
+        }).join('');
+    }
+
+    function showPreview(columns, records) {
+        uploading = records;
+        uploadingCols = columns;
+        renderHead(columns);
+        renderRows(records.map(r => ({ id: 'pending_' + r.row_no, data: Object.fromEntries(columns.map((c, i) => [c, r.values[i]])) })), columns);
+        document.getElementById('totalCount').textContent = records.length;
+        document.getElementById('saveBar').style.display = 'flex';
+    }
+
+    // 未保存时行内点击只提示（未入库行不可编辑）
+    function bindEditEvents() {
+        document.querySelectorAll('.row-edit').forEach(btn => btn.onclick = () => {
+            const id = btn.dataset.id;
+            if (String(id).startsWith('pending_')) { alert('预览中的行尚未入库，保存后即可编辑'); return; }
+            const row = INIT.items.find(x => x.id === id) || {};
+            const cols = Object.keys(row.data || {});
+            const kv = cols.map(c => prompt('修改「' + c + '」：', row.data[c] ?? ''));
+            if (kv.includes(null)) return;
+            const data = Object.fromEntries(cols.map((c, i) => [c, kv[i] ?? '']));
+            fetch('/corrugated_location/edit', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ id, data })
+            }).then(r => r.json()).then(res => {
+                if (res.success) { alert(res.message); location.reload(); }
+                else alert(res.error || '编辑失败');
+            }).catch(e => alert('请求失败：' + e.message));
+        });
+        document.querySelectorAll('.row-del').forEach(btn => btn.onclick = () => {
+            const id = btn.dataset.id;
+            if (String(id).startsWith('pending_')) {
+                // 预览行：直接从本地预览数组删除
+                const rec = uploading.find(r => 'pending_' + r.row_no === id);
+                if (rec && confirm('从本次上传中移除该行？')) {
+                    uploading = uploading.filter(r => r !== rec);
+                    renderHead(INIT.columns);
+                    renderRows(uploading.map(r => ({ id: 'pending_' + r.row_no, data: Object.fromEntries(INIT.columns.map((c, i) => [c, r.values[i]])) })), INIT.columns);
+                }
+                return;
+            }
+            if (confirm('确认删除该行？')) {
+                fetch('/corrugated_location/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    body: JSON.stringify({ id })
+                }).then(r => r.json()).then(res => {
+                    if (res.success) { alert(res.message); location.reload(); }
+                    else alert(res.error || '删除失败');
+                }).catch(e => alert('请求失败：' + e.message));
+            }
+        });
+    }
+
+    // 上传解析预览
+    document.getElementById('uploadBtn').onclick = () => {
+        const file = document.getElementById('excelFile').files[0];
+        if (!file) { alert('请先选择 Excel 文件'); return; }
+        const fd = new FormData();
+        fd.append('file', file);
+        fetch('/corrugated_location/upload', {
+            method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: fd
+        }).then(r => r.json()).then(res => {
+            if (!res.success) { document.getElementById('uploadMsg').innerHTML =
+                '<div class="text-danger">解析失败：' + (res.error || '未知错误') + '</div>'; return; }
+            document.getElementById('uploadMsg').innerHTML =
+                '<div class="text-success">解析成功：<b>' + res.metadata.file_name + '</b>，' +
+                res.metadata.row_count + ' 行数据，' + res.metadata.columns.length + ' 列，' +
+                res.metadata.errors + ' 个异常。下方预览，确认后点击「保存」。</div>';
+            showPreview(res.metadata.columns, res.records);
+        }).catch(e => alert('上传失败：' + e.message));
+    };
+
+    // 保存
+    document.getElementById('saveBtn').onclick = () => {
+        if (!uploading) { alert('请先解析文件'); return; }
+        if (!confirm('保存将覆盖当前全部数据，确定继续？')) return;
+        fetch('/corrugated_location/save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ columns: uploadingCols || INIT.columns, records: uploading, file_name: '' })
+        }).then(r => r.json()).then(res => {
+            if (res.success) { alert(res.message); location.reload(); }
+            else alert(res.error || '保存失败');
+        }).catch(e => alert('请求失败：' + e.message));
+    };
+
+    // 清空
+    document.getElementById('clearBtn').onclick = () => {
+        if (!confirm('确认清空全部波纹管位置数据？该操作不可恢复！')) return;
+        fetch('/corrugated_location/clear', {
+            method: 'POST', headers: { 'X-CSRFToken': csrfToken }
+        }).then(r => r.json()).then(res => {
+            if (res.success) { alert(res.message); location.reload(); }
+            else alert(res.error || '清空失败');
+        }).catch(e => alert('请求失败：' + e.message));
+    };
+
+    // 列配置渲染（管理员）
+    function renderConfigs() {
+        const box = document.getElementById('configList');
+        if (!box) return;
+        box.innerHTML = INIT.configs.map(cfg =>
+            '<div class="config-row">' +
+            '<input type="number" class="form-control form-control-sm" style="width:70px;" value="' + cfg.sort_order + '" data-key="' + cfg.field_key + '" data-attr="sort_order">' +
+            '<input type="text" class="form-control form-control-sm" style="width:180px;" value="' + (cfg.display_name || cfg.field_key) + '" data-key="' + cfg.field_key + '" data-attr="display_name">' +
+            '<input type="checkbox" class="form-check-input" ' + (cfg.is_visible ? 'checked' : '') + ' data-key="' + cfg.field_key + '" data-attr="is_visible">' +
+            '<label class="form-check-label small text-muted">显示</label>' +
+            '<span class="text-muted small">' + cfg.field_key + '</span></div>'
+        ).join('');
+    }
+    document.getElementById('saveConfigBtn') && (document.getElementById('saveConfigBtn').onclick = () => {
+        const configs = [];
+        document.querySelectorAll('#configList .config-row').forEach(div => {
+            const key = div.querySelector('input[data-attr="sort_order"]').dataset.key;
+            configs.push({
+                field_key: key,
+                sort_order: parseInt(div.querySelector('input[data-attr="sort_order"]').value || 0),
+                display_name: div.querySelector('input[data-attr="display_name"]').value.trim(),
+                is_visible: div.querySelector('input[data-attr="is_visible"]').checked
+            });
+        });
+        fetch('/corrugated_location/columns', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ configs })
+        }).then(r => r.json()).then(res => {
+            if (res.success) { alert(res.message); location.reload(); }
+            else alert(res.error || '保存失败');
+        }).catch(e => alert('请求失败：' + e.message));
+    });
+
+    // 初始化
+    renderHead(INIT.columns);
+    renderRows(INIT.items, INIT.columns);
+    bindEditEvents();
+    renderConfigs();
+    </script>
+</body>
+</html>

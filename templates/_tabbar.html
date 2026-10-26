@@ -1,0 +1,58 @@
+{# 顶部横向标签页导航栏（Tab Bar）
+   设计要点：
+   1) 仅登录后展示（标签页是"工作区"概念，未登录无意义）。
+   2) 由 _navbar.html 末尾统一 include，一次改造覆盖全部 40 个业务页面，无需逐页改动。
+   3) 骨架生成在 _navbar.html 的挂载点内，由 tabbar.js 在首屏迁移到 body 顶部（侧栏之后），
+      从而与左侧栏共同构成截图中的布局；本文件自带的 <script> 为同步加载，保证标签首帧即渲染。
+   4) 路由元数据（URL → 中文标题）直接用 url_for 生成，不使用 current_app，避免模板上下文缺失。 #}
+{% if session.get('user_id') %}
+<div class="app-tabbar" id="appTabbar">
+    <div class="app-tabbar-scroll" id="appTabbarScroll"></div>
+    <div class="app-tabbar-menu" id="appTabbarMenu" role="menu" aria-hidden="true"></div>
+</div>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tabbar.css') }}?v=20261021">
+<script>
+/* 标签页路由元数据：URL → 中文标题。用于按路径还原标签标题（刷新/直接访问时）。 */
+window.__TABBAR_ROUTES__ = [
+{% set _routes = [
+    (url_for('main.index'), '首页'),
+    (url_for('main.sub_list'), 'SubList'),
+    (url_for('main.usage_list'), 'UsageList'),
+    (url_for('main.file_management'), '文件管理'),
+    (url_for('nas.file_search_page'), 'NAS文件搜索'),
+    (url_for('main.file_comparison'), '数据差异对比'),
+    (url_for('main.rw_comparison'), 'RW核对'),
+    (url_for('cad.rw_cad_page'), 'RW图纸产出'),
+    (url_for('main.products'), '成品'),
+    (url_for('main.material_download'), '资材量下载'),
+    (url_for('main.tape_calculator'), '胶带换算'),
+    (url_for('main.sheet_calculator'), '皮子换算'),
+    (url_for('main.tube_calculator'), '管换算'),
+    (url_for('main.wire_lot_login'), 'LOT登录'),
+    (url_for('main.wire_scan_entry'), '扫描录入'),
+    (url_for('main.wire_data_download'), '数据下载'),
+    (url_for('main.material_inbound_daily'), '资材入库登录'),
+    (url_for('main.material_inbound'), '仓库资材入库'),
+    (url_for('main.corrugated_location'), '波纹管位置录入'),
+    (url_for('main.corrugated_location_search'), '波纹管查询'),
+    (url_for('main.inventory_login'), '盘点数据登录'),
+    (url_for('main.inventory_check'), '盘点实查'),
+    (url_for('main.defective_login_page'), '不良品登录'),
+    (url_for('main.defective_export_page'), '不良品清单导出'),
+    (url_for('main.inventory_summary'), '数据汇总'),
+    (url_for('main.invest_tidy'), '投入计划书'),
+    (url_for('main.auto_loading'), '汽车厂装车实际'),
+    (url_for('mes_mod.plan_page'), '计划登录'),
+    (url_for('mes_mod.production_page'), '生产入库'),
+    (url_for('mes_mod.quality_page'), '品质检查(包装)'),
+    (url_for('mes_mod.price_page'), '单价登陆'),
+    (url_for('mes.group_page'), 'MES分组'),
+    (url_for('main.user_management'), '用户与权限管理'),
+    (url_for('main.operation_logs'), '操作记录'),
+    (url_for('main.data_management'), '数据备份管理')
+] %}
+    {% for _url, _title in _routes %}{ "url": "{{ _url }}", "title": "{{ _title }}" }{{ "," if not loop.last }}{% endfor %}
+];
+</script>
+<script src="{{ url_for('static', filename='js/tabbar.js') }}?v=20261022"></script>
+{% endif %}

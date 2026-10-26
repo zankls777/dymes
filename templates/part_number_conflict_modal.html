@@ -1,0 +1,1155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>品番冲突处理</title>
+    <!-- 引入Bootstrap CSS -->
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <!-- 引入Font Awesome -->
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- 品番冲突处理模态框 -->
+    <div class="modal fade" id="partNumberConflictModal" tabindex="-1" aria-labelledby="partNumberConflictModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-fullscreen-xl-down" style="max-width: 95%; width: 95%;">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="partNumberConflictModalLabel">
+                        <i class="fa fa-exclamation-triangle me-2"></i>品番冲突处理
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- 说明信息 -->
+                    <div class="alert alert-info border-0 shadow-sm mb-3">
+                        <div class="d-flex align-items-start">
+                            <i class="fa fa-info-circle fa-2x text-info me-3 mt-1"></i>
+                            <div>
+                                <h6 class="alert-heading mb-2">处理说明</h6>
+                                <p class="mb-1">• <strong>品番异常</strong>：系统检测到Excel文件中存在品番不存在于UsageList中的数据，这些数据无法通过系统验证</p>
+                                <p class="mb-1">• <strong>重复数据</strong>：Excel文件中存在重复的LOT号，需要选择要导入的具体行</p>
+                                <p class="mb-1">• <strong>有效数据</strong>：品番存在于UsageList中的数据，将自动导入</p>
+                                <p class="mb-1">• <strong>处理选项</strong>：对于品番异常数据，可以选择跳过、导入部分或导入全部</p>
+                                <p class="mb-0">• <strong>注意事项</strong>：导入品番异常数据时，系统不会验证品番的有效性，请谨慎选择</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 统计信息 -->
+                    <div class="row mb-3">
+                        <div class="col-md-2">
+                            <div class="card border-danger">
+                                <div class="card-body text-center">
+                                    <h5 class="text-danger mb-1" id="partNumberConflictCount">0</h5>
+                                    <small class="text-muted">品番异常</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="card border-warning">
+                                <div class="card-body text-center">
+                                    <h5 class="text-warning mb-1" id="duplicateCount">0</h5>
+                                    <small class="text-muted">重复数据</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="card border-warning" style="border-color: #fd7e14 !important;">
+                                <div class="card-body text-center">
+                                    <h5 class="text-warning mb-1" id="duplicateWithPartConflictCount">0</h5>
+                                    <small class="text-muted">重复且品番冲突</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="card border-info">
+                                <div class="card-body text-center">
+                                    <h5 class="text-info mb-1" id="validDataCount">0</h5>
+                                    <small class="text-muted">有效数据</small>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- <div class="col-md-2">
+                            <div class="card border-success">
+                                <div class="card-body text-center">
+                                    <h5 class="text-success mb-1" id="totalCount">0</h5>
+                                    <small class="text-muted">总数据</small>
+                                </div>
+                            </div>
+                        </div> -->
+                        <!-- <div class="col-md-2">
+                            <div class="card border-primary">
+                                <div class="card-body text-center">
+                                    <h5 class="text-primary mb-1" id="autoImportedCount">0</h5>
+                                    <small class="text-muted">已自动导入</small>
+                                </div>
+                            </div>
+                        </div> -->
+                        <!-- <div class="col-md-2">
+                            <div class="card border-secondary">
+                                <div class="card-body text-center">
+                                    <h5 class="text-secondary mb-1" id="deletedConflictCount">0</h5>
+                                    <small class="text-muted">删除冲突记录</small>
+                                </div>
+                            </div>
+                        </div> -->
+                    </div>
+
+                    <!-- 品番不存在异常数据处理表格 -->
+                    <div class="card border-0 shadow-sm mb-3" id="partNumberConflictSection">
+                        <div class="card-header bg-danger text-white">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">
+                                    <i class="fa fa-exclamation-triangle me-2"></i>品番不存在异常数据处理
+                                </h6>
+                                <div class="d-flex gap-2">
+                                    <!-- <button type="button" class="btn btn-outline-light btn-sm" onclick="skipAllPartNumberConflicts()">
+                                        <i class="fa fa-times me-1"></i>跳过所有品番异常
+                                    </button>
+                                    <button type="button" class="btn btn-outline-light btn-sm" onclick="selectAllPartNumberConflicts()">
+                                        <i class="fa fa-check-square me-1"></i>全选品番异常
+                                    </button>
+                                    <button type="button" class="btn btn-outline-light btn-sm" onclick="clearAllPartNumberConflicts()">
+                                        <i class="fa fa-square-o me-1"></i>清除选择
+                                    </button> -->
+                                </div>
+                                <span class="text-white small">
+                                    <i class="fa fa-list-ol me-1"></i>
+                                    共发现 <span class="fw-bold" id="partNumberConflictCountHeader">0</span> 个品番不存在于UsageList中
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th class="border-0" style="width: 8%;">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="selectAllPartNumberConflicts">
+                                                    <label class="form-check-label" for="selectAllPartNumberConflicts">
+                                                        <i class="fa fa-check-square me-1"></i>选择
+                                                    </label>
+                                                </div>
+                                            </th>
+                                            <th class="border-0" style="width: 10%;">
+                                                <i class="fa fa-list-ol me-1"></i>行号
+                                            </th>
+                                            <th class="border-0" style="width: 18%;">
+                                                <i class="fa fa-barcode me-1"></i>品番
+                                            </th>
+                                            <th class="border-0" style="width: 12%;">
+                                                <i class="fa fa-car me-1"></i>车种
+                                            </th>
+                                            <th class="border-0" style="width: 12%;">
+                                                <i class="fa fa-hashtag me-1"></i>LOT号
+                                            </th>
+                                            <th class="border-0" style="width: 8%;">
+                                                <i class="fa fa-sort-numeric-up me-1"></i>数量
+                                            </th>
+                                            <th class="border-0" style="width: 12%;">
+                                                <i class="fa fa-exclamation-triangle me-1"></i>异常类型
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-comment me-1"></i>备注
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="partNumberConflictTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+
+
+                    <!-- 重复数据处理表格 -->
+                    <div class="card border-0 shadow-sm mb-3" id="duplicateSection" style="display: none;">
+                        <div class="card-header bg-light">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">
+                                    <i class="fa fa-copy me-2"></i>重复数据处理
+                                </h6>
+                                
+                                <span class="text-dark small" style="font-weight: 600;">
+                                    <i class="fa fa-list-ol me-1"></i>
+                                    共发现 <span class="text-dark fw-bold" id="duplicateCountHeader">0</span> 个重复数据需要处理
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-barcode me-1"></i>品番
+                                            </th>
+                                            <th class="border-0" style="width: 12%;">
+                                                <i class="fa fa-list me-1"></i>重复行数
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-check-square me-1"></i>选择导入行
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-car me-1"></i>车种
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-hashtag me-1"></i>LOT号
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-sort-numeric-up me-1"></i>数量
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="duplicateTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Excel内部重复且包含品番冲突数据处理表格 -->
+                    <div class="card border-0 shadow-sm mb-3" id="duplicateWithPartConflictSection" style="display: none;">
+                        <div class="card-header bg-warning text-dark">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">
+                                    <i class="fa fa-exclamation-triangle me-2"></i>Excel内部重复且包含品番冲突数据处理
+                                </h6>
+                                
+                                <span class="text-dark" style="font-weight: 600;">
+                                    <i class="fa fa-list-ol me-1"></i>
+                                    共发现 <span class="text-dark fw-bold" id="duplicateWithPartConflictCountHeader">0</span> 个重复且包含品番冲突的数据需要处理
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-barcode me-1"></i>品番
+                                            </th>
+                                            <th class="border-0" style="width: 12%;">
+                                                <i class="fa fa-list me-1"></i>重复行数
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-check-square me-1"></i>选择导入行
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-car me-1"></i>车种
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-hashtag me-1"></i>LOT号
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-sort-numeric-up me-1"></i>数量
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="duplicateWithPartConflictTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 有效数据显示 -->
+                    <div class="card border-0 shadow-sm mb-3" id="validDataSection" style="display: none;">
+                        <div class="card-header bg-success text-white">
+                            <h6 class="mb-0">
+                                <i class="fa fa-check-circle me-2"></i>有效数据（将自动导入）
+                            </h6>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th class="border-0" style="width: 12%;">
+                                                <i class="fa fa-list-ol me-1"></i>行号
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-barcode me-1"></i>品番
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-car me-1"></i>车种
+                                            </th>
+                                            <th class="border-0" style="width: 20%;">
+                                                <i class="fa fa-hashtag me-1"></i>LOT号
+                                            </th>
+                                            <th class="border-0" style="width: 15%;">
+                                                <i class="fa fa-sort-numeric-up me-1"></i>数量
+                                            </th>
+                                            <th class="border-0" style="width: 13%;">
+                                                <i class="fa fa-comment me-1"></i>备注
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="validDataTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="resolvePartNumberConflictsBtn">
+                        <i class="fa fa-check me-1"></i>确认处理
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自定义样式 -->
+    <style>
+        /* 确保模态框显示在最上层 */
+        .modal {
+            z-index: 1050 !important;
+        }
+        .modal-backdrop {
+            z-index: 1040 !important;
+        }
+        /* 品番冲突处理模态框需要更高的层级 */
+        #partNumberConflictModal {
+            z-index: 1060 !important;
+        }
+        #partNumberConflictModal .modal-backdrop {
+            z-index: 1055 !important;
+        }
+        /* 确保模态框内容在遮罩之上 */
+        .modal-dialog {
+            z-index: 1065 !important;
+        }
+        
+        /* 表格样式优化 */
+        .table th {
+            font-weight: 600;
+            color: #495057;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background-color: #f8f9fa;
+        }
+        
+        .table-responsive {
+            scrollbar-width: thin;
+            scrollbar-color: #adb5bd #f8f9fa;
+        }
+        
+        .table-responsive::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .table-responsive::-webkit-scrollbar-track {
+            background: #f8f9fa;
+        }
+        
+        .table-responsive::-webkit-scrollbar-thumb {
+            background: #adb5bd;
+            border-radius: 4px;
+        }
+        
+        .table-responsive::-webkit-scrollbar-thumb:hover {
+            background: #6c757d;
+        }
+        
+        /* 表格悬停效果 */
+        .table-hover tbody tr:hover {
+            background-color: rgba(0, 123, 255, 0.05);
+        }
+        
+        .table tbody tr {
+            transition: background-color 0.2s ease;
+        }
+        
+        .table td {
+            vertical-align: middle;
+        }
+        
+        /* 徽章样式 */
+        .badge {
+            font-size: 0.75em;
+            padding: 0.35em 0.65em;
+        }
+        
+        /* 表单控件样式 */
+        .form-select {
+            border-radius: 0.375rem;
+            border: 1px solid #ced4da;
+        }
+        
+        .form-select:focus {
+            border-color: #86b7fe;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        }
+        
+        /* 按钮悬停效果 */
+        .btn-outline-danger:hover {
+            background-color: #dc3545;
+            border-color: #dc3545;
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 1200px) {
+            #partNumberConflictModal .modal-dialog {
+                max-width: 98% !important;
+                width: 98% !important;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            #partNumberConflictModal .modal-dialog {
+                max-width: 100% !important;
+                width: 100% !important;
+                margin: 0;
+            }
+        }
+        
+        @media (max-width: 576px) {
+            #partNumberConflictModal .modal-dialog {
+                max-width: 100% !important;
+                width: 100% !important;
+                margin: 0;
+            }
+        }
+    </style>
+
+    <!-- JavaScript代码 -->
+    <script>
+        // 全局变量
+        let partNumberConflictData = [];
+        let duplicateData = [];
+        let duplicateWithPartConflictData = [];
+        let validData = [];
+        let allExcelData = [];
+
+        // 重置模态框内部状态，避免残留上次的数据
+        function resetModalState() {
+            partNumberConflictData = [];
+            duplicateData = [];
+            duplicateWithPartConflictData = [];
+            validData = [];
+            allExcelData = [];
+
+            const pnBody = document.getElementById('partNumberConflictTableBody');
+            const dupBody = document.getElementById('duplicateTableBody');
+            const dupPcBody = document.getElementById('duplicateWithPartConflictTableBody');
+            const validBody = document.getElementById('validDataTableBody');
+            if (pnBody) pnBody.innerHTML = '';
+            if (dupBody) dupBody.innerHTML = '';
+            if (dupPcBody) dupPcBody.innerHTML = '';
+            if (validBody) validBody.innerHTML = '';
+
+            const pnSection = document.getElementById('partNumberConflictSection');
+            const dupSection = document.getElementById('duplicateSection');
+            const dupPcSection = document.getElementById('duplicateWithPartConflictSection');
+            const validSection = document.getElementById('validDataSection');
+            if (pnSection) pnSection.style.display = 'none';
+            if (dupSection) dupSection.style.display = 'none';
+            if (dupPcSection) dupPcSection.style.display = 'none';
+            if (validSection) validSection.style.display = 'none';
+
+            const idsToZero = [
+                'partNumberConflictCount','duplicateCount','duplicateWithPartConflictCount',
+                'validDataCount','totalCount','autoImportedCount','deletedConflictCount',
+                'partNumberConflictCountHeader','duplicateCountHeader','duplicateWithPartConflictCountHeader'
+            ];
+            idsToZero.forEach(id => { const el = document.getElementById(id); if (el) el.textContent = '0'; });
+
+            // 复位表头全选复选框
+            const selectAllIds = [
+                'selectAllPartNumberConflicts','selectAllDuplicates','selectAllDuplicatesWithPartConflicts'
+            ];
+            selectAllIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) { el.checked = false; el.indeterminate = false; }
+            });
+        }
+
+        // 显示品番冲突处理模态框
+        function showPartNumberConflictModal(data) {
+            // 打开前先清空上次状态
+            resetModalState();
+            console.log('=== showPartNumberConflictModal 被调用 ===');
+            console.log('传入的原始数据:', data);
+            
+            const { part_number_conflicts, excel_duplicates, excel_duplicates_with_part_conflicts, valid_data, all_excel_data, summary } = data;
+            
+            console.log('=== 解构后的数据 ===');
+            console.log('part_number_conflicts:', part_number_conflicts);
+            console.log('excel_duplicates:', excel_duplicates);
+            console.log('excel_duplicates_with_part_conflicts:', excel_duplicates_with_part_conflicts);
+            console.log('valid_data:', valid_data);
+            console.log('all_excel_data:', all_excel_data);
+            console.log('summary:', summary);
+            
+            // 隐藏其他可能打开的模态框
+            const modals = document.querySelectorAll('.modal');
+            modals.forEach(modal => {
+                const modalInstance = bootstrap.Modal.getInstance(modal);
+                if (modalInstance) {
+                    modalInstance.hide();
+                }
+            });
+
+            // 保存数据到全局变量
+            partNumberConflictData = part_number_conflicts || [];
+            duplicateData = excel_duplicates || [];
+            duplicateWithPartConflictData = excel_duplicates_with_part_conflicts || [];
+            validData = valid_data || [];
+            allExcelData = all_excel_data || [];
+            
+            // 添加调试信息
+            console.log('品番冲突数据:', partNumberConflictData);
+            console.log('重复数据:', duplicateData);
+            console.log('重复且品番冲突数据:', duplicateWithPartConflictData);
+            console.log('有效数据:', validData);
+            console.log('所有Excel数据:', allExcelData);
+
+            // 更新统计信息显示
+            const partNumberConflictCountEl = document.getElementById('partNumberConflictCount');
+            const duplicateCountEl = document.getElementById('duplicateCount');
+            const duplicateWithPartConflictCountEl = document.getElementById('duplicateWithPartConflictCount');
+            const validDataCountEl = document.getElementById('validDataCount');
+            const totalCountEl = document.getElementById('totalCount');
+            
+            if (partNumberConflictCountEl) partNumberConflictCountEl.textContent = partNumberConflictData.length;
+            if (duplicateCountEl) duplicateCountEl.textContent = duplicateData.length;
+            if (duplicateWithPartConflictCountEl) duplicateWithPartConflictCountEl.textContent = duplicateWithPartConflictData.length;
+            if (validDataCountEl) validDataCountEl.textContent = validData.length;
+            if (totalCountEl) totalCountEl.textContent = allExcelData.length;
+            
+            // 更新额外的统计信息
+            if (summary) {
+                const autoImportedCountEl = document.getElementById('autoImportedCount');
+                const deletedConflictCountEl = document.getElementById('deletedConflictCount');
+                if (autoImportedCountEl) autoImportedCountEl.textContent = summary.already_imported_count || 0;
+                if (deletedConflictCountEl) deletedConflictCountEl.textContent = summary.deleted_conflicts_count || 0;
+            }
+            
+            // 显示/隐藏相应的处理区域
+            const partNumberConflictSection = document.getElementById('partNumberConflictSection');
+            const duplicateSection = document.getElementById('duplicateSection');
+            const duplicateWithPartConflictSection = document.getElementById('duplicateWithPartConflictSection');
+            const validDataSection = document.getElementById('validDataSection');
+            
+            // 品番冲突区域
+            if (partNumberConflictData.length > 0 && partNumberConflictSection) {
+                partNumberConflictSection.style.display = 'block';
+                const partNumberConflictCountHeaderEl = document.getElementById('partNumberConflictCountHeader');
+                if (partNumberConflictCountHeaderEl) partNumberConflictCountHeaderEl.textContent = partNumberConflictData.length;
+                buildPartNumberConflictTable();
+            } else if (partNumberConflictSection) {
+                partNumberConflictSection.style.display = 'none';
+            }
+            
+            // 重复数据区域
+            if (duplicateData.length > 0 && duplicateSection) {
+                duplicateSection.style.display = 'block';
+                const duplicateCountHeaderEl = document.getElementById('duplicateCountHeader');
+                if (duplicateCountHeaderEl) duplicateCountHeaderEl.textContent = duplicateData.length;
+                buildDuplicateTable();
+            } else if (duplicateSection) {
+                duplicateSection.style.display = 'none';
+            }
+            
+            // 重复且品番冲突数据区域
+            if (duplicateWithPartConflictData.length > 0 && duplicateWithPartConflictSection) {
+                duplicateWithPartConflictSection.style.display = 'block';
+                const duplicateWithPartConflictCountHeaderEl = document.getElementById('duplicateWithPartConflictCountHeader');
+                if (duplicateWithPartConflictCountHeaderEl) duplicateWithPartConflictCountHeaderEl.textContent = duplicateWithPartConflictData.length;
+                buildDuplicateWithPartConflictTable();
+            } else if (duplicateWithPartConflictSection) {
+                duplicateWithPartConflictSection.style.display = 'none';
+            }
+            
+            // 有效数据区域
+            if (validData.length > 0 && validDataSection) {
+                validDataSection.style.display = 'block';
+                buildValidDataTable();
+            } else if (validDataSection) {
+                validDataSection.style.display = 'none';
+            }
+            
+            // 动态调整确认处理按钮的文本和行为
+            const resolveBtn = document.getElementById('resolvePartNumberConflictsBtn');
+            if (resolveBtn) {
+                if (partNumberConflictData.length > 0 || duplicateData.length > 0 || duplicateWithPartConflictData.length > 0) {
+                    // 有需要处理的数据
+                    resolveBtn.textContent = '确认处理';
+                    resolveBtn.disabled = false;
+                } else if (validData.length > 0) {
+                    // 只有有效数据，无需处理
+                    resolveBtn.textContent = '关闭';
+                    resolveBtn.disabled = false;
+                } else {
+                    // 没有任何数据
+                    resolveBtn.textContent = '确认处理';
+                    resolveBtn.disabled = false;
+                }
+            }
+
+            // 显示模态框
+            const modalEl = document.getElementById('partNumberConflictModal');
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
+
+        // 构建品番冲突表格
+        function buildPartNumberConflictTable() {
+            const tbody = document.getElementById('partNumberConflictTableBody');
+            tbody.innerHTML = '';
+            
+            partNumberConflictData.forEach((item, index) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>
+                        <div class="form-check">
+                            <input class="form-check-input part-number-conflict-checkbox" type="checkbox" 
+                                   value="${index}" id="partConflict_${index}">
+                        </div>
+                    </td>
+                    <td><span class="badge bg-secondary">${item.row}</span></td>
+                    <td><strong class="text-danger">${item.part_number}</strong></td>
+                    <td>${item.vehicle_name || '未指定'}</td>
+                    <td>${item.lot_number}</td>
+                    <td>${item.quantity}</td>
+                    <td><span class="badge bg-danger">品番不存在</span></td>
+                    <td>${item.remark || ''}</td>
+                `;
+                tbody.appendChild(row);
+            });
+            
+            // 绑定全选事件
+            bindSelectAllEvents();
+        }
+
+
+
+        // 构建重复数据表格
+        function buildDuplicateTable() {
+            const tbody = document.getElementById('duplicateTableBody');
+            tbody.innerHTML = '';
+            
+            duplicateData.forEach((duplicate, index) => {
+                const row = document.createElement('tr');
+                // 尝试获取品番，支持多种可能的字段名
+                const partNumber = duplicate.part_number || duplicate.partNumber || 
+                                 (duplicate.rows && duplicate.rows[0] ? duplicate.rows[0].part_number || duplicate.rows[0].partNumber : null) ||
+                                 '未指定品番';
+                
+                row.innerHTML = `
+                    <td><strong>${partNumber}</strong></td>
+                    <td><span class="badge bg-warning">${duplicate.rows.length}行</span></td>
+                    <td>
+                        <select class="form-select form-select-sm" id="duplicateSelect_${index}" onchange="updateDuplicateRowData(${index})">
+                            <option value="no_import">不导入</option>
+                            ${duplicate.rows.map((row, rowIndex) => 
+                                `<option value="${rowIndex}">第${row.index}行: ${row.vehicle_name || '未指定'}</option>`
+                            ).join('')}
+                        </select>
+                    </td>
+                    <td id="duplicateVehicle_${index}">${duplicate.rows[0]?.vehicle_name || '未指定'}</td>
+                    <td id="duplicateLot_${index}">${duplicate.rows[0]?.lot_number || ''}</td>
+                    <td id="duplicateQuantity_${index}">${duplicate.rows[0]?.quantity || ''}</td>
+                `;
+                tbody.appendChild(row);
+            });
+            // 绑定全选事件（确保渲染后可联动）
+            bindSelectAllEvents();
+        }
+
+        // 构建重复且品番冲突数据表格
+        function buildDuplicateWithPartConflictTable() {
+            const tbody = document.getElementById('duplicateWithPartConflictTableBody');
+            tbody.innerHTML = '';
+            
+            duplicateWithPartConflictData.forEach((duplicate, index) => {
+                const row = document.createElement('tr');
+                // 尝试获取品番，支持多种可能的字段名
+                const partNumber = duplicate.part_number || duplicate.partNumber || 
+                                 (duplicate.rows && duplicate.rows[0] ? duplicate.rows[0].part_number || duplicate.rows[0].partNumber : null) ||
+                                 '未指定品番';
+                
+                row.innerHTML = `
+                    <td><strong class="text-danger">${partNumber}</strong></td>
+                    <td><span class="badge bg-warning">${duplicate.rows.length}行</span></td>
+                    <td>
+                        <select class="form-select form-select-sm" id="duplicateWithPartConflictSelect_${index}" onchange="updateDuplicateWithPartConflictRowData(${index})">
+                            <option value="no_import">不导入</option>
+                            ${duplicate.rows.map((row, rowIndex) => 
+                                `<option value="${rowIndex}">第${row.index}行: ${row.vehicle_name || '未指定'}</option>`
+                            ).join('')}
+                        </select>
+                    </td>
+                    <td id="duplicateWithPartConflictVehicle_${index}">${duplicate.rows[0]?.vehicle_name || '未指定'}</td>
+                    <td id="duplicateWithPartConflictLot_${index}">${duplicate.rows[0]?.lot_number || ''}</td>
+                    <td id="duplicateWithPartConflictQuantity_${index}">${duplicate.rows[0]?.quantity || ''}</td>
+                `;
+                tbody.appendChild(row);
+            });
+            // 绑定全选事件（确保渲染后可联动）
+            bindSelectAllEvents();
+        }
+
+        // 更新重复且品番冲突行数据
+        function updateDuplicateWithPartConflictRowData(duplicateIndex) {
+            const selectElement = document.getElementById(`duplicateWithPartConflictSelect_${duplicateIndex}`);
+            const selectedValue = selectElement.value;
+            
+            if (selectedValue === 'no_import') {
+                // 如果选择"不导入"，清空显示
+                document.getElementById(`duplicateWithPartConflictVehicle_${duplicateIndex}`).textContent = '未选择';
+                document.getElementById(`duplicateWithPartConflictLot_${duplicateIndex}`).textContent = '';
+                document.getElementById(`duplicateWithPartConflictQuantity_${duplicateIndex}`).textContent = '';
+            } else {
+                // 如果选择了具体的行，更新显示
+                const rowIndex = parseInt(selectedValue);
+                const duplicate = duplicateWithPartConflictData[duplicateIndex];
+                const selectedRow = duplicate.rows[rowIndex];
+                
+                if (selectedRow) {
+                    document.getElementById(`duplicateWithPartConflictVehicle_${duplicateIndex}`).textContent = selectedRow.vehicle_name || '未指定';
+                    document.getElementById(`duplicateWithPartConflictLot_${duplicateIndex}`).textContent = selectedRow.lot_number || '';
+                    document.getElementById(`duplicateWithPartConflictQuantity_${duplicateIndex}`).textContent = selectedRow.quantity || '';
+                }
+            }
+        }
+
+        // 更新重复行数据
+        function updateDuplicateRowData(duplicateIndex) {
+            const selectElement = document.getElementById(`duplicateSelect_${duplicateIndex}`);
+            const selectedValue = selectElement.value;
+            
+            if (selectedValue === 'no_import') {
+                // 如果选择"不导入"，清空显示
+                document.getElementById(`duplicateVehicle_${duplicateIndex}`).textContent = '未选择';
+                document.getElementById(`duplicateLot_${duplicateIndex}`).textContent = '';
+                document.getElementById(`duplicateQuantity_${duplicateIndex}`).textContent = '';
+            } else {
+                // 如果选择了具体的行，更新显示
+                const rowIndex = parseInt(selectedValue);
+                const duplicate = duplicateData[duplicateIndex];
+                const selectedRow = duplicate.rows[rowIndex];
+                
+                if (selectedRow) {
+                    document.getElementById(`duplicateVehicle_${duplicateIndex}`).textContent = selectedRow.vehicle_name || '未指定';
+                    document.getElementById(`duplicateLot_${duplicateIndex}`).textContent = selectedRow.lot_number || '';
+                    document.getElementById(`duplicateQuantity_${duplicateIndex}`).textContent = selectedRow.quantity || '';
+                }
+            }
+        }
+
+        // 构建有效数据表格
+        function buildValidDataTable() {
+            const tbody = document.getElementById('validDataTableBody');
+            tbody.innerHTML = '';
+            
+            validData.forEach((item) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><span class="badge bg-success">${item.index}</span></td>
+                    <td><strong>${item.part_number}</strong></td>
+                    <td>${item.vehicle_name || '未指定'}</td>
+                    <td>${item.lot_number}</td>
+                    <td>${item.quantity}</td>
+                    <td>${item.remark || ''}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // 绑定全选事件
+        function bindSelectAllEvents() {
+            // 更新“全选”三态（checked/unchecked/indeterminate）
+            function updateSelectAllCheckboxState(selectAllId, itemSelector) {
+                const selectAll = document.getElementById(selectAllId);
+                if (!selectAll) return;
+                const checkboxes = document.querySelectorAll(itemSelector);
+                const total = checkboxes.length;
+                const checked = Array.from(checkboxes).filter(cb => cb.checked).length;
+                if (total === 0) {
+                    selectAll.checked = false;
+                    selectAll.indeterminate = false;
+                    return;
+                }
+                if (checked === 0) {
+                    selectAll.checked = false;
+                    selectAll.indeterminate = false;
+                } else if (checked === total) {
+                    selectAll.checked = true;
+                    selectAll.indeterminate = false;
+                } else {
+                    selectAll.checked = false;
+                    selectAll.indeterminate = true;
+                }
+            }
+            // 品番冲突全选
+            const selectAllPartNumberConflicts = document.getElementById('selectAllPartNumberConflicts');
+            if (selectAllPartNumberConflicts) {
+                // 头部“全选”控制所有行
+                selectAllPartNumberConflicts.addEventListener('change', function() {
+                    const checkboxes = document.querySelectorAll('.part-number-conflict-checkbox');
+                    checkboxes.forEach(checkbox => { checkbox.checked = this.checked; });
+                    updateSelectAllCheckboxState('selectAllPartNumberConflicts', '.part-number-conflict-checkbox');
+                });
+                // 行复选框反向驱动头部“全选”
+                document.querySelectorAll('.part-number-conflict-checkbox').forEach(cb => {
+                    cb.addEventListener('change', function() {
+                        updateSelectAllCheckboxState('selectAllPartNumberConflicts', '.part-number-conflict-checkbox');
+                    });
+                });
+                // 初始同步
+                updateSelectAllCheckboxState('selectAllPartNumberConflicts', '.part-number-conflict-checkbox');
+            }
+            
+            // 重复数据全选（已移除复选框，不再绑定）
+
+            // 重复且品番冲突数据全选（已移除复选框，不再绑定）
+        }
+
+        // 跳过所有品番冲突
+        function skipAllPartNumberConflicts() {
+            const message = `确定要跳过所有品番异常数据吗？\n\n` +
+                           `这将跳过以下 ${partNumberConflictData.length} 个品番异常：\n` +
+                           partNumberConflictData.map(item => 
+                               `• 第${item.row}行: ${item.part_number} (${item.vehicle_name || '未指定'})`
+                           ).join('\n') + '\n\n' +
+                           `跳过后，系统将只导入有效的品番数据。`;
+            
+            if (confirm(message)) {
+                // 调用跳过API
+                resolvePartNumberConflicts('skip');
+            }
+        }
+
+        // 全选品番冲突
+        function selectAllPartNumberConflicts() {
+            const checkboxes = document.querySelectorAll('.part-number-conflict-checkbox');
+            checkboxes.forEach(checkbox => { checkbox.checked = true; });
+            const selectAll = document.getElementById('selectAllPartNumberConflicts');
+            if (selectAll) { selectAll.checked = true; selectAll.indeterminate = false; }
+        }
+
+        // 清除品番冲突选择
+        function clearAllPartNumberConflicts() {
+            const checkboxes = document.querySelectorAll('.part-number-conflict-checkbox');
+            checkboxes.forEach(checkbox => { checkbox.checked = false; });
+            const selectAll = document.getElementById('selectAllPartNumberConflicts');
+            if (selectAll) { selectAll.checked = false; selectAll.indeterminate = false; }
+        }
+
+        // 全选重复数据（复选框已移除，函数保留空实现以兼容旧引用）
+        function selectAllDuplicates() {}
+
+        // 清除重复数据选择
+        function clearAllDuplicates() {}
+
+        // 全选重复且品番冲突数据
+        function selectAllDuplicatesWithPartConflicts() {}
+
+        // 清除重复且品番冲突数据选择
+        function clearAllDuplicatesWithPartConflicts() {}
+
+        // 处理品番冲突
+        function resolvePartNumberConflicts(action = 'import') {
+            console.log('=== resolvePartNumberConflicts 函数被调用 ===');
+            console.log('action:', action);
+            console.log('全局变量状态:');
+            console.log('partNumberConflictData:', partNumberConflictData);
+            console.log('duplicateData:', duplicateData);
+            console.log('validData:', validData);
+            
+            let selectedPartNumbers = [];
+            
+            if (action === 'import') {
+                // 收集用户选择的品番冲突数据
+                const selectedCheckboxes = document.querySelectorAll('.part-number-conflict-checkbox:checked');
+                console.log('找到的品番冲突复选框:', selectedCheckboxes);
+                selectedPartNumbers = Array.from(selectedCheckboxes).map(checkbox => {
+                    const index = parseInt(checkbox.value);
+                    return partNumberConflictData[index];
+                });
+                console.log('选择的品番冲突数据:', selectedPartNumbers);
+            }
+            
+            // 收集用户选择的重复数据：以选择框的值为准（非 'no_import' 即视为选中）
+            const selectedDuplicates = [];
+            duplicateData.forEach((duplicate, index) => {
+                const selectElement = document.getElementById(`duplicateSelect_${index}`);
+                if (!selectElement) return;
+                const selectedValue = selectElement.value;
+                if (selectedValue !== 'no_import') {
+                    const rowIndex = parseInt(selectedValue);
+                    if (duplicate.rows[rowIndex]) {
+                        selectedDuplicates.push(duplicate.rows[rowIndex]);
+                    }
+                }
+            });
+            console.log('选择的重复数据:', selectedDuplicates);
+
+            // 收集用户选择的重复且品番冲突数据：同样按选择框判断
+            const selectedDuplicatesWithPartConflicts = [];
+            duplicateWithPartConflictData.forEach((duplicate, index) => {
+                const selectElement = document.getElementById(`duplicateWithPartConflictSelect_${index}`);
+                if (!selectElement) return;
+                const selectedValue = selectElement.value;
+                if (selectedValue !== 'no_import') {
+                    const rowIndex = parseInt(selectedValue);
+                    if (duplicate.rows[rowIndex]) {
+                        selectedDuplicatesWithPartConflicts.push(duplicate.rows[rowIndex]);
+                    }
+                }
+            });
+            console.log('选择的重复且品番冲突数据:', selectedDuplicatesWithPartConflicts);
+
+            console.log('验证前的状态:');
+            console.log('partNumberConflictData.length > 0:', partNumberConflictData.length > 0);
+            console.log('duplicateData.length > 0:', duplicateData.length > 0);
+            console.log('duplicateWithPartConflictData.length > 0:', duplicateWithPartConflictData.length > 0);
+            console.log('selectedPartNumbers.length === 0:', selectedPartNumbers.length === 0);
+            console.log('selectedDuplicates.length === 0:', selectedDuplicates.length === 0);
+            console.log('selectedDuplicatesWithPartConflicts.length === 0:', selectedDuplicatesWithPartConflicts.length === 0);
+            
+            // 检查是否有选择的数据（只有当有品番冲突或重复数据时才检查）
+            if ((partNumberConflictData.length > 0 || duplicateData.length > 0 || duplicateWithPartConflictData.length > 0) && 
+                selectedPartNumbers.length === 0 && selectedDuplicates.length === 0 && selectedDuplicatesWithPartConflicts.length === 0) {
+                console.log('❌ 验证失败：没有选择任何数据');
+                
+                // 提供友好的提示，说明系统将自动跳过
+                if (partNumberConflictData.length > 0 && validData.length > 0) {
+                    alert('您没有选择任何品番冲突数据，系统将自动跳过。\n\n有效数据已在Excel上传时自动导入！');
+                } else if (partNumberConflictData.length > 0) {
+                    alert('您没有选择任何品番冲突数据，系统将自动跳过。\n\n没有其他数据需要处理。');
+                } else {
+                    alert('请选择要导入的数据！');
+                }
+                return;
+            }
+            
+            console.log('✅ 验证通过，继续执行');
+
+            // 准备请求数据（默认分别携带三类选择）
+            const requestData = {
+                action: action,
+                selected_part_numbers: selectedPartNumbers,
+                selected_data: selectedDuplicates,
+                selected_duplicates_with_part_conflicts: selectedDuplicatesWithPartConflicts
+            };
+
+            console.log('准备发送的请求数据:', requestData);
+
+            // 根据数据类型选择不同的API端点
+            let apiEndpoint = '/api/finished_products/resolve_part_number_conflicts';
+            if (selectedPartNumbers.length === 0 && (selectedDuplicates.length > 0 || selectedDuplicatesWithPartConflicts.length > 0)) {
+                // 只有重复数据（包含两种重复类型）时，统一走通用冲突解决API
+                apiEndpoint = '/api/finished_products/resolve_conflicts';
+                // 通用接口只识别 selected_data，将两类重复选择合并后发送
+                requestData.selected_data = [
+                    ...selectedDuplicates,
+                    ...selectedDuplicatesWithPartConflicts
+                ];
+            }
+
+            // 发送请求
+            fetch(apiEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(data.message || '数据处理成功！');
+                    // 关闭模态框并刷新页面
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
+                    modal.hide();
+                    location.reload();
+                } else {
+                    alert('数据处理失败：' + (data.error || '未知错误'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('数据处理失败：' + error.message);
+            });
+        }
+
+        // 绑定确认处理按钮事件
+        document.addEventListener('DOMContentLoaded', function() {
+            const resolveBtn = document.getElementById('resolvePartNumberConflictsBtn');
+            const modalEl = document.getElementById('partNumberConflictModal');
+            
+            if (resolveBtn) {
+                resolveBtn.addEventListener('click', function() {
+                    console.log('=== 确认处理按钮被点击 ===');
+                    console.log('当前全局变量状态:');
+                    console.log('partNumberConflictData:', partNumberConflictData);
+                    console.log('duplicateData:', duplicateData);
+                    console.log('validData:', validData);
+                    console.log('partNumberConflictData.length:', partNumberConflictData ? partNumberConflictData.length : 'undefined');
+                    console.log('duplicateData.length:', duplicateData ? duplicateData.length : 'undefined');
+                    console.log('validData.length:', validData ? validData.length : 'undefined');
+                    
+                    // 根据当前显示的数据类型选择处理方式
+                    if (partNumberConflictData && partNumberConflictData.length > 0) {
+                        console.log('✅ 有品番冲突数据，检查是否已选择');
+                        
+                        // 预检查：如果用户没有选择任何品番冲突数据，自动跳过
+                        const selectedCheckboxes = document.querySelectorAll('.part-number-conflict-checkbox:checked');
+                        if (selectedCheckboxes.length === 0) {
+                            console.log('✅ 用户没有选择品番冲突数据，自动跳过');
+                            
+                            if (validData && validData.length > 0) {
+                                console.log('✅ 自动跳过品番冲突，导入有效数据');
+                                // 调用API导入有效数据
+                                importValidDataOnly();
+                            } else {
+                                alert('您没有选择任何品番冲突数据，系统将自动跳过。\n\n没有其他数据需要处理。');
+                                const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
+                                modal.hide();
+                            }
+                            return;
+                        }
+                        
+                        console.log('✅ 用户已选择品番冲突数据，调用 resolvePartNumberConflicts');
+                        // 有品番冲突数据，使用品番冲突处理
+                        resolvePartNumberConflicts('import');
+                    } else if ((duplicateData && duplicateData.length > 0) || (typeof duplicateWithPartConflictData !== 'undefined' && duplicateWithPartConflictData && duplicateWithPartConflictData.length > 0)) {
+                        console.log('✅ 有重复数据（包含常规重复或“重复且品番冲突”），统一调用 resolvePartNumberConflicts 处理');
+                        // 存在任意重复数据类型时，使用统一处理函数以同时提交两个区域的选择
+                        resolvePartNumberConflicts('import');
+                    } else if (validData && validData.length > 0) {
+                        console.log('✅ 只有有效数据，直接关闭模态框');
+                        // 只有有效数据，直接关闭模态框（这些数据已经在Excel上传时自动导入了）
+                        alert('有效数据已在Excel上传时自动导入，无需额外处理！');
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
+                        modal.hide();
+                        location.reload();
+                    } else {
+                        console.log('❌ 没有匹配的条件，显示错误提示');
+                        alert('没有需要处理的数据！');
+                    }
+                });
+            } else {
+                console.error('❌ 未找到确认处理按钮');
+            }
+
+            // 关闭模态框时清理内部状态，避免再次打开看到旧数据
+            if (modalEl) {
+                modalEl.addEventListener('hidden.bs.modal', function () {
+                    resetModalState();
+                });
+            }
+        });
+
+        // 专门导入有效数据的函数
+        function importValidDataOnly() {
+            console.log('=== 导入有效数据 ===');
+            console.log('有效数据:', validData);
+            
+            if (!validData || validData.length === 0) {
+                alert('没有有效数据需要导入！');
+                return;
+            }
+            
+            // 准备请求数据
+            const requestData = {
+                action: 'import_valid_only',
+                valid_data: validData,
+                skip_part_number_conflicts: true
+            };
+            
+            console.log('准备发送的请求数据:', requestData);
+            
+            // 发送请求到后端API
+            fetch('/api/finished_products/import_valid_data_only', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(data.message || '有效数据导入成功！');
+                    // 关闭模态框并刷新页面
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
+                    modal.hide();
+                    location.reload();
+                } else {
+                    alert('有效数据导入失败：' + (data.error || '未知错误'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('有效数据导入失败：' + error.message);
+                
+                // 如果API调用失败，至少关闭模态框
+                const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
+                modal.hide();
+            });
+        }
+
+        // 专门处理重复数据的函数（按选择框判断，不再依赖复选框）
+        function resolveDuplicateData() {
+            const selectedDuplicates = [];
+            duplicateData.forEach((duplicate, index) => {
+                const selectElement = document.getElementById(`duplicateSelect_${index}`);
+                if (!selectElement) return;
+                const val = selectElement.value;
+                if (val !== 'no_import') {
+                    const rowIndex = parseInt(val);
+                    if (duplicate.rows[rowIndex]) selectedDuplicates.push(duplicate.rows[rowIndex]);
+                }
+            });
+
+            if (selectedDuplicates.length === 0) {
+                alert('请选择要导入的具体行数据！');
+                return;
+            }
+
+            fetch('/api/finished_products/resolve_conflicts', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({ selected_data: selectedDuplicates })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert(data.message || '重复数据处理成功！');
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
+                    modal.hide();
+                    location.reload();
+                } else {
+                    alert('重复数据处理失败：' + (data.error || '未知错误'));
+                }
+            })
+            .catch(err => {
+                console.error('Error:', err);
+                alert('重复数据处理失败：' + err.message);
+            });
+        }
+
+        // 导出函数供外部调用
+        window.showPartNumberConflictModal = showPartNumberConflictModal;
+        window.showPartNumberConflictModalEnhanced = showPartNumberConflictModal;
+    </script>
+</body>
+</html>

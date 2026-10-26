@@ -1,0 +1,49 @@
+# ---------- 运行时数据 / 敏感数据 ----------
+instance/
+backups/
+logs/
+static/uploads/
+tmp_dxf/
+tmp_png/
+.screenshots/
+performance_results/
+
+# 数据库与备份
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.bak
+
+# 环境与密钥
+.env
+.env.*
+!.env.example
+
+# ---------- 日志 ----------
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ---------- 依赖 / 构建产物 ----------
+node_modules/
+dist/
+dist-ssr/
+coverage/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.sw?
+Thumbs.db
+
+# ---------- 临时文件 ----------
+_tmp_*
+*.tsbuildinfo

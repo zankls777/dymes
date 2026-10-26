@@ -1,0 +1,210 @@
+    .app-sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 200px;
+        background: linear-gradient(180deg, #0d6efd 0%, #4da3ff 100%); /* 天蓝色 */
+        color: #ffffff;
+        z-index: 1050;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        overflow-x: hidden;
+        box-shadow: 2px 0 12px rgba(13, 110, 253, 0.25);
+    }
+    /* 仅交互时启用位移动画，首屏直接落位 */
+    body.app-sidebar-anim .app-sidebar { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    .app-sidebar.collapsed { transform: translateX(-100%); }
+
+    /* 首屏按用户上次状态渲染（配合头部同步脚本，消除切换模块时的展开闪烁） */
+    html.app-sidebar-collapsed-init .app-sidebar { transform: translateX(-100%); }
+    html.app-sidebar-collapsed-init .app-sidebar-float-btn { display: flex; align-items: center; justify-content: center; }
+
+    /* 内容区跟随偏移：用 body padding 位移，避免改动子元素宽度导致回流抖动与白边 */
+    /* 首屏不加过渡，直接落到最终位置，避免"展开→收起"或"收起→展开"的滑动白边 */
+    body.app-sidebar-anim {
+        transition: padding-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    /* 桌面端默认无偏移（折叠态），展开时整体右移 200px */
+    /* 展开态由 html.app-sidebar-open-init（首屏同步脚本）或 body.app-sidebar-open（JS 交互）驱动，保证首屏即落位 */
+    @media (min-width: 768px) {
+        body { padding-left: 0 !important; padding-top: 0; }
+        html.app-sidebar-open-init body,
+        body.app-sidebar-open { padding-left: 200px !important; }
+        /* 悬浮临时展开时内容同步右移，避免侧边栏遮挡内容 */
+        body.app-sidebar-hover { padding-left: 200px !important; }
+    }
+    /* 内容宽度始终撑满可用区域，消除折叠过程中右侧露白 */
+    body .container-fluid {
+        width: 100% !important;
+        margin-left: 0 !important;
+        /* 保留左右内边距，抵消 Bootstrap .row 的负外边距，避免内容左溢出、右侧留白 */
+        padding-left: 15px !important;
+        padding-right: 15px !important;
+    }
+
+    .app-sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.08);
+        flex-shrink: 0;
+        cursor: default;
+    }
+    .app-brand {
+        color: #fff;
+        font-size: 1.02rem;
+        font-weight: 700;
+        text-decoration: none;
+        white-space: nowrap;
+    }
+    .app-brand:hover { color: #fff; }
+
+    .app-sidebar-btn {
+        background: rgba(255, 255, 255, 0.18);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: #fff;
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition: all 0.25s ease;
+    }
+    .app-sidebar-btn:hover { background: rgba(255, 255, 255, 0.3); }
+
+    .app-sidebar-nav { flex: 1; padding: 8px 0; }
+
+    .app-nav-group {
+        padding: 12px 16px 4px;
+        font-size: 0.72rem;
+        letter-spacing: 1px;
+        color: #e0f2fe;
+        text-transform: uppercase;
+    }
+
+    .app-nav-link {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 16px;
+        color: #f0f9ff;
+        text-decoration: none;
+        font-size: 0.92rem;
+        border-left: 3px solid transparent;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        cursor: pointer;
+        user-select: none;
+    }
+    .app-nav-link i { width: 18px; text-align: center; font-size: 1rem; }
+    .app-nav-link:hover { background: rgba(255, 255, 255, 0.15); color: #fff; transform: translateX(4px); }
+    .app-nav-link.active { background: rgba(255, 255, 255, 0.2); border-left-color: #ffc107; color: #fff; font-weight: 600; }
+
+    .app-nav-arrow { margin-left: auto; transition: transform 0.25s ease; font-size: 0.8rem; }
+    .app-nav-sub.open > .app-nav-toggle .app-nav-arrow { transform: rotate(180deg); }
+
+    .app-nav-submenu {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        background: rgba(255, 255, 255, 0.06);
+    }
+    .app-nav-sub.open > .app-nav-submenu { max-height: 320px; }
+    /* 首屏同步阶段（sidebar-init.js 已按记忆展开分组）关闭过渡，避免"滑下"动画造成闪烁 */
+    html.app-sidebar-nav-init .app-nav-submenu { transition: none; }
+    .app-nav-sub-link { padding-left: 46px; font-size: 0.85rem; border-left: none; }
+
+    .app-sidebar-footer {
+        flex-shrink: 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.06);
+        padding: 4px 0;
+    }
+    .app-nav-user { display: flex; align-items: center; gap: 10px; padding: 9px 16px; font-size: 0.85rem; color: #e0f2fe; }
+    .app-nav-logout { color: #fecaca; }
+    .app-nav-logout:hover { color: #fff; background: rgba(239, 68, 68, 0.3); }
+
+    /* 桌面端悬停展开（用户主动交互；不持久化，移开后回到用户当前状态） */
+    @media (hover: hover) and (min-width: 768px) {
+        .app-sidebar.collapsed:hover { transform: translateX(0); box-shadow: 4px 0 20px rgba(13, 110, 253, 0.4); }
+    }
+
+    /* 移动端汉堡按钮 */
+    .app-sidebar-toggle {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 1060;
+        width: 44px;
+        height: 44px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        background: linear-gradient(135deg, #0d6efd, #4da3ff);
+        color: #fff;
+        font-size: 1.15rem;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(13, 110, 253, 0.35);
+        transition: all 0.25s ease;
+    }
+    .app-sidebar-toggle:hover { transform: scale(1.06); }
+
+    /* 桌面折叠后固定展开按钮 */
+    .app-sidebar-float-btn {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 1200;
+        width: 44px;
+        height: 44px;
+        border-radius: 8px;
+        border: none;
+        background: linear-gradient(135deg, #0d6efd, #4da3ff);
+        color: #fff;
+        font-size: 1.15rem;
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(13, 110, 253, 0.35);
+        transition: all 0.25s ease;
+        display: none;
+    }
+    .app-sidebar-float-btn.show { display: flex; align-items: center; justify-content: center; animation: floatIn 0.3s ease; }
+    .app-sidebar-float-btn:hover { transform: scale(1.08); }
+    @keyframes floatIn {
+        from { opacity: 0; transform: translateX(-12px); }
+        to { opacity: 1; transform: translateX(0); }
+    }
+
+    .app-sidebar-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        z-index: 1045;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.3s ease, visibility 0.3s ease;
+    }
+    .app-sidebar-backdrop.show { opacity: 1; visibility: visible; }
+
+    .app-sidebar::-webkit-scrollbar { width: 5px; }
+    .app-sidebar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.3); border-radius: 3px; }
+
+    /* 移动端抽屉：默认收起，点击汉堡按钮加 .open 后滑入。
+     * 注意优先级：默认收起规则用了 html:not(.app-sidebar-open-init)（(0,3,0)），
+     * 因此展开规则必须加上同样的 html 前缀（(0,4,0)）才能压过它，
+     * 否则 .app-sidebar.open 仅 (0,2,0)，会被默认收起规则覆盖而无法展开。 */
+    @media (max-width: 767.98px) {
+        body { padding-top: 56px; padding-left: 0; }
+        body.app-sidebar-open { padding-left: 0; }
+        html .app-sidebar { transform: translateX(-100%); width: 240px; }
+        html .app-sidebar.open { transform: translateX(0); }
+        .app-sidebar-toggle { display: flex; }
+        .app-sidebar-float-btn { display: none !important; }
+    }

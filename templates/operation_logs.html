@@ -1,0 +1,2118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>操作记录</title>
+    <!-- 引入Bootstrap CSS -->
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <!-- 引入Font Awesome -->
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
+    <!-- 日期范围选择器样式（Litepicker，本地化资源）：仅在需要时由 JS 动态引入，避免首屏阻塞 -->
+    <!-- 引入自定义样式 -->
+    {% include '_styles.html' %}
+    <!-- 预加载关键JS资源 -->
+    <link rel="preload" href="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}" as="script">
+<style>
+    /* 阻止弹窗打开时页面背景滚动（兼容无Bootstrap JS场景）*/
+    body.modal-open { overflow: hidden; }
+    /* 明细弹窗内的分页与按钮色彩优化（与页面主色一致） */
+    #detailModal .pagination .page-link {
+        color: #667eea;
+        border-color: #dee2e6;
+        transition: all 0.2s ease;
+    }
+    #detailModal .pagination .page-link:hover {
+        background: #667eea;
+        color: #fff;
+        border-color: #667eea;
+    }
+    #detailModal .pagination .page-item.active .page-link {
+        background: #667eea;
+        border-color: #667eea;
+        color: #fff;
+        box-shadow: 0 0 0 0.1rem rgba(102,126,234,.25);
+    }
+    #detailModal .btn-primary {
+        background-color: #667eea;
+        border-color: #667eea;
+    }
+    #detailModal .btn-primary:hover {
+        background-color: #5667d8;
+        border-color: #5667d8;
+    }
+    #detailModal .btn-outline-secondary {
+        color: #667eea;
+        border-color: #667eea;
+    }
+    #detailModal .btn-outline-secondary:hover {
+        background-color: #667eea;
+        color: #fff;
+        border-color: #667eea;
+    }
+    #detailModal .index-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: #eef2ff;
+        color: #5667d8;
+        font-size: 12px;
+        margin-right: 8px;
+        border: 1px solid #dfe3ff;
+    }
+    .operation-log-container {
+        padding: 10px;
+        background: #f8f9fa;
+        min-height: calc(100vh - 76px);
+    }
+    
+    .page-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 12px 16px;
+        border-radius: 6px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 6px rgba(102, 126, 234, 0.3);
+    }
+    
+    .page-header h2 {
+        margin: 0;
+        font-size: 1.4em;
+        font-weight: 600;
+    }
+    
+    .page-header .btn {
+        background: rgba(255, 255, 255, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: white;
+        transition: all 0.3s ease;
+    }
+    
+    .page-header .btn:hover {
+        background: rgba(255, 255, 255, 0.3);
+        border-color: rgba(255, 255, 255, 0.5);
+        color: white;
+        transform: translateY(-2px);
+    }
+    
+    .stats-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 6px;
+        margin-bottom: 10px;
+    }
+    
+    .stat-card {
+        background: white;
+        padding: 8px;
+        border-radius: 6px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        text-align: center;
+        transition: all 0.3s ease;
+        border-left: 3px solid #007bff;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+    }
+    
+    .stat-card.upload { border-left-color: #28a745; }
+    .stat-card.download { border-left-color: #17a2b8; }
+    .stat-card.compare { border-left-color: #ffc107; }
+    .stat-card.total { border-left-color: #6f42c1; }
+    .stat-card.today { border-left-color: #fd7e14; }
+    
+    .stat-number {
+        font-size: 1.4em;
+        font-weight: 700;
+        color: #2c3e50;
+        margin-bottom: 2px;
+    }
+    
+    .stat-label {
+        color: #6c757d;
+        font-size: 0.8em;
+        font-weight: 500;
+    }
+    
+    .filter-section {
+        background: white;
+        padding: 10px;
+        border-radius: 6px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        margin-bottom: 10px;
+    }
+    
+    .filter-section h5 {
+        color: #2c3e50;
+        font-weight: 600;
+        margin-bottom: 8px;
+        font-size: 0.95em;
+    }
+    
+    .filter-row {
+        display: flex;
+        gap: 8px;
+        align-items: end;
+        flex-wrap: wrap;
+    }
+    
+    .filter-group {
+        flex: 1;
+        min-width: 100px;
+    }
+    
+    .filter-group label {
+        font-weight: 600;
+        margin-bottom: 5px;
+        display: block;
+        color: #495057;
+        font-size: 0.9em;
+    }
+    
+    .log-card {
+        background: white;
+        border-radius: 6px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        overflow: hidden;
+        margin-bottom: 8px;
+    }
+    
+    .log-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 8px 12px;
+    }
+    
+    .log-header h5 {
+        margin: 0;
+        font-size: 1em;
+        font-weight: 600;
+    }
+    
+    .log-body {
+        padding: 12px;
+    }
+    
+    .log-item {
+        border-left: 3px solid #007bff;
+        padding: 10px;
+        margin-bottom: 6px;
+        background: #f8f9fa;
+        border-radius: 0 6px 6px 0;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .log-item::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 3px;
+        height: 100%;
+        background: linear-gradient(135deg, #007bff, #0056b3);
+        transition: all 0.3s ease;
+    }
+    
+    .log-item:hover {
+        background: #e9ecef;
+        transform: translateX(8px);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    }
+    
+    .log-item.upload { border-left-color: #28a745; }
+    .log-item.upload::before { background: linear-gradient(135deg, #28a745, #1e7e34); }
+    .log-item.delete { border-left-color: #dc3545; }
+    .log-item.delete::before { background: linear-gradient(135deg, #dc3545, #c82333); }
+    .log-item.download { border-left-color: #17a2b8; }
+    .log-item.download::before { background: linear-gradient(135deg, #17a2b8, #138496); }
+    .log-item.compare { border-left-color: #ffc107; }
+    .log-item.compare::before { background: linear-gradient(135deg, #ffc107, #e0a800); }
+    .log-item.user { border-left-color: #6f42c1; }
+    .log-item.user::before { background: linear-gradient(135deg, #6f42c1, #5a32a3); }
+    .log-item.login { border-left-color: #20c997; }
+    .log-item.login::before { background: linear-gradient(135deg, #20c997, #17a2b8); }
+    
+    .log-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+    }
+    
+    .log-type {
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .log-type.upload { background: #d4edda; color: #155724; }
+    .log-type.delete { background: #f8d7da; color: #721c24; }
+    .log-type.download { background: #d1ecf1; color: #0c5460; }
+    .log-type.compare { background: #fff3cd; color: #856404; }
+    .log-type.user { background: #e2e3f1; color: #383d41; }
+    .log-type.login { background: #d1f2eb; color: #0f5132; }
+    
+    .log-time {
+        color: #6c757d;
+        font-size: 0.8em;
+        font-weight: 500;
+    }
+    
+    .log-desc {
+        font-size: 1em;
+        margin-bottom: 5px;
+        color: #2c3e50;
+        font-weight: 500;
+    }
+    
+    .log-details {
+        font-size: 0.85em;
+        color: #6c757d;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    
+    .log-details span {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+    
+    .log-details .badge {
+        margin-right: 5px;
+    }
+    
+    .pagination-container {
+        display: flex;
+        justify-content: center;
+        margin-top: 12px;
+    }
+    
+    .pagination .page-link {
+        border-radius: 8px;
+        margin: 0 2px;
+        border: 1px solid #dee2e6;
+        color: #007bff;
+        transition: all 0.3s ease;
+    }
+    
+    .pagination .page-link:hover {
+        background: #007bff;
+        color: white;
+        transform: translateY(-2px);
+    }
+    
+    .pagination .page-item.active .page-link {
+        background: #007bff;
+        border-color: #007bff;
+    }
+    
+    .pagination-sm .page-link {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    
+    .pagination-info {
+        font-size: 0.875rem;
+        color: #6c757d;
+    }
+    
+    .no-logs {
+        text-align: center;
+        padding: 30px 20px;
+        color: #6c757d;
+    }
+    
+    .no-logs i {
+        font-size: 2.5em;
+        margin-bottom: 10px;
+        color: #dee2e6;
+    }
+    
+    .no-logs h5 {
+        color: #495057;
+        margin-bottom: 5px;
+        font-size: 1.1em;
+    }
+    
+    .btn {
+        border-radius: 6px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        padding: 0.375rem 0.75rem;
+        font-size: 0.875rem;
+    }
+    
+    .btn:hover {
+        transform: translateY(-1px);
+    }
+    
+    .form-control, .form-select {
+        border-radius: 6px;
+        border: 1px solid #ced4da;
+        transition: all 0.3s ease;
+        padding: 0.375rem 0.75rem;
+        font-size: 0.875rem;
+    }
+    
+    .form-control:focus, .form-select:focus {
+        border-color: #007bff;
+        box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+    }
+
+    /* 自定义可搜索下拉样式 */
+    .optype-select { position: relative; }
+    .optype-dropdown {
+        position: absolute;
+        z-index: 1050;
+        background: #fff;
+        border: 1px solid #ced4da;
+        border-radius: 6px;
+        margin-top: 4px;
+        width: 100%;
+        max-height: 260px;
+        overflow-y: auto; /* 常显滚动区域 */
+        box-shadow: 0 4px 16px rgba(0,0,0,.08);
+    }
+    .optype-item { padding: 8px 10px; cursor: pointer; }
+    .optype-item:hover, .optype-item.active { background: #eef2ff; }
+    .optype-empty { padding: 8px 10px; color: #6c757d; }
+    .optype-clear {
+        position: absolute;
+        right: 8px;
+        top: 8px;
+        border: none;
+        background: transparent;
+        font-size: 18px;
+        line-height: 1;
+        color: #999;
+        cursor: pointer;
+    }
+    .optype-clear:hover { color: #666; }
+    
+    /* 明细弹窗表头固定样式 */
+    #detailModal .table thead th {
+        position: sticky !important;
+        top: 0 !important;
+        background-color: #f8f9fa !important;
+        z-index: 10 !important;
+        border-bottom: 2px solid #dee2e6 !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+    }
+    
+    #detailModal .table-container {
+        position: relative;
+        overflow: hidden;
+    }
+    
+    /* 文件上传分组显示样式 */
+    .file-upload-group {
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        overflow: hidden;
+    }
+    
+    .file-upload-group .group-header {
+        padding: 12px 16px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        margin: 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .file-upload-group.success-group {
+        border-color: #c3e6cb;
+        background-color: #f8fff9;
+    }
+    
+    .file-upload-group.success-group .group-header {
+        background-color: #d4edda;
+        color: #155724;
+    }
+    
+    .file-upload-group.duplicate-group {
+        border-color: #ffeaa7;
+        background-color: #fffdf7;
+    }
+    
+    .file-upload-group.duplicate-group .group-header {
+        background-color: #fff3cd;
+        color: #856404;
+    }
+    
+    .file-upload-group .table {
+        margin-bottom: 0;
+    }
+    
+    .file-upload-group .table thead th {
+        position: sticky;
+        top: 60px; /* 分组标题的高度 */
+        background-color: #f8f9fa;
+        z-index: 9;
+        border-bottom: 2px solid #dee2e6;
+        margin: 0;
+    }
+    
+    .file-upload-group .table tbody tr:hover {
+        background-color: rgba(0,0,0,0.05);
+    }
+    
+    .file-upload-group .badge {
+        font-size: 0.75em;
+        padding: 0.25em 0.5em;
+    }
+    
+    /* 文件上传容器样式 */
+    .file-upload-container {
+        position: relative;
+        overflow: auto;
+    }
+    
+    .file-upload-container .file-upload-group {
+        position: relative;
+    }
+    
+    /* 确保sticky定位相对于正确的容器 */
+    .file-upload-container .file-upload-group .group-header {
+        position: -webkit-sticky;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+</style>
+
+</head>
+<body>
+    <!-- 导航栏 -->
+    {% include '_navbar.html' %}
+    
+    <div class="container-fluid mt-4">
+        <div class="operation-log-container">
+            <!-- 页面头部 -->
+            <div class="page-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2><i class="fas fa-history me-3"></i> 操作记录</h2>
+                    <button class="btn btn-outline-light" onclick="refreshLogs()">
+                        <i class="fas fa-sync-alt me-2"></i> 刷新
+                    </button>
+                </div>
+            </div>
+    
+    <!-- 统计卡片 -->
+    <div class="stats-cards" id="statsCards">
+        <!-- 统计信息将通过JavaScript动态加载 -->
+    </div>
+    
+    <!-- 筛选区域 -->
+    <div class="filter-section">
+        <h5 class="mb-3"><i class="fas fa-filter"></i> 筛选条件</h5>
+        <div class="filter-row">
+            <div class="filter-group">
+                <label>操作类型</label>
+                <!-- 原生 select 隐藏用于与后端保持兼容 -->
+                <select id="operationTypeFilter" class="form-select" style="display:none;">
+                    <option value="">全部类型</option>
+                    <option value="upload_file">文件上传</option>
+                    <option value="delete_file">文件删除</option>
+                    <option value="batch_delete_file">批量删除</option>
+                    <option value="download_file">文件下载</option>
+                    <option value="download_result">结果下载</option>
+                    <option value="file_compare">文件对比</option>
+                    <option value="add_product">添加成品</option>
+                    <option value="update_product">更新成品</option>
+                    <option value="delete_product">删除成品</option>
+                    <option value="batch_add_product">批量添加成品</option>
+                    <option value="batch_delete_product">批量删除成品</option>
+                    <option value="add_user">添加用户</option>
+                    <option value="delete_user">删除用户</option>
+                    <option value="update_user">更新用户</option>
+                    <option value="enable_user">启用用户</option>
+                    <option value="disable_user">停用用户</option>
+                    <option value="change_password">修改密码</option>
+                    <option value="reset_password">重置密码</option>
+                    <option value="update_permissions">更新权限</option>
+                    <option value="delete_permission">删除权限</option>
+                    <option value="login">用户登录</option>
+                    <option value="logout">用户登出</option>
+                    <option value="add_vehicle_type">添加车种</option>
+                    <option value="update_vehicle_type">更新车种</option>
+                    <option value="delete_vehicle_type">删除车种</option>
+                    <option value="batch_delete_vehicle_type">批量删除车种</option>
+                    <option value="import_vehicle_type">导入车种</option>
+                    <option value="export_vehicle_type">导出车种</option>
+                    <option value="freeze_file">冻结文件</option>
+                    <option value="thaw_file">解冻文件</option>
+                    <option value="batch_freeze_file">批量冻结</option>
+                    <option value="batch_thaw_file">批量解冻</option>
+                    <option value="freeze_old_versions">冻结旧版本</option>
+                    <option value="upload_inbound">上传入库明细</option>
+                    <option value="save_inbound">保存入库明细</option>
+                    <option value="delete_inbound">删除入库明细</option>
+                    <option value="submit_inbound">提交入库</option>
+                    <option value="revoke_inbound">撤销入库</option>
+                    <option value="export_inbound">导出入库明细</option>
+                    <option value="save_inventory_team">保存盘点班组</option>
+                    <option value="delete_inventory_team">删除盘点班组</option>
+                    <option value="sync_pno">同步品番字典</option>
+                    <option value="submit_inventory_check">提交盘点实查</option>
+                    <option value="delete_inventory_check">删除盘点记录</option>
+                    <option value="set_defective_access_mode">设置不良品访问</option>
+                    <option value="submit_defective">提交不良品</option>
+                    <option value="delete_defective">删除不良品</option>
+                    <option value="export_defective">导出不良品</option>
+                    <option value="add_group">新增权限组</option>
+                    <option value="update_group">更新权限组</option>
+                    <option value="delete_group">删除权限组</option>
+                    <option value="set_group_permissions">设置权限组权限</option>
+                    <option value="set_user_groups">设置用户权限组</option>
+                    <option value="set_user_overrides">设置用户权限</option>
+                </select>
+                <!-- 自定义可搜索下拉 -->
+                <div class="optype-select" id="optypeWrapper">
+                    <input type="text" id="optypeSearch" class="form-control" placeholder="搜索操作类型..." autocomplete="off">
+                    <button type="button" id="optypeClear" class="optype-clear" title="清空">×</button>
+                    <div class="optype-dropdown" id="optypeDropdown" style="display:none;"></div>
+                </div>
+            </div>
+            <!-- <div class="filter-group">
+                <label>操作用户</label>
+                <select class="form-select" id="userFilter">
+                    <option value="">全部用户</option>
+                </select>
+            </div> -->
+            <div class="filter-group">
+                <label>日期范围</label>
+                <input type="text" class="form-control" id="dateRange" placeholder="开始日期 至 结束日期">
+            </div>
+            <!-- <div class="filter-group">
+                <label>每页条数</label>
+                <select class="form-select" id="pageSizeSelect">
+                    <option value="10">10</option>
+                    <option value="15">15</option>
+                    <option value="25" selected>25</option>
+                    <option value="50">50</option>
+                </select>
+            </div> -->
+            <div class="filter-group" style="flex: 0 0 auto; min-width: auto;">
+                <button class="btn btn-primary" onclick="applyFilters()">
+                    <i class="fas fa-search"></i> 筛选
+                </button>
+                <button class="btn btn-outline-secondary ms-2" onclick="clearFilters()">
+                    <i class="fas fa-times"></i> 清除
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 操作记录列表 -->
+    <div class="log-card">
+        <div class="log-header">
+            <h5 class="mb-0"><i class="fas fa-list"></i> 操作记录列表</h5>
+        </div>
+        <div class="log-body">
+            <div id="logsContainer">
+                <!-- 操作记录将通过JavaScript动态加载 -->
+            </div>
+            
+            <!-- 分页（参考文件管理页布局） -->
+            <nav class="mt-3">
+                <div class="d-flex justify-content-center align-items-center mb-2" style="height: 34px;">
+                    <!-- 每页数量选择（底部） -->
+                    <div class="d-flex align-items-center me-3">
+                        <label class="me-2 mb-0">每页显示:</label>
+                        <select class="form-select form-select-sm" id="logsPerPageSelect" style="width: 80px;">
+                            <option value="10">10</option>
+                            <option value="15">15</option>
+                            <option value="25" selected>25</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </div>
+
+                    <!-- 页码导航 -->
+                    <div class="d-flex align-items-center me-3">
+                        <ul class="pagination pagination-sm mb-0" id="logsPaginationList" style="margin: 0; line-height: 1;"></ul>
+                    </div>
+
+                    <!-- 页码跳转 -->
+                    <div class="d-flex align-items-center">
+                        <label class="me-2 mb-0">跳转至:</label>
+                        <input type="number" class="form-control form-control-sm" id="logsJumpPage" min="1" value="1" style="width: 60px;">
+                        <button class="btn btn-sm btn-primary ms-2" onclick="jumpToPage()">前往</button>
+                    </div>
+                </div>
+                <div class="text-muted text-center small mt-2" id="logsPaginationInfo"></div>
+            </nav>
+        </div>
+    </div>
+    </div>
+    
+    <!-- 页脚 -->
+    {% include '_scripts.html' %}
+    <script>
+    // 按需加载 Litepicker（JS + CSS）：仅在用户点击日期框聚焦时才拉取，减少首屏体积
+    // 兼容 Win7/老内核：动态注入 script/link，避免 defer 依赖顺序问题
+    window.__bomLoadLitepicker = function () {
+        if (window.Litepicker) { return Promise.resolve(); }
+        if (window.__litepickerLoading) { return window.__litepickerLoading; }
+        window.__litepickerLoading = new Promise(function (resolve, reject) {
+            if (!document.querySelector('link[data-bom-litepicker-css]')) {
+                var link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = '{{ url_for("static", filename="css/litepicker.css") }}';
+                link.setAttribute('data-bom-litepicker-css', '1');
+                document.head.appendChild(link);
+            }
+            var s = document.createElement('script');
+            s.src = '{{ url_for("static", filename="js/litepicker.bundle.js") }}';
+            s.async = true;
+            s.onload = function () { resolve(); };
+            s.onerror = function () { window.__litepickerLoading = null; reject(new Error('litepicker load failed')); };
+            document.head.appendChild(s);
+        });
+        return window.__litepickerLoading;
+    };
+    </script>
+<script>
+let currentPage = 1;
+let pageSize = 25;
+let totalPages = 1;
+let currentFilters = {};
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', function() {
+    loadUsers();
+    loadLogs();
+    loadStats();
+    
+    // 绑定筛选器事件
+    document.getElementById('operationTypeFilter').addEventListener('change', applyFilters);
+    // 初始化可搜索下拉数据
+    initOperationTypeSelect();
+    
+    // 确保页面加载时没有输入框自动获得焦点
+    setTimeout(() => {
+        if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+            document.activeElement.blur();
+        }
+    }, 100);
+    (function(){
+        const uf = document.getElementById('userFilter');
+        if (uf) uf.addEventListener('change', applyFilters);
+    })();
+    (function(){
+        const dr = document.getElementById('dateRange');
+        if (dr) {
+            dr.addEventListener('keyup', function(e){ if (e.key === 'Enter') applyFilters(); });
+            // 首次聚焦时按需加载 Litepicker，加载完成后初始化
+            var pickerBound = false;
+            function bindPicker() {
+                if (pickerBound || !window.Litepicker) { return; }
+                pickerBound = true;
+                const picker = new Litepicker({
+                    element: dr,
+                    singleMode: false,
+                    numberOfMonths: 2,
+                    numberOfColumns: 2,
+                    autoApply: true,
+                    format: 'YYYY-MM-DD',
+                    tooltipText: {
+                        one: '天',
+                        other: '天'
+                    },
+                    lang: 'zh-CN'
+                });
+                picker.on('selected', (date1, date2) => {
+                    if (date1 && date2) {
+                        dr.value = `${date1.format('YYYY-MM-DD')} ~ ${date2.format('YYYY-MM-DD')}`;
+                    }
+                    applyFilters();
+                });
+            }
+            dr.addEventListener('focus', function() {
+                if (window.Litepicker) { bindPicker(); return; }
+                window.__bomLoadLitepicker().then(bindPicker).catch(function(e) {
+                    console.error('日期选择器加载失败:', e);
+                });
+            });
+        }
+    })();
+    const pageSizeSelect = document.getElementById('pageSizeSelect');
+    if (pageSizeSelect) {
+        pageSizeSelect.addEventListener('change', function() {
+            pageSize = parseInt(this.value, 10) || 10;
+            currentPage = 1;
+            loadLogs();
+        });
+    }
+
+    const logsPerPageSelect = document.getElementById('logsPerPageSelect');
+    if (logsPerPageSelect) {
+        logsPerPageSelect.value = String(pageSize);
+        logsPerPageSelect.addEventListener('change', function() {
+            pageSize = parseInt(this.value, 10) || 10;
+            currentPage = 1;
+            loadLogs();
+        });
+    }
+});
+
+// 加载用户列表
+async function loadUsers() {
+    try {
+        const userSelect = document.getElementById('userFilter');
+        if (!userSelect) return; // 页面无用户筛选器时跳过
+        const response = await fetch('/api/users');
+        const data = await response.json();
+        userSelect.innerHTML = '<option value="">全部用户</option>';
+        if (data.success && data.users) {
+            data.users.forEach(user => {
+                const option = document.createElement('option');
+                option.value = user.id;
+                option.textContent = user.username;
+                userSelect.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('加载用户列表失败:', error);
+    }
+}
+
+// 加载操作记录
+async function loadLogs() {
+    try {
+        const params = new URLSearchParams({
+            page: currentPage,
+            per_page: pageSize,
+            ...currentFilters
+        });
+        
+        const response = await fetch(`/api/operation_logs?${params}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            renderLogs(data.logs);
+            updatePagination(data.pagination);
+        } else {
+            showError('加载操作记录失败: ' + data.error);
+        }
+    } catch (error) {
+        console.error('加载操作记录失败:', error);
+        showError('加载操作记录失败');
+    }
+}
+
+// 渲染操作记录
+function renderLogs(logs) {
+    const container = document.getElementById('logsContainer');
+    
+    if (!logs || logs.length === 0) {
+        container.innerHTML = `
+            <div class="no-logs">
+                <i class="fas fa-clipboard-list"></i>
+                <h5>暂无操作记录</h5>
+                <p>当前筛选条件下没有找到操作记录</p>
+            </div>
+        `;
+        return;
+    }
+    
+    function formatInlineDetail(fp) {
+        if (!fp) return '';
+        const parts = String(fp).split('|');
+        if (parts.length < 5) return fp; // 原样回退
+        const v = (parts[0]||'').trim();
+        const p = (parts[1]||'').trim();
+        const lot = (parts[2]||'').trim();
+        const eo = (parts[3]||'').trim();
+        const qty = (parts[4]||'').trim();
+        const rmk = parts.slice(5).join('|').trim();
+        let s = `车种：${v}，品番：${p}，LOT：${lot}，EO：${eo}，数量：${qty}`;
+        if (rmk) s += `，备注：${rmk}`;
+        return s;
+    }
+
+    container.innerHTML = logs.map((log, idx) => {
+        const isBatchType = ['batch_delete_file', 'batch_add_product', 'batch_delete_product', 'add_product', 'update_product',
+            'batch_delete_vehicle_type', 'batch_freeze_file', 'batch_thaw_file', 'freeze_old_versions',
+            'upload_inbound', 'delete_inbound', 'export_inbound',
+            'delete_inventory_check', 'submit_inventory_check',
+            'submit_defective', 'delete_defective', 'export_defective'].includes(log.operation_type);
+        // 列表接口为了性能不再返回 file_path，这里按类型判断上传也允许查看明细（明细在弹窗内按需加载）
+        const isBatchUpload = (log.operation_type === 'upload_file');
+        const isBatchOp = isBatchType || isBatchUpload;
+        const detailBtn = isBatchOp ? `<button class="btn btn-sm btn-outline-secondary" style="border-color:#667eea;color:#667eea" onmouseover="this.style.backgroundColor='#667eea';this.style.color='#fff'" onmouseout="this.style.backgroundColor='';this.style.color='#667eea'" onclick="openDetailModal(${log.id}, '${escapeHtmlForAttr(log.operation_desc)}')">查看明细</button>` : '';
+        const inlineDetail = ''; // 列表不再内联展示明细，统一进入弹窗
+        return `
+        <div class="log-item ${getLogTypeClass(log.operation_type)}">
+            <div class="log-meta">
+                <span class="log-type ${getLogTypeClass(log.operation_type)}">${getOperationTypeName(log.operation_type)}</span>
+                <span class="log-time">${log.created_at}</span>
+            </div>
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="log-desc">${log.operation_desc}</div>
+                ${detailBtn}
+            </div>
+            <div class="log-details">
+                <span><i class="fas fa-user"></i> <strong>${log.username}</strong></span>
+                ${log.target_name ? `<span><i class=\"fas fa-tag\"></i> ${log.target_name}</span>` : ''}
+                ${log.ip_address ? `<span><i class=\"fas fa-globe\"></i> ${log.ip_address}</span>` : ''}
+                ${inlineDetail ? `<span><i class=\"fas fa-file\"></i> ${inlineDetail}</span>` : ''}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// 获取操作类型样式类
+function getLogTypeClass(operationType) {
+    const typeMap = {
+        'upload_file': 'upload',
+        'delete_file': 'delete',
+        'batch_delete_file': 'delete',
+        'download_file': 'download',
+        'download_result': 'download',
+        'file_compare': 'compare',
+        'add_user': 'user',
+        'delete_user': 'user',
+        'update_user': 'user',
+        'login': 'login',
+        'logout': 'login',
+        // 冻结/解冻
+        'freeze_file': 'delete', 'thaw_file': 'upload',
+        'batch_freeze_file': 'delete', 'batch_thaw_file': 'upload',
+        'freeze_old_versions': 'delete',
+        // 车种导入导出/批量
+        'batch_delete_vehicle_type': 'delete',
+        'import_vehicle_type': 'upload', 'export_vehicle_type': 'download',
+        // 资材入库
+        'upload_inbound': 'upload', 'save_inbound': 'upload',
+        'delete_inbound': 'delete', 'submit_inbound': 'upload',
+        'revoke_inbound': 'delete', 'export_inbound': 'download',
+        // 盘点
+        'save_inventory_team': 'user', 'delete_inventory_team': 'delete',
+        'sync_pno': 'upload', 'submit_inventory_check': 'upload',
+        'delete_inventory_check': 'delete',
+        // 不良品
+        'set_defective_access_mode': 'user', 'submit_defective': 'upload',
+        'delete_defective': 'delete', 'export_defective': 'download',
+        // RBAC
+        'add_role': 'user', 'update_role': 'user', 'delete_role': 'user',
+        'set_role_permissions': 'user', 'set_user_roles': 'user', 'set_user_overrides': 'user'
+    };
+    return typeMap[operationType] || 'user';
+}
+
+// 获取操作类型显示名称
+function getOperationTypeName(operationType) {
+    const nameMap = {
+        'upload_file': '文件上传',
+        'delete_file': '文件删除',
+        'batch_delete_file': '批量删除',
+        'download_file': '文件下载',
+        'download_result': '结果下载',
+        'file_compare': '文件对比',
+        'add_user': '添加用户',
+        'delete_user': '删除用户',
+        'update_user': '更新用户',
+        'enable_user': '启用用户',
+        'disable_user': '停用用户',
+        'delete_permission': '删除权限',
+        'add_vehicle_type': '添加车种',
+        'delete_vehicle_type': '删除车种',
+        'update_vehicle_type': '更新车种',
+        'batch_add_vehicle_type': '批量添加车种',
+        'batch_delete_vehicle_type': '批量删除车种',
+        'import_vehicle_type': '导入车种',
+        'export_vehicle_type': '导出车种',
+        'add_product': '添加成品',
+        'delete_product': '删除成品',
+        'update_product': '更新成品',
+        'batch_add_product': '批量添加成品',
+        'batch_delete_product': '批量删除成品',
+        'login': '用户登录',
+        'logout': '用户登出',
+        'change_password': '修改密码',
+        'reset_password': '重置密码',
+        'update_permissions': '更新权限',
+        // 冻结/解冻
+        'freeze_file': '冻结文件',
+        'thaw_file': '解冻文件',
+        'batch_freeze_file': '批量冻结',
+        'batch_thaw_file': '批量解冻',
+        'freeze_old_versions': '冻结旧版本',
+        // 资材入库
+        'upload_inbound': '上传入库明细',
+        'save_inbound': '保存入库明细',
+        'delete_inbound': '删除入库明细',
+        'submit_inbound': '提交入库',
+        'revoke_inbound': '撤销入库',
+        'export_inbound': '导出入库明细',
+        // 盘点
+        'save_inventory_team': '保存盘点班组',
+        'delete_inventory_team': '删除盘点班组',
+        'sync_pno': '同步品番字典',
+        'submit_inventory_check': '提交盘点实查',
+        'delete_inventory_check': '删除盘点记录',
+        // 不良品
+        'set_defective_access_mode': '设置不良品访问',
+        'submit_defective': '提交不良品',
+        'delete_defective': '删除不良品',
+        'export_defective': '导出不良品',
+        // RBAC
+        'add_group': '新增权限组',
+        'update_group': '更新权限组',
+        'delete_group': '删除权限组',
+        'set_group_permissions': '设置权限组权限',
+        'set_user_groups': '设置用户权限组',
+        'set_user_overrides': '设置用户权限'
+    };
+    return nameMap[operationType] || operationType;
+}
+
+// 更新分页
+function updatePagination(pagination) {
+    const paginationList = document.getElementById('logsPaginationList');
+    const paginationInfo = document.getElementById('logsPaginationInfo');
+    totalPages = pagination.total_pages;
+    
+    if (!paginationList || !paginationInfo) return;
+    
+    // 渲染信息
+    const startItem = (currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(currentPage * pageSize, pagination.total);
+    paginationInfo.innerHTML = `共 ${pagination.total} 条记录，当前第 ${pagination.page} 页 / 共 ${pagination.pages} 页（显示第 ${startItem}-${endItem} 条）`;
+    
+    // 渲染分页条
+    paginationList.innerHTML = '';
+    
+    // 上一页
+    const prevLi = document.createElement('li');
+    prevLi.className = `page-item ${pagination.has_prev ? '' : 'disabled'}`;
+    prevLi.innerHTML = `<a class="page-link" href="#" onclick="${pagination.has_prev ? `goToPage(${pagination.page - 1})` : 'return false;'}" aria-label="上一页"><span aria-hidden="true">&laquo;</span></a>`;
+    paginationList.appendChild(prevLi);
+    
+    // 页码逻辑（参考其他页面）
+    const leftEdge = 1, rightEdge = 1, leftCurrent = 2, rightCurrent = 2;
+    const startPage = Math.max(1, pagination.page - leftCurrent);
+    const endPage = Math.min(pagination.pages, pagination.page + rightCurrent);
+    
+    if (startPage > 1) {
+        const first = document.createElement('li');
+        first.className = 'page-item';
+        first.innerHTML = `<a class="page-link" href="#" onclick="goToPage(1)">1</a>`;
+        paginationList.appendChild(first);
+        if (startPage > 2) {
+            const ellipsis = document.createElement('li');
+            ellipsis.className = 'page-item disabled';
+            ellipsis.innerHTML = '<span class="page-link">...</span>';
+            paginationList.appendChild(ellipsis);
+        }
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+        const pageLi = document.createElement('li');
+        pageLi.className = `page-item ${i === pagination.page ? 'active' : ''}`;
+        pageLi.innerHTML = `<a class="page-link" href="#" onclick="goToPage(${i})">${i}</a>`;
+        paginationList.appendChild(pageLi);
+    }
+    
+    if (endPage < pagination.pages) {
+        if (endPage < pagination.pages - 1) {
+            const ellipsis = document.createElement('li');
+            ellipsis.className = 'page-item disabled';
+            ellipsis.innerHTML = '<span class="page-link">...</span>';
+            paginationList.appendChild(ellipsis);
+        }
+        const last = document.createElement('li');
+        last.className = 'page-item';
+        last.innerHTML = `<a class="page-link" href="#" onclick="goToPage(${pagination.pages})">${pagination.pages}</a>`;
+        paginationList.appendChild(last);
+    }
+    
+    // 下一页
+    const nextLi = document.createElement('li');
+    nextLi.className = `page-item ${pagination.has_next ? '' : 'disabled'}`;
+    nextLi.innerHTML = `<a class="page-link" href="#" onclick="${pagination.has_next ? `goToPage(${pagination.page + 1})` : 'return false;'}" aria-label="下一页"><span aria-hidden="true">&raquo;</span></a>`;
+    paginationList.appendChild(nextLi);
+}
+
+// 跳转到指定页面
+function goToPage(page) {
+    currentPage = page;
+    loadLogs();
+}
+
+// 跳转到指定页（底部分页）
+function jumpToPage() {
+    const input = document.getElementById('logsJumpPage');
+    if (!input) return;
+    const val = parseInt(input.value, 10);
+    if (!isNaN(val) && val >= 1 && val <= totalPages) {
+        goToPage(val);
+    }
+}
+
+// 应用筛选
+function applyFilters() {
+    const opEl = document.getElementById('operationTypeFilter');
+    const userEl = document.getElementById('userFilter');
+    const rangeEl = document.getElementById('dateRange');
+    let start_date = '';
+    let end_date = '';
+    if (rangeEl && rangeEl.value) {
+        const raw = rangeEl.value.trim();
+        // 使用正则从字符串中提取两个 YYYY-MM-DD 日期，避免被 '-' 误分割
+        const m = raw.match(/(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/);
+        if (m && m[1] && m[2]) {
+            start_date = m[1];
+            end_date = m[2];
+        } else {
+            // 备用：仅一个日期时，作为开始日期
+            const single = raw.match(/(\d{4}-\d{2}-\d{2})/);
+            if (single) start_date = single[1];
+        }
+    }
+    currentFilters = {
+        operation_type: opEl ? opEl.value : '',
+        user_id: userEl ? userEl.value : '',
+        start_date,
+        end_date
+    };
+    
+    // 清除空值
+    Object.keys(currentFilters).forEach(key => {
+        if (!currentFilters[key]) {
+            delete currentFilters[key];
+        }
+    });
+    
+    currentPage = 1;
+    loadLogs();
+}
+
+// 清除筛选
+function clearFilters() {
+    const opEl = document.getElementById('operationTypeFilter');
+    const userEl = document.getElementById('userFilter');
+    const rangeEl = document.getElementById('dateRange');
+    if (opEl) opEl.value = '';
+    if (userEl) userEl.value = '';
+    if (rangeEl) rangeEl.value = '';
+    // 同步自定义“操作类型”控件
+    const optSearch = document.getElementById('optypeSearch');
+    const optDropdown = document.getElementById('optypeDropdown');
+    try { if (opEl) opEl.selectedIndex = 0; } catch(e) {}
+    if (optSearch) optSearch.value = '全部类型';
+    if (optDropdown) optDropdown.style.display = 'none';
+    
+    currentFilters = {};
+    currentPage = 1;
+    loadLogs();
+}
+
+// 自定义“操作类型”选择器：搜索+固定高度滚动
+function initOperationTypeSelect() {
+  const hiddenSelect = document.getElementById('operationTypeFilter');
+  const wrapper = document.getElementById('optypeWrapper');
+  const search = document.getElementById('optypeSearch');
+  const clearBtn = document.getElementById('optypeClear');
+  const dropdown = document.getElementById('optypeDropdown');
+  if (!hiddenSelect || !wrapper || !search || !dropdown) return;
+
+  const allOptions = Array.from(hiddenSelect.options).map(o => ({ value: o.value, label: o.text }));
+  let currentIndex = -1;
+
+  const getLabelByValue = (val) => {
+    const found = allOptions.find(o => o.value === val);
+    return found ? found.label : '';
+  };
+
+  function render(list, show) {
+    if (!list.length) {
+      dropdown.innerHTML = '<div class="optype-empty">无匹配项</div>';
+      dropdown.style.display = show ? 'block' : 'none';
+      return;
+    }
+    dropdown.innerHTML = list.map((opt, i) => `<div class="optype-item${i===currentIndex?' active':''}" data-value="${opt.value}">${opt.label}</div>`).join('');
+    dropdown.style.display = show ? 'block' : 'none';
+    // 绑定点击
+    Array.from(dropdown.querySelectorAll('.optype-item')).forEach((el, i) => {
+      el.onclick = () => selectValue(list[i]);
+    });
+  }
+
+  function filterAndRender(show) {
+    const q = search.value.trim().toLowerCase();
+    const filtered = q ? allOptions.filter(o => o.label.toLowerCase().includes(q)) : allOptions;
+    currentIndex = -1;
+    render(filtered, !!show);
+  }
+
+  function selectValue(opt) {
+    // 同步隐藏select值
+    hiddenSelect.value = opt.value;
+    try { hiddenSelect.selectedIndex = allOptions.findIndex(o => o.value === opt.value); } catch(e) {}
+    // 在输入框中显示选择文本
+    search.value = opt.label;
+    dropdown.style.display = 'none';
+    applyFilters();
+  }
+
+  // 初始渲染与默认显示
+  filterAndRender(false);
+  const initialLabel = getLabelByValue(hiddenSelect.value);
+  if (initialLabel) search.value = initialLabel; else search.value = '全部类型';
+
+  // 事件
+  search.addEventListener('input', () => {
+    // 如果点了浏览器原生的清除(x)，值会变成空，这里直接重置为“全部类型”并且不展开下拉
+    if (search.value.trim() === '') {
+      hiddenSelect.value = '';
+      try { hiddenSelect.selectedIndex = 0; } catch(e) {}
+      search.value = '全部类型';
+      dropdown.style.display = 'none';
+      applyFilters();
+      return;
+    }
+    filterAndRender(true);
+  });
+  search.addEventListener('focus', () => {
+    if (search.value === '全部类型') search.value = '';
+    filterAndRender(true);
+  });
+  
+  // 防止页面加载时自动聚焦到搜索框
+  search.blur();
+  document.addEventListener('click', (e) => {
+    if (!wrapper.contains(e.target)) dropdown.style.display = 'none';
+  });
+  search.addEventListener('keydown', (e) => {
+    const items = Array.from(dropdown.querySelectorAll('.optype-item'));
+    if (!items.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      currentIndex = Math.min(currentIndex + 1, items.length - 1);
+      items.forEach((el, i) => el.classList.toggle('active', i === currentIndex));
+      items[currentIndex].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      currentIndex = Math.max(currentIndex - 1, 0);
+      items.forEach((el, i) => el.classList.toggle('active', i === currentIndex));
+      items[currentIndex].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (currentIndex >= 0) {
+        const q = search.value.trim().toLowerCase();
+        const list = q ? allOptions.filter(o => o.label.toLowerCase().includes(q)) : allOptions;
+        selectValue(list[currentIndex]);
+      }
+    }
+  });
+
+  // 清空按钮
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      // 重置到“全部类型”
+      hiddenSelect.value = '';
+      try { hiddenSelect.selectedIndex = 0; } catch(e) {}
+      search.value = '全部类型';
+      currentIndex = -1;
+      dropdown.style.display = 'none';
+      filterAndRender(false);
+      applyFilters();
+      // 不自动聚焦，避免弹出下拉
+    };
+  }
+}
+
+// 刷新日志
+function refreshLogs() {
+    loadLogs();
+    loadStats();
+}
+
+// 切换明细显示/隐藏
+function toggleDetail(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// 加载统计信息
+async function loadStats() {
+    try {
+        const response = await fetch('/api/operation_logs/stats');
+        const data = await response.json();
+        
+        if (data.success) {
+            renderStats(data.stats);
+        }
+    } catch (error) {
+        console.error('加载统计信息失败:', error);
+    }
+}
+
+// 渲染统计信息
+function renderStats(stats) {
+    const container = document.getElementById('statsCards');
+    
+    container.innerHTML = `
+        <div class="stat-card total">
+            <div class="stat-number">${stats.total_operations || 0}</div>
+            <div class="stat-label">总操作数</div>
+        </div>
+        <div class="stat-card today">
+            <div class="stat-number">${stats.today_operations || 0}</div>
+            <div class="stat-label">今日操作</div>
+        </div>
+        <div class="stat-card upload">
+            <div class="stat-number">${stats.upload_count || 0}</div>
+            <div class="stat-label">文件上传</div>
+        </div>
+        <div class="stat-card delete">
+            <div class="stat-number">${stats.delete_count || 0}</div>
+            <div class="stat-label">文件删除</div>
+        </div>
+    `;
+}
+
+// 显示错误信息
+function showError(message) {
+    const container = document.getElementById('logsContainer');
+    container.innerHTML = `
+        <div class="alert alert-danger">
+            <i class="fas fa-exclamation-triangle"></i> ${message}
+        </div>
+    `;
+}
+
+// 详情弹窗 DOM
+const detailModalHtml = `
+<div class="modal fade" id="detailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">批次明细</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-0">
+        <!-- 固定顶部搜索区域 -->
+        <div class="bg-white border-bottom p-3" style="position: sticky; top: 0; z-index: 10;">
+          <div class="d-flex align-items-center mb-2">
+            <input id="detailSearchInput" type="search" class="form-control form-control-sm" placeholder="搜索文件名...">
+            <button class="btn btn-sm btn-primary ms-2" id="detailSearchBtn">搜索</button>
+            <button class="btn btn-sm btn-outline-secondary ms-2" id="detailResetBtn">清空</button>
+          </div>
+          <div class="small text-muted mb-2" id="detailSummary"></div>
+        </div>
+        <!-- 可滚动的内容区域 -->
+        <div style="max-height: 400px; overflow-y: auto;">
+          <ul id="detailList" class="list-group list-group-flush"></ul>
+        </div>
+      </div>
+      <div class="modal-footer w-100 d-block">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <label class="me-2 mb-0">每页:</label>
+            <select id="detailPerPage" class="form-select form-select-sm" style="width:80px; display:inline-block;">
+              <option value="10">10</option>
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <ul class="pagination pagination-sm mb-0" id="detailPagination"></ul>
+          <div class="d-flex align-items-center">
+            <label class="me-2 mb-0">跳转至:</label>
+            <input type="number" id="detailJump" class="form-control form-control-sm" style="width:70px;" min="1" value="1">
+            <button class="btn btn-sm btn-outline-primary ms-2" id="detailJumpBtn">前往</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+// 插入到页面尾部（只插入一次）
+if (!document.getElementById('detailModal')) {
+  document.body.insertAdjacentHTML('beforeend', detailModalHtml);
+}
+
+let detailState = { logId: null, q: '', page: 1, perPage: 25, pages: 1, total: 0, forceStructured: false };
+let detailModalInstance = null;
+
+function escapeHtmlForAttr(str) {
+  if (!str) return '';
+  return String(str).replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+async function openDetailModal(logId, titleText) {
+  const text = String(titleText || '');
+  const shouldStructured = /(批量添加成品|批量删除成品|添加成品|删除成品|Excel导入成品)/.test(text);
+  detailState = { logId, q: '', page: 1, perPage: 25, pages: 1, total: 0, forceStructured: shouldStructured };
+  const modalEl = document.getElementById('detailModal');
+  // 去掉括号及其中内容，只保留前缀
+  const pureTitle = (titleText || '批次明细').replace(/（.*?）|\(.*?\)/g, '').trim();
+  modalEl.querySelector('.modal-title').textContent = pureTitle || '批次明细';
+  bindDetailControls();
+  await fetchDetailPage();
+  // 兼容无 Bootstrap JS 的情况
+  if (window.bootstrap && bootstrap.Modal) {
+    if (!detailModalInstance) {
+      detailModalInstance = new bootstrap.Modal(modalEl);
+    }
+    detailModalInstance.show();
+  } else {
+    // 手动展示
+    modalEl.style.display = 'block';
+    modalEl.classList.add('show');
+    document.body.classList.add('modal-open');
+    // 背景遮罩
+    if (!document.getElementById('detailBackdrop')) {
+      const backdrop = document.createElement('div');
+      backdrop.id = 'detailBackdrop';
+      backdrop.className = 'modal-backdrop fade show';
+      document.body.appendChild(backdrop);
+    }
+    // 关闭按钮兼容
+    const closeBtn = modalEl.querySelector('[data-bs-dismiss="modal"]');
+    if (closeBtn && !closeBtn.__bindManualClose) {
+      closeBtn.__bindManualClose = true;
+      closeBtn.addEventListener('click', function() {
+        modalEl.style.display = 'none';
+        modalEl.classList.remove('show');
+        const bd = document.getElementById('detailBackdrop');
+        if (bd) bd.remove();
+        document.body.classList.remove('modal-open');
+      });
+    }
+  }
+}
+
+function bindDetailControls() {
+  const per = document.getElementById('detailPerPage');
+  per.value = String(detailState.perPage);
+  per.onchange = async function() {
+    detailState.perPage = parseInt(this.value, 10) || 25;
+    detailState.page = 1;
+    await fetchDetailPage();
+  }
+  document.getElementById('detailSearchBtn').onclick = async function() {
+    const q = document.getElementById('detailSearchInput').value.trim();
+    detailState.q = q;
+    detailState.page = 1;
+    await fetchDetailPage();
+  }
+  const resetBtn = document.getElementById('detailResetBtn');
+  if (resetBtn) {
+    resetBtn.onclick = async function() {
+      const input = document.getElementById('detailSearchInput');
+      if (input) input.value = '';
+      detailState.q = '';
+      detailState.page = 1;
+      await fetchDetailPage();
+    }
+  }
+  document.getElementById('detailJumpBtn').onclick = async function() {
+    const v = parseInt(document.getElementById('detailJump').value, 10);
+    if (!isNaN(v) && v >= 1 && v <= detailState.pages) {
+      detailState.page = v;
+      await fetchDetailPage();
+    }
+  }
+}
+
+async function fetchDetailPage() {
+  const { logId, page, perPage, q } = detailState;
+  
+  // 先获取第一页数据来判断操作类型
+  let params = new URLSearchParams({ page: 1, per_page: 25 });
+  if (q) params.set('q', q);
+  
+  const resp = await fetch(`/api/operation_logs/${logId}/details?${params}`);
+  const data = await resp.json();
+  
+  // 若为"Excel导入成品"描述，强制当作成品批量添加类渲染（带表头）
+  if (data && data.operation_desc && /Excel导入成品/.test(String(data.operation_desc))) {
+    data.operation_type = 'batch_add_product';
+  }
+  
+  if (!data.success) {
+    document.getElementById('detailList').innerHTML = '<li class="list-group-item text-danger">加载明细失败</li>';
+    return;
+  }
+  
+  // 检查是否为文件上传类型，如果是则重新获取所有数据
+  const isFileUpload = /upload_file|文件上传|批量上传/.test(String(data.operation_type || '')) || 
+                      /upload_file|文件上传|批量上传/.test(String(data.operation_desc || ''));
+  
+  if (isFileUpload) {
+    // 文件上传类型：一次性获取全部数据，不分页。
+    // 性能优化：使用 all=1，避免先请求 per_page=25 判断类型、再请求 per_page=10000 拉全量的两次往返。
+    params = new URLSearchParams({ page: 1, all: '1' });
+    if (q) params.set('q', q);
+    const resp2 = await fetch(`/api/operation_logs/${logId}/details?${params}`);
+    const data2 = await resp2.json();
+    
+    if (data2.success) {
+      renderDetail(data2);
+      return;
+    }
+  }
+  
+  // 其他类型：使用原始数据
+  renderDetail(data);
+}
+
+function renderDetail(data) {
+  const list = document.getElementById('detailList');
+  const summary = document.getElementById('detailSummary');
+  const pag = document.getElementById('detailPagination');
+  const jump = document.getElementById('detailJump');
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  detailState.pages = data.pagination.pages;
+  detailState.total = data.pagination.total;
+
+  // 获取模态框标题文本
+  const modalTitleText = (document.querySelector('#detailModal .modal-title')?.textContent || '');
+  
+  // 文件上传相关变量（需要在函数作用域中定义）
+  let successFiles = [];
+  let duplicateFiles = [];
+  let successRowsHtml = '';
+  let duplicateRowsHtml = '';
+
+  // 检查是否为文件上传类型
+  const isFileUploadForPagination = /upload_file|文件上传|批量上传/.test(String(data.operation_type || '')) || 
+                                   /upload_file|文件上传|批量上传/.test(String(data.operation_desc || '')) ||
+                                   /upload_file|文件上传|批量上传/.test(String(modalTitleText));
+  
+  if (isFileUploadForPagination) {
+    // 文件上传类型：显示所有文件，不分页
+    summary.textContent = `共 ${data.pagination.total} 条记录` + (detailState.q ? `，包含 "${detailState.q}" 的有 ${data.items.length} 条` : '');
+    jump.value = '1';
+  } else {
+    // 其他类型：正常分页显示
+    summary.textContent = `共 ${data.pagination.total} 条记录` + (detailState.q ? `，包含 "${detailState.q}" 的有 ${data.items.length} 条（本页）` : '');
+    jump.value = String(data.pagination.page);
+  }
+
+  if (!data.items || data.items.length === 0) {
+    list.innerHTML = '<li class="list-group-item text-muted">暂无数据</li>';
+  } else {
+    const base = (data.pagination.page - 1) * data.pagination.per_page;
+    // 额外兜底：根据后端返回的 operation_type/operation_desc 强制结构化
+    const descForce = /Excel导入成品|批量添加成品|批量删除成品|添加成品|删除成品|文件上传|批量上传/.test(String(data.operation_desc || ''));
+    const typeForce = /batch_add_product|batch_delete_product|add_product|delete_product|upload_file|batch_upload/.test(String(data.operation_type || ''));
+    const titleForce = /Excel导入成品|批量添加成品|批量删除成品|添加成品|删除成品|文件上传|批量上传/.test(String(modalTitleText));
+    // 强制文件上传操作使用分组格式
+    const isFileUploadType = /upload_file|文件上传|批量上传/.test(String(data.operation_type || '')) || 
+                            /upload_file|文件上传|批量上传/.test(String(data.operation_desc || '')) ||
+                            /upload_file|文件上传|批量上传/.test(String(modalTitleText));
+    
+    const hasStructured = detailState.forceStructured || descForce || typeForce || titleForce || isFileUploadType || data.items.some(it => {
+      const s = String(it);
+      if (!s.includes('|')) return false;
+      const parts = s.split('|');
+      // 放宽：4 列起（车种/品番/LOT/数量 或 EO/数量），均按表格渲染
+      return parts.length >= 4;
+    });
+    
+    // 强制文件上传操作使用分组格式
+    if (isFileUploadType) {
+      console.log('强制使用文件上传分组格式');
+      console.log('isFileUploadType:', isFileUploadType);
+      console.log('data.operation_type:', data.operation_type);
+      console.log('data.operation_desc:', data.operation_desc);
+      console.log('modalTitleText:', modalTitleText);
+      
+      // 直接执行文件上传分组渲染逻辑
+      const isFileUpload = true; // 强制为文件上传类型
+      const isUpdateProduct = false; // 不是更新成品类型
+      
+      // 文件上传明细表头 - 分组显示
+      const headerHtml = `
+        <div class="file-upload-group success-group">
+          <div class="group-header">
+            <div>
+              <i class="fas fa-check-circle me-2"></i> 成功上传文件
+            </div>
+            <span class="badge bg-success" id="successCount">0</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm mb-0" style="table-layout:fixed;width:100%;">
+              <colgroup>
+                <col style="width: 60px;" />
+                <col style="width: auto;" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th class="text-center">#</th>
+                  <th class="text-center">文件名</th>
+                </tr>
+              </thead>
+              <tbody id="successFilesTable">
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="file-upload-group duplicate-group">
+          <div class="group-header">
+            <div>
+              <i class="fas fa-exclamation-triangle me-2"></i> 重复过滤文件
+            </div>
+            <span class="badge bg-warning" id="duplicateCount">0</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm mb-0" style="table-layout:fixed;width:100%;">
+              <colgroup>
+                <col style="width: 60px;" />
+                <col style="width: auto;" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th class="text-center">#</th>
+                  <th class="text-center">文件名</th>
+                </tr>
+              </thead>
+              <tbody id="duplicateFilesTable">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      
+      // 文件上传明细行格式 - 分组渲染
+      successFiles = [];
+      duplicateFiles = [];
+      
+      data.items.forEach((it, i) => {
+        const fileStr = String(it);
+        const fileName = fileStr.replace(/^[✅⚠️]\s*/, ''); // 移除图标前缀
+        
+        if (fileStr.includes('✅')) {
+          successFiles.push({
+            index: successFiles.length + 1,
+            fileName: fileName
+          });
+        } else if (fileStr.includes('⚠️')) {
+          duplicateFiles.push({
+            index: duplicateFiles.length + 1,
+            fileName: fileName
+          });
+        }
+      });
+      
+      // 调试信息
+      console.log('文件上传渲染调试:');
+      console.log('data.items数量:', data.items.length);
+      console.log('前5个items:', data.items.slice(0, 5));
+      console.log('所有items:', data.items);
+      console.log('successFiles数量:', successFiles.length);
+      console.log('duplicateFiles数量:', duplicateFiles.length);
+      console.log('successFiles:', successFiles);
+      console.log('duplicateFiles:', duplicateFiles);
+      
+      // 渲染成功文件表格
+      successRowsHtml = successFiles.map(file => `
+        <tr>
+          <td class="text-center">${file.index}</td>
+          <td class="text-left text-success">
+            <i class="fas fa-check-circle me-2"></i>${esc(file.fileName)}
+          </td>
+        </tr>
+      `).join('');
+      
+      // 渲染重复文件表格
+      duplicateRowsHtml = duplicateFiles.map(file => `
+        <tr>
+          <td class="text-center">${file.index}</td>
+          <td class="text-left text-warning">
+            <i class="fas fa-exclamation-triangle me-2"></i>${esc(file.fileName)}
+          </td>
+        </tr>
+      `).join('');
+      
+      // 文件上传使用分组显示，不需要传统的表格结构
+      list.innerHTML = `<li class="list-group-item p-0"><div class="file-upload-container" style="max-height: 400px; overflow-y: auto; overflow-x: hidden; position: relative;">${headerHtml}</div></li>`;
+      
+      // 现在表格元素已经创建，可以填充内容了
+      // 更新计数徽章
+      const successCountEl = document.getElementById('successCount');
+      const duplicateCountEl = document.getElementById('duplicateCount');
+      if (successCountEl) successCountEl.textContent = successFiles.length;
+      if (duplicateCountEl) duplicateCountEl.textContent = duplicateFiles.length;
+      
+      // 填充表格内容
+      const successTableEl = document.getElementById('successFilesTable');
+      const duplicateTableEl = document.getElementById('duplicateFilesTable');
+      
+      console.log('表格元素调试:');
+      console.log('successTableEl:', successTableEl);
+      console.log('duplicateTableEl:', duplicateTableEl);
+      console.log('successRowsHtml长度:', successRowsHtml.length);
+      console.log('duplicateRowsHtml长度:', duplicateRowsHtml.length);
+      
+      if (successTableEl) {
+        successTableEl.innerHTML = successRowsHtml;
+        console.log('成功文件表格已填充');
+      } else {
+        console.log('未找到成功文件表格元素');
+      }
+      
+      if (duplicateTableEl) {
+        duplicateTableEl.innerHTML = duplicateRowsHtml;
+        console.log('重复文件表格已填充');
+      } else {
+        console.log('未找到重复文件表格元素');
+      }
+      
+      // 添加JavaScript固定效果
+      setTimeout(() => {
+        const container = document.querySelector('.file-upload-container');
+        if (container) {
+          container.addEventListener('scroll', function() {
+            const groups = container.querySelectorAll('.file-upload-group');
+            groups.forEach(group => {
+              const header = group.querySelector('.group-header');
+              const rect = group.getBoundingClientRect();
+              const containerRect = container.getBoundingClientRect();
+              
+              // 如果分组标题滚动到容器顶部，就固定它
+              if (rect.top <= containerRect.top && rect.bottom > containerRect.top + 60) {
+                header.style.position = 'fixed';
+                header.style.top = '0px';
+                header.style.left = containerRect.left + 'px';
+                header.style.width = (containerRect.width - 2) + 'px';
+                header.style.zIndex = '1000';
+                header.style.margin = '0';
+                header.style.borderRadius = '0';
+              } else {
+                header.style.position = 'relative';
+                header.style.top = 'auto';
+                header.style.left = 'auto';
+                header.style.width = 'auto';
+                header.style.zIndex = 'auto';
+                header.style.margin = '';
+                header.style.borderRadius = '';
+              }
+            });
+          });
+        }
+      }, 100);
+      
+    } else if (!hasStructured) {
+      console.log('使用传统列表格式');
+      list.innerHTML = data.items.map((it, i) => `<li class="list-group-item"><span class="index-badge">${base + i + 1}</span>${it}</li>`).join('');
+    } else {
+      // 判断是否为文件上传类型，使用不同的表头
+      const isFileUpload = /upload_file|文件上传|批量上传/.test(String(data.operation_type || '')) || 
+                          /upload_file|文件上传|批量上传/.test(String(data.operation_desc || '')) ||
+                          /upload_file|文件上传|批量上传/.test(String(modalTitleText));
+      
+      const isUpdateProduct = /update_product|更新成品/.test(String(data.operation_type || '')) ||
+                              /更新成品/.test(String(data.operation_desc || '')) ||
+                              /更新成品/.test(String(modalTitleText));
+      
+      let headerHtml;
+      if (isFileUpload) {
+        // 文件上传明细表头 - 分组显示
+        headerHtml = `
+          <div class="file-upload-group success-group">
+            <div class="group-header">
+              <div>
+                <i class="fas fa-check-circle me-2"></i> 成功上传文件
+              </div>
+              <span class="badge bg-success" id="successCount">0</span>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm mb-0" style="table-layout:fixed;width:100%;">
+                <colgroup>
+                  <col style="width: 60px;" />
+                  <col style="width: auto;" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="text-center">#</th>
+                    <th class="text-center">文件名</th>
+                  </tr>
+                </thead>
+                <tbody id="successFilesTable">
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="file-upload-group duplicate-group">
+            <div class="group-header">
+              <div>
+                <i class="fas fa-exclamation-triangle me-2"></i> 重复过滤文件
+              </div>
+              <span class="badge bg-warning" id="duplicateCount">0</span>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm mb-0" style="table-layout:fixed;width:100%;">
+                <colgroup>
+                  <col style="width: 60px;" />
+                  <col style="width: auto;" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="text-center">#</th>
+                    <th class="text-center">文件名</th>
+                  </tr>
+                </thead>
+                <tbody id="duplicateFilesTable">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      } else if (!isUpdateProduct) {
+        // 成品明细表头
+        headerHtml = `
+          <table class="table table-sm mb-0" style="table-layout:fixed;width:100%;">
+            <colgroup>
+              <col style="width: 50px;" />
+              <col style="width: 150px;" />
+              <col style="width: 160px;" />
+              <col style="width: 120px;" />
+              <col style="width: 80px;" />
+              <col style="width: 80px;" />
+            </colgroup>
+            <thead style="position: sticky; top: 0; background-color: #f8f9fa; z-index: 10; border-bottom: 2px solid #dee2e6;">
+              <tr>
+                <th class="text-center">#</th>
+                <th class="text-center">车种</th>
+                <th class="text-center">品番</th>
+                <th class="text-center">LOT</th>
+                <th class="text-center">EO</th>
+                <th class="text-center">数量</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+      } else {
+        // 更新成品：更清晰的两段展示（当前值 + 变更表）
+        // 先渲染“当前值”表
+        const headerStr = String(data.items[0] || '');
+        const headParts = headerStr.split('|');
+        const v = (headParts[0] || '').trim();
+        const p = (headParts[1] || '').trim();
+        const lot = (headParts[2] || '').trim();
+        const eo = (headParts[3] || '').trim();
+        const qty = (headParts[4] || '').trim();
+        const currentHtml = `
+          <div class="mb-2">
+            <div class="small text-muted mb-1">当前值</div>
+            <table class="table table-sm mb-0" style="table-layout:fixed;width:100%;">
+              <colgroup>
+                <col style="width: 50px;" />
+                <col style="width: 150px;" />
+                <col style="width: 160px;" />
+                <col style="width: 120px;" />
+                <col style="width: 80px;" />
+                <col style="width: 80px;" />
+              </colgroup>
+              <thead style="position: sticky; top: 0; background-color: #f8f9fa; z-index: 10; border-bottom: 2px solid #dee2e6;">
+                <tr>
+                  <th class="text-center">#</th>
+                  <th class="text-center">车种</th>
+                  <th class="text-center">品番</th>
+                  <th class="text-center">LOT</th>
+                  <th class="text-center">EO</th>
+                  <th class="text-center">数量</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="text-center">1</td>
+                  <td class="text-center">${esc(v)}</td>
+                  <td class="text-center">${esc(p)}</td>
+                  <td class="text-center">${esc(lot)}</td>
+                  <td class="text-center">${esc(eo)}</td>
+                  <td class="text-center">${esc(qty)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        `;
+        // 再渲染“变更明细”表
+        headerHtml = currentHtml + `
+          <div class="mt-2">
+            <div class="small text-muted mb-1">变更明细</div>
+            <table class="table table-sm mb-0" style="table-layout:fixed;width:100%;">
+              <colgroup>
+                <col style=\"width: 50px;\" />
+                <col style=\"width: 180px;\" />
+                <col style=\"width: auto;\" />
+                <col style=\"width: auto;\" />
+              </colgroup>
+              <thead style="position: sticky; top: 0; background-color: #f8f9fa; z-index: 10; border-bottom: 2px solid #dee2e6;">
+                <tr>
+                  <th class="text-center">#</th>
+                  <th class="text-center">字段</th>
+                  <th class="text-center">变更前</th>
+                  <th class="text-center">变更后</th>
+                </tr>
+              </thead>
+              <tbody>
+        `;
+      }
+      let rowsHtml;
+      if (isFileUpload) {
+        // 文件上传明细行格式 - 分组渲染
+        successFiles = [];
+        duplicateFiles = [];
+        
+        data.items.forEach((it, i) => {
+          const fileStr = String(it);
+          const fileName = fileStr.replace(/^[✅⚠️]\s*/, ''); // 移除图标前缀
+          
+          if (fileStr.includes('✅')) {
+            successFiles.push({
+              index: successFiles.length + 1,
+              fileName: fileName
+            });
+          } else if (fileStr.includes('⚠️')) {
+            duplicateFiles.push({
+              index: duplicateFiles.length + 1,
+              fileName: fileName
+            });
+          }
+        });
+        
+        // 调试信息
+        console.log('文件上传渲染调试:');
+        console.log('data.items数量:', data.items.length);
+        console.log('前5个items:', data.items.slice(0, 5));
+        console.log('所有items:', data.items);
+        console.log('successFiles数量:', successFiles.length);
+        console.log('duplicateFiles数量:', duplicateFiles.length);
+        console.log('successFiles:', successFiles);
+        console.log('duplicateFiles:', duplicateFiles);
+        
+        // 渲染成功文件表格
+        successRowsHtml = successFiles.map(file => `
+          <tr>
+            <td class="text-center">${file.index}</td>
+            <td class="text-left text-success">
+              <i class="fas fa-check-circle me-2"></i>${esc(file.fileName)}
+            </td>
+          </tr>
+        `).join('');
+        
+        // 渲染重复文件表格
+        duplicateRowsHtml = duplicateFiles.map(file => `
+          <tr>
+            <td class="text-center">${file.index}</td>
+            <td class="text-left text-warning">
+              <i class="fas fa-exclamation-triangle me-2"></i>${esc(file.fileName)}
+            </td>
+          </tr>
+        `).join('');
+        
+        rowsHtml = ''; // 文件上传不需要传统的rowsHtml
+      } else {
+        rowsHtml = data.items.map((it, i) => {
+          if (!isUpdateProduct) {
+            // 成品明细行格式
+            const raw = String(it);
+            const seg = raw.split('||');
+            const headerStr = seg.shift() || '';
+            const changeStr = seg.join('；');
+            const parts = headerStr.split('|');
+            // 兼容缺少备注（5列）或缺少EO+备注（4列）的情况
+            const v = (parts[0] || '').trim();
+            const p = (parts[1] || '').trim();
+            const lot = (parts[2] || '').trim();
+            const eo = (parts[3] || '').trim();
+            const qty = (parts[4] || '').trim();
+            const changes = (changeStr || '').trim();
+            return `
+              <tr>
+                <td class="text-center">${base + i + 1}</td>
+                <td class="text-center">${esc(v)}</td>
+                <td class="text-center">${esc(p)}</td>
+                <td class="text-center">${esc(lot)}</td>
+                <td class="text-center">${esc(eo)}</td>
+                <td class="text-center">${esc(qty)}</td>
+              </tr>
+            `;
+          } else {
+            // 更新成品：第一行是"当前值"，从第二行开始才是变化项
+            if (i === 0) return '';
+            const line = String(it || '').trim();
+            // 期待格式：field:old->new
+            const m = line.match(/^(\w+):(.+?)->(.*)$/);
+            if (!m) {
+              return `
+                <tr>
+                  <td class="text-center">${i}</td>
+                  <td class="text-center">-</td>
+                  <td class="text-center">-</td>
+                  <td class="text-center">${esc(line)}</td>
+                </tr>
+              `;
+            }
+            const fieldKey = m[1];
+            const beforeVal = m[2];
+            const afterVal = m[3];
+            const labelMap = {
+              'vehicle_name': '车种',
+              'part_number': '品番',
+              'lot_number': 'LOT',
+              'eo': 'EO',
+              'quantity': '数量',
+              'remark': '备注',
+              'eo_override': 'EO覆盖',
+              'usage_eo': 'UsagEO',
+              'needs_eo_attention': '需关注EO'
+            };
+            const fieldLabel = labelMap[fieldKey] || fieldKey;
+            return `
+              <tr>
+                <td class="text-center">${i}</td>
+                <td class="text-center">${esc(fieldLabel)}</td>
+                <td class="text-center">${esc(beforeVal)}</td>
+                <td class="text-center">${esc(afterVal)}</td>
+              </tr>
+            `;
+          }
+        }).join('');
+      }
+      if (isFileUpload) {
+        // 文件上传使用分组显示，不需要传统的表格结构
+        list.innerHTML = `<li class="list-group-item p-0"><div class="file-upload-container" style="max-height: 400px; overflow-y: auto; overflow-x: hidden; position: relative;">${headerHtml}</div></li>`;
+        
+        // 现在表格元素已经创建，可以填充内容了
+        // 更新计数徽章
+        const successCountEl = document.getElementById('successCount');
+        const duplicateCountEl = document.getElementById('duplicateCount');
+        if (successCountEl) successCountEl.textContent = successFiles.length;
+        if (duplicateCountEl) duplicateCountEl.textContent = duplicateFiles.length;
+        
+        // 填充表格内容
+        const successTableEl = document.getElementById('successFilesTable');
+        const duplicateTableEl = document.getElementById('duplicateFilesTable');
+        
+        console.log('表格元素调试:');
+        console.log('successTableEl:', successTableEl);
+        console.log('duplicateTableEl:', duplicateTableEl);
+        console.log('successRowsHtml长度:', successRowsHtml.length);
+        console.log('duplicateRowsHtml长度:', duplicateRowsHtml.length);
+        
+        if (successTableEl) {
+          successTableEl.innerHTML = successRowsHtml;
+          console.log('成功文件表格已填充');
+        } else {
+          console.log('未找到成功文件表格元素');
+        }
+        
+        if (duplicateTableEl) {
+          duplicateTableEl.innerHTML = duplicateRowsHtml;
+          console.log('重复文件表格已填充');
+        } else {
+          console.log('未找到重复文件表格元素');
+        }
+        
+        // 添加JavaScript固定效果
+        setTimeout(() => {
+          const container = document.querySelector('.file-upload-container');
+          if (container) {
+            container.addEventListener('scroll', function() {
+              const groups = container.querySelectorAll('.file-upload-group');
+              groups.forEach(group => {
+                const header = group.querySelector('.group-header');
+                const rect = group.getBoundingClientRect();
+                const containerRect = container.getBoundingClientRect();
+                
+                // 如果分组标题滚动到容器顶部，就固定它
+                if (rect.top <= containerRect.top && rect.bottom > containerRect.top + 60) {
+                  header.style.position = 'fixed';
+                  header.style.top = '0px';
+                  header.style.left = containerRect.left + 'px';
+                  header.style.width = (containerRect.width - 2) + 'px';
+                  header.style.zIndex = '1000';
+                  header.style.margin = '0';
+                  header.style.borderRadius = '0';
+                } else {
+                  header.style.position = 'relative';
+                  header.style.top = 'auto';
+                  header.style.left = 'auto';
+                  header.style.width = 'auto';
+                  header.style.zIndex = 'auto';
+                  header.style.margin = '';
+                  header.style.borderRadius = '';
+                }
+              });
+            });
+          }
+        }, 100);
+      } else {
+        const footerHtml = `</tbody></table>`;
+        list.innerHTML = `<li class="list-group-item p-0"><div style="max-height: 400px; overflow-y: auto; overflow-x: hidden; position: relative;">${headerHtml + rowsHtml + footerHtml}</div></li>`;
+      }
+    }
+  }
+
+  // 分页条
+  pag.innerHTML = '';
+  
+  // 检查是否为文件上传类型，如果是则不显示分页
+  const isFileUploadForPaginationControl = /upload_file|文件上传|批量上传/.test(String(data.operation_type || '')) || 
+                                          /upload_file|文件上传|批量上传/.test(String(data.operation_desc || '')) ||
+                                          /upload_file|文件上传|批量上传/.test(String(modalTitleText));
+  
+  if (!isFileUploadForPaginationControl) {
+    const p = data.pagination.page, pages = data.pagination.pages;
+    const addPage = (num, label, disabled, active) => {
+      const li = document.createElement('li');
+      li.className = `page-item ${disabled ? 'disabled' : ''} ${active ? 'active' : ''}`;
+      li.innerHTML = `<a class="page-link" href="#">${label}</a>`;
+      if (!disabled) {
+        li.onclick = async (e) => { e.preventDefault(); detailState.page = num; await fetchDetailPage(); };
+      }
+      pag.appendChild(li);
+    };
+    addPage(p - 1, '«', p <= 1, false);
+    const start = Math.max(1, p - 2);
+    const end = Math.min(pages, p + 2);
+    if (start > 1) addPage(1, '1', false, false);
+    if (start > 2) { const li = document.createElement('li'); li.className='page-item disabled'; li.innerHTML='<span class="page-link">...</span>'; pag.appendChild(li); }
+    for (let i = start; i <= end; i++) addPage(i, String(i), false, i === p);
+    if (end < pages - 1) { const li = document.createElement('li'); li.className='page-item disabled'; li.innerHTML='<span class="page-link">...</span>'; pag.appendChild(li); }
+    if (end < pages) addPage(pages, String(pages), false, false);
+    addPage(p + 1, '»', p >= pages, false);
+  }
+}
+</script>
+
+    <!-- 引入Bootstrap JS -->
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+</body>
+</html>

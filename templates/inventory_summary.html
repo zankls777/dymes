@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>数据汇总 - 大焱资料管理系统</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
+    <!-- 日期选择器样式（Litepicker）：仅在聚焦日期框时由 JS 动态引入 -->
+    {% include '_styles.html' %}
+    <style>
+        .container-fluid { padding-left: 12px; padding-right: 12px; }
+        .filter-bar {
+            background: #fff; border: 1px solid #e9ecef; border-radius: 10px;
+            padding: 12px 14px; margin-bottom: 14px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, .04);
+        }
+        .filter-bar .form-label { font-size: .82rem; color: #6c757d; margin-bottom: 4px; font-weight: 600; }
+        .stat-card {
+            background: #fff; border: 1px solid #e9ecef; border-radius: 10px;
+            padding: 14px 16px; height: 100%;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, .04);
+        }
+        .stat-card .label { font-size: .8rem; color: #868e96; margin-bottom: 4px; }
+        .stat-card .value { font-size: 1.6rem; font-weight: 700; line-height: 1.15; }
+        .stat-card .unit { font-size: .78rem; color: #adb5bd; margin-left: 4px; font-weight: 400; }
+        .stat-card.c-blue .value { color: #1c7ed6; }
+        .stat-card.c-green .value { color: #2f9e44; }
+        .stat-card.c-orange .value { color: #e8590c; }
+        .stat-card.c-red .value { color: #e03131; }
+        .stat-card.c-gray .value { color: #495057; }
+        .chart-card {
+            background: #fff; border: 1px solid #e9ecef; border-radius: 10px;
+            padding: 14px 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, .04);
+        }
+        .chart-card .chart-head {
+            display: flex; flex-wrap: wrap; gap: 8px;
+            justify-content: space-between; align-items: center; margin-bottom: 6px;
+        }
+        .chart-card .chart-title { font-weight: 700; font-size: 1.02rem; }
+        .chart-scroll { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
+        #chartSvg { display: block; }
+        /* 数据标签 / 图例 */
+        .bar-label { font-size: 12px; font-weight: 700; fill: #343a40; }
+        .axis-text { font-size: 12px; fill: #6c757d; }
+        .axis-line { stroke: #dee2e6; stroke-width: 1; }
+        .grid-line { stroke: #f1f3f5; stroke-width: 1; }
+        .bar-rect { transition: opacity .15s ease; cursor: pointer; }
+        .bar-group:hover .bar-rect { opacity: .82; }
+        .legend-item { display: inline-flex; align-items: center; font-size: .82rem; color: #495057; margin-right: 14px; }
+        .legend-dot { width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; display: inline-block; }
+        /* 状态区 */
+        .state-box { text-align: center; padding: 48px 16px; color: #868e96; }
+        .state-box .fa { font-size: 2.4rem; margin-bottom: 10px; display: block; color: #ced4da; }
+        .state-box.error .fa { color: #ffa8a8; }
+        /* 悬浮提示 */
+        #chartTip {
+            position: fixed; z-index: 2000; pointer-events: none; display: none;
+            background: rgba(33, 37, 41, .94); color: #fff; border-radius: 6px;
+            padding: 8px 11px; font-size: .8rem; line-height: 1.55; white-space: nowrap;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
+        }
+        #chartTip .tip-title { font-weight: 700; margin-bottom: 3px; font-size: .85rem; }
+        #chartTip .tip-row { display: flex; justify-content: space-between; gap: 16px; }
+        #chartTip .tip-row b { font-weight: 600; margin-left: 8px; }
+
+        @media (max-width: 767.98px) {
+            .container-fluid.mt-4 { margin-top: .5rem !important; }
+            .stat-card { padding: 10px 12px; }
+            .stat-card .value { font-size: 1.3rem; }
+            .filter-bar { padding: 10px 12px; }
+            .btn-main { min-height: 46px; }
+            .chart-card { padding: 10px 12px; }
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    <div class="container-fluid mt-4">
+
+        <!-- 筛选区 -->
+        <div class="filter-bar">
+            <div class="row g-2 align-items-end">
+                <div class="col-12 col-md-5 col-lg-4">
+                    <label class="form-label"><i class="fa fa-calendar me-1"></i>盘点日期范围</label>
+                    <input type="text" class="form-control" id="dateRange" readonly
+                           placeholder="请选择日期范围" autocomplete="off" style="background:#fff;cursor:pointer;">
+                </div>
+                <div class="col-6 col-md-3 col-lg-2">
+                    <label class="form-label">快捷范围</label>
+                    <select class="form-select" id="quickRange">
+                        <option value="today">今天</option>
+                        <option value="7" selected>近 7 天</option>
+                        <option value="30">近 30 天</option>
+                        <option value="month">本月</option>
+                        <option value="90">近 90 天</option>
+                        <option value="year">本年</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-4 col-lg-3 d-flex gap-2">
+                    <button class="btn btn-primary flex-grow-1 btn-main" id="btnQuery">
+                        <i class="fa fa-search me-1"></i>查询
+                    </button>
+                    <button class="btn btn-outline-secondary btn-main px-3" id="btnReset" title="重置">
+                        <i class="fa fa-refresh"></i>
+                    </button>
+                </div>
+                <div class="col-12 col-lg-3 text-lg-end">
+                    <span class="text-muted small" id="rangeHint"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 概览统计 -->
+        <div class="row g-2 mb-3">
+            <div class="col-6 col-lg-2">
+                <div class="stat-card c-gray">
+                    <div class="label">盘点班组</div>
+                    <div class="value"><span id="sTeam">-</span></div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-2">
+                <div class="stat-card c-blue">
+                    <div class="label">盘点记录</div>
+                    <div class="value"><span id="sRecord">-</span><span class="unit">笔</span></div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-2">
+                <div class="stat-card c-green">
+                    <div class="label">盘点数量</div>
+                    <div class="value"><span id="sCheck">-</span></div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-2">
+                <div class="stat-card c-orange">
+                    <div class="label">抽查数量</div>
+                    <div class="value"><span id="sSample">-</span></div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-2">
+                <div class="stat-card c-red">
+                    <div class="label">差异合计</div>
+                    <div class="value"><span id="sDiff">-</span></div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-2">
+                <div class="stat-card c-red">
+                    <div class="label">差异笔数</div>
+                    <div class="value"><span id="sDiffCnt">-</span><span class="unit">笔</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 柱状图 -->
+        <div class="chart-card">
+            <div class="chart-head">
+                <div class="chart-title"><i class="fa fa-bar-chart me-1"></i>各班组盘点记录数</div>
+                <div class="d-flex flex-wrap align-items-center">
+                    <span class="legend-item"><span class="legend-dot" style="background:#1c7ed6;"></span>盘点记录数</span>
+                </div>
+            </div>
+            <div id="chartArea">
+                <div id="chartState" class="state-box">
+                    <i class="fa fa-spinner fa-spin"></i>
+                    <div>正在加载数据...</div>
+                </div>
+                <div class="chart-scroll">
+                    <svg id="chartSvg" style="display:none;"></svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- 班组汇总明细 -->
+        <div class="chart-card mt-3" id="detailCard" style="display:none;">
+            <div class="chart-title mb-2"><i class="fa fa-th-list me-1"></i>班组汇总</div>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>班组</th>
+                            <th class="text-end">记录数</th>
+                            <th class="text-end">盘点数量</th>
+                            <th class="text-end">抽查数量</th>
+                            <th class="text-end">差异</th>
+                            <th class="text-end">差异笔数</th>
+                        </tr>
+                    </thead>
+                    <tbody id="detailBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 盘点清单（明细） -->
+        <div class="chart-card mt-3" id="listCard">
+            <div class="chart-head">
+                <div class="chart-title">
+                    <i class="fa fa-list-alt me-1"></i>盘点清单
+                    <span class="text-muted fw-normal small ms-1" id="listRange"></span>
+                </div>
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <div style="min-width:150px;">
+                        <select class="form-select form-select-sm" id="listTeam">
+                            <option value="">全部班组</option>
+                        </select>
+                    </div>
+                    <div style="min-width:170px;">
+                        <input type="text" class="form-control form-control-sm" id="listKeyword"
+                               placeholder="品番 / 品名 / 备注" autocomplete="off">
+                    </div>
+                    <button class="btn btn-sm btn-outline-primary" id="btnListQuery">
+                        <i class="fa fa-search"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" id="btnListExport" title="导出 CSV">
+                        <i class="fa fa-download"></i>
+                    </button>
+                </div>
+            </div>
+            <div id="listState" class="state-box">
+                <i class="fa fa-spinner fa-spin"></i>
+                <div>正在加载清单...</div>
+            </div>
+            <div class="table-responsive" id="listWrap" style="display:none;">
+                <table class="table table-sm table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="white-space:nowrap;">盘点日期</th>
+                            <th style="white-space:nowrap;">盘点时间</th>
+                            <th style="white-space:nowrap;">盘点人账号</th>
+                            <th>班组</th>
+                            <th style="white-space:nowrap;">资材品番</th>
+                            <th>品名</th>
+                            <th class="text-end">盘点数量</th>
+                            <th class="text-end">抽查数量</th>
+                            <th class="text-end">差异</th>
+                            <th>备注</th>
+                            {% if can_delete %}
+                            <th class="text-center" style="white-space:nowrap;">操作</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody id="listBody"></tbody>
+                </table>
+            </div>
+            <div class="d-flex flex-wrap justify-content-between align-items-center mt-2" id="listPager" style="display:none;">
+                <span class="text-muted small" id="listTotal"></span>
+                <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-secondary" id="btnPrev"><i class="fa fa-chevron-left"></i></button>
+                    <span class="small" id="listPage"></span>
+                    <button class="btn btn-sm btn-outline-secondary" id="btnNext"><i class="fa fa-chevron-right"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="chartTip"></div>
+
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    <script>
+    // 按需加载 Litepicker（JS + CSS）：仅在用户聚焦日期框时才拉取，减少首屏体积
+    // 兼容 Win7/老内核：动态注入 script/link，避免 defer 依赖顺序问题
+    window.__bomLoadLitepicker = function () {
+        if (window.Litepicker) { return Promise.resolve(); }
+        if (window.__litepickerLoading) { return window.__litepickerLoading; }
+        window.__litepickerLoading = new Promise(function (resolve, reject) {
+            if (!document.querySelector('link[data-bom-litepicker-css]')) {
+                var link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = '{{ url_for("static", filename="css/litepicker.css") }}';
+                link.setAttribute('data-bom-litepicker-css', '1');
+                document.head.appendChild(link);
+            }
+            var s = document.createElement('script');
+            s.src = '{{ url_for("static", filename="js/litepicker.bundle.js") }}';
+            s.async = true;
+            s.onload = function () { resolve(); };
+            s.onerror = function () { window.__litepickerLoading = null; reject(new Error('litepicker load failed')); };
+            document.head.appendChild(s);
+        });
+        return window.__litepickerLoading;
+    };
+    </script>
+    <script>
+    (function () {
+        var URL_DATA = '{{ url_for("main.inventory_summary_data") }}';
+        var URL_DETAIL = '{{ url_for("main.inventory_summary_detail") }}';
+        var URL_TEAMS = '{{ url_for("main.inventory_teams") }}';
+        var URL_DELETE = '{{ url_for("main.inventory_check_delete") }}';
+        var CAN_DELETE = {{ 'true' if can_delete else 'false' }};
+        var CSRFEl = document.querySelector('meta[name="csrf-token"]');
+        var CSRF = CSRFEl ? CSRFEl.getAttribute('content') : '';
+
+        var COLOR_CHECK = '#1c7ed6';
+        var COLOR_SAMPLE = '#f59f00';
+
+        var dateRange = document.getElementById('dateRange');
+        var picker = null;
+        var lastItems = [];
+        var listPage = 1;
+        var listPages = 1;
+        var lastList = [];
+
+        function pad(n) { return (n < 10 ? '0' : '') + n; }
+        function fmtDate(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+        function today() { var d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+        function addDays(d, n) { var x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; }
+        function num(v) { return (v === null || v === undefined || v === '') ? 0 : Number(v); }
+
+        // 千分位
+        function thousands(v) {
+            var s = String(Math.round(num(v)));
+            return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+        function esc(s) {
+            return String(s === null || s === undefined ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // ---------- 日期范围 ----------
+        function setRange(start, end) {
+            dateRange.value = fmtDate(start) + ' ~ ' + fmtDate(end);
+        }
+        function applyQuick(val) {
+            var t = today();
+            if (val === 'today') { setRange(t, t); }
+            else if (val === '7') { setRange(addDays(t, -6), t); }
+            else if (val === '30') { setRange(addDays(t, -29), t); }
+            else if (val === 'month') { setRange(new Date(t.getFullYear(), t.getMonth(), 1), t); }
+            else if (val === '90') { setRange(addDays(t, -89), t); }
+            else if (val === 'year') { setRange(new Date(t.getFullYear(), 0, 1), t); }
+        }
+        function getRange() {
+            var v = (dateRange.value || '').split('~');
+            if (v.length === 2 && v[0].trim() && v[1].trim()) {
+                return { start: v[0].trim(), end: v[1].trim() };
+            }
+            var t = fmtDate(today());
+            return { start: t, end: t };
+        }
+
+        // ---------- 状态区 ----------
+        function showLoading() {
+            document.getElementById('chartState').style.display = '';
+            document.getElementById('chartState').className = 'state-box';
+            document.getElementById('chartState').innerHTML =
+                '<i class="fa fa-spinner fa-spin"></i><div>正在加载数据...</div>';
+            var svg = document.getElementById('chartSvg');
+            if (svg) { svg.style.display = 'none'; }
+            document.getElementById('detailCard').style.display = 'none';
+        }
+        function showError(msg, retry) {
+            var box = document.getElementById('chartState');
+            box.style.display = '';
+            box.className = 'state-box error';
+            box.innerHTML = '<i class="fa fa-exclamation-triangle"></i><div>' + esc(msg) + '</div>' +
+                (retry ? '<button class="btn btn-sm btn-outline-primary mt-3" id="btnRetry">重新加载</button>' : '');
+            var svg = document.getElementById('chartSvg');
+            if (svg) { svg.style.display = 'none'; }
+            var b = document.getElementById('btnRetry');
+            if (b) { b.addEventListener('click', loadData); }
+        }
+        function showEmpty(msg) {
+            var box = document.getElementById('chartState');
+            box.style.display = '';
+            box.className = 'state-box';
+            box.innerHTML = '<i class="fa fa-inbox"></i><div>' + esc(msg) + '</div>' +
+                '<div class="small mt-1">请调整日期范围后重试</div>';
+            var svg = document.getElementById('chartSvg');
+            if (svg) { svg.style.display = 'none'; }
+            document.getElementById('detailCard').style.display = 'none';
+        }
+        function clearStats() {
+            ['sTeam', 'sRecord', 'sCheck', 'sSample', 'sDiff', 'sDiffCnt'].forEach(function (id) {
+                document.getElementById(id).textContent = '-';
+            });
+        }
+
+        // ---------- 数据加载 ----------
+        function loadData() {
+            var r = getRange();
+            showLoading();
+            var url = URL_DATA + '?start_date=' + encodeURIComponent(r.start) + '&end_date=' + encodeURIComponent(r.end);
+            fetch(url, { headers: { 'X-CSRFToken': CSRF } })
+                .then(function (res) {
+                    if (!res.ok) { throw new Error('HTTP ' + res.status); }
+                    return res.json();
+                })
+                .then(function (res) {
+                    if (!res.success) { throw new Error(res.error || '查询失败'); }
+                    render(res);
+                })
+                .catch(function (err) {
+                    clearStats();
+                    showError('数据加载失败：' + (err && err.message ? err.message : '网络异常'), true);
+                });
+        }
+
+        function render(res) {
+            var items = res.items || [];
+            var s = res.summary || {};
+            lastItems = items;
+
+            // 概览
+            document.getElementById('sTeam').textContent = num(s.team_count);
+            document.getElementById('sRecord').textContent = thousands(s.record_count);
+            document.getElementById('sCheck').textContent = thousands(s.check_qty);
+            document.getElementById('sSample').textContent = thousands(s.sample_qty);
+            document.getElementById('sDiff').textContent = thousands(s.diff_qty);
+            document.getElementById('sDiffCnt').textContent = thousands(s.diff_count);
+            document.getElementById('sDiff').style.color = num(s.diff_qty) !== 0 ? '#e03131' : '#2f9e44';
+
+            var rg = res.range || {};
+            document.getElementById('rangeHint').textContent =
+                rg.start_date ? (rg.start_date + ' 至 ' + rg.end_date) : '';
+
+            if (!items.length) {
+                showEmpty('所选日期范围内暂无盘点记录');
+                loadList(true);
+                return;
+            }
+
+            document.getElementById('chartState').style.display = 'none';
+            drawChart(items);
+            var svgEl = document.getElementById('chartSvg');
+            if (svgEl) { svgEl.style.display = ''; }
+            renderDetail(items);
+            // 图表与清单口径一致：同一日期范围
+            loadList(true);
+        }
+
+        function renderDetail(items) {
+            var tb = document.getElementById('detailBody');
+            tb.innerHTML = items.map(function (it) {
+                var diff = num(it.diff_qty);
+                var neg = diff < 0;
+                return '<tr>' +
+                    '<td class="fw-semibold">' + esc(it.team_name) + '</td>' +
+                    '<td class="text-end">' + thousands(it.record_count) + '</td>' +
+                    '<td class="text-end" style="color:' + COLOR_CHECK + '">' + thousands(it.check_qty) + '</td>' +
+                    '<td class="text-end" style="color:' + COLOR_SAMPLE + '">' + thousands(it.sample_qty) + '</td>' +
+                    '<td class="text-end fw-bold" style="color:' + (diff !== 0 ? '#e03131' : '#2f9e44') + '">' +
+                        (neg ? '(' + thousands(Math.abs(diff)) + ')' : thousands(diff)) + '</td>' +
+                    '<td class="text-end"' + (num(it.diff_count) > 0 ? ' style="color:#e03131"' : '') + '>' +
+                        thousands(it.diff_count) + '</td>' +
+                '</tr>';
+            }).join('');
+            document.getElementById('detailCard').style.display = '';
+        }
+
+        // ---------- 盘点清单（明细） ----------
+        function showListState(html, cls) {
+            var box = document.getElementById('listState');
+            box.style.display = '';
+            box.className = 'state-box' + (cls ? ' ' + cls : '');
+            box.innerHTML = html;
+            document.getElementById('listWrap').style.display = 'none';
+            document.getElementById('listPager').style.display = 'none';
+        }
+
+        function loadList(resetPage) {
+            if (resetPage) { listPage = 1; }
+            var r = getRange();
+            showListState('<i class="fa fa-spinner fa-spin"></i><div>正在加载清单...</div>');
+
+            var url = URL_DETAIL +
+                '?start_date=' + encodeURIComponent(r.start) +
+                '&end_date=' + encodeURIComponent(r.end) +
+                '&page=' + listPage + '&page_size=50' +
+                '&team_id=' + encodeURIComponent(document.getElementById('listTeam').value || '') +
+                '&keyword=' + encodeURIComponent(document.getElementById('listKeyword').value.trim() || '');
+
+            fetch(url, { headers: { 'X-CSRFToken': CSRF } })
+                .then(function (res) {
+                    if (!res.ok) { throw new Error('HTTP ' + res.status); }
+                    return res.json();
+                })
+                .then(function (res) {
+                    if (!res.success) { throw new Error(res.error || '查询失败'); }
+                    renderList(res);
+                })
+                .catch(function (err) {
+                    showListState('<i class="fa fa-exclamation-triangle"></i><div>清单加载失败：' +
+                        esc(err && err.message ? err.message : '网络异常') + '</div>' +
+                        '<button class="btn btn-sm btn-outline-primary mt-3" id="btnListRetry">重新加载</button>', 'error');
+                    var b = document.getElementById('btnListRetry');
+                    if (b) { b.addEventListener('click', function () { loadList(false); }); }
+                });
+        }
+
+        function renderList(res) {
+            var items = res.items || [];
+            lastList = items;
+            listPages = res.pages || 1;
+
+            document.getElementById('listRange').textContent =
+                (res.total ? '（共 ' + thousands(res.total) + ' 条）' : '');
+
+            if (!items.length) {
+                showListState('<i class="fa fa-inbox"></i><div>该时间段内暂无盘点记录</div>');
+                document.getElementById('listRange').textContent = '（共 0 条）';
+                return;
+            }
+
+            document.getElementById('listBody').innerHTML = items.map(function (it) {
+                var diff = num(it.diff_qty);
+                var neg = diff < 0;
+                // created_at 形如 2026-09-27 14:35:22，取时间部分
+                var ts = it.created_at ? String(it.created_at) : '';
+                var timePart = ts.length > 10 ? ts.slice(11) : ts;
+                var opCell = CAN_DELETE
+                    ? '<td class="text-center"><button class="btn btn-sm btn-outline-danger btn-del" ' +
+                          'data-id="' + esc(it.id) + '" title="删除该记录"><i class="fa fa-trash"></i></button></td>'
+                    : '';
+                return '<tr>' +
+                    '<td style="white-space:nowrap;">' + esc(it.check_date || '') + '</td>' +
+                    '<td style="white-space:nowrap;">' + esc(timePart) + '</td>' +
+                    '<td style="white-space:nowrap;">' + (it.created_by_name ? esc(it.created_by_name) : '<span class="text-muted">-</span>') + '</td>' +
+                    '<td>' + esc(it.team_name || '') + '</td>' +
+                    '<td style="white-space:nowrap;" class="fw-semibold">' + esc(it.ksc_pno || '') + '</td>' +
+                    '<td>' + (it.part_name ? esc(it.part_name) : '<span class="text-muted">-</span>') + '</td>' +
+                    '<td class="text-end" style="color:' + COLOR_CHECK + '">' + thousands(it.check_qty) + '</td>' +
+                    '<td class="text-end" style="color:' + COLOR_SAMPLE + '">' + thousands(it.sample_qty) + '</td>' +
+                    '<td class="text-end fw-bold" style="color:' + (diff !== 0 ? '#e03131' : '#2f9e44') + '">' +
+                        (neg ? '(' + thousands(Math.abs(diff)) + ')' : thousands(diff)) + '</td>' +
+                    '<td class="text-muted small">' + esc(it.remark || '') + '</td>' +
+                    opCell +
+                '</tr>';
+            }).join('');
+
+            if (CAN_DELETE) {
+                document.querySelectorAll('#listBody .btn-del').forEach(function (btn) {
+                    btn.addEventListener('click', function () { deleteRecord(this.getAttribute('data-id')); });
+                });
+            }
+
+            document.getElementById('listState').style.display = 'none';
+            document.getElementById('listWrap').style.display = '';
+            document.getElementById('listPager').style.display = '';
+            document.getElementById('listTotal').textContent = '共 ' + thousands(res.total) + ' 条';
+            document.getElementById('listPage').textContent = listPage + ' / ' + listPages;
+            document.getElementById('btnPrev').disabled = listPage <= 1;
+            document.getElementById('btnNext').disabled = listPage >= listPages;
+        }
+
+        // 导出当前清单为 CSV（带 BOM，Excel 中文不乱码）
+        function exportList() {
+            if (!lastList.length) { alert('当前没有可导出的数据'); return; }
+            var head = ['盘点日期', '盘点时间', '盘点人账号', '班组', '资材品番', '品名',
+                        '盘点数量', '抽查数量', '差异', '备注'];
+            function cell(v) {
+                var s = (v === null || v === undefined) ? '' : String(v);
+                return '"' + s.replace(/"/g, '""') + '"';
+            }
+            var lines = [head.map(cell).join(',')];
+            lastList.forEach(function (it) {
+                var ts = it.created_at ? String(it.created_at) : '';
+                lines.push([
+                    it.check_date, ts.length > 10 ? ts.slice(11) : ts, it.created_by_name,
+                    it.team_name, it.ksc_pno, it.part_name,
+                    num(it.check_qty), num(it.sample_qty), num(it.diff_qty), it.remark
+                ].map(cell).join(','));
+            });
+            var blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+            var a = document.createElement('a');
+            var r = getRange();
+            a.href = URL.createObjectURL(blob);
+            a.download = '盘点清单_' + r.start + '_' + r.end + '.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+        }
+
+        // 删除单条盘点记录（需 can_inventory_summary_delete 权限）
+        function deleteRecord(id) {
+            if (!CAN_DELETE || !id) { return; }
+            if (!confirm('确定要删除该条盘点记录吗？删除后不可恢复。')) { return; }
+            fetch(URL_DELETE, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ id: Number(id) })
+            })
+                .then(function (res) { return res.json().then(function (d) { return { ok: res.ok, d: d }; }); })
+                .then(function (r) {
+                    if (!r.ok || !r.d.success) { throw new Error((r.d && r.d.error) || '删除失败'); }
+                    loadList(false);
+                })
+                .catch(function (err) {
+                    alert('删除失败：' + (err && err.message ? err.message : '网络异常'));
+                });
+        }
+
+        // 班组下拉（用于清单筛选）
+        function loadTeamOptions() {
+            fetch(URL_TEAMS, { headers: { 'X-CSRFToken': CSRF } })
+                .then(function (res) { return res.json(); })
+                .then(function (res) {
+                    if (!res.success) { return; }
+                    var sel = document.getElementById('listTeam');
+                    (res.items || res.teams || []).forEach(function (t) {
+                        var o = document.createElement('option');
+                        o.value = t.id;
+                        o.textContent = t.name;
+                        sel.appendChild(o);
+                    });
+                })
+                .catch(function () { /* 下拉失败不阻断清单 */ });
+        }
+
+        // ---------- 纯 SVG 柱状图（单系列：班组 - 盘点记录数） ----------
+        function drawChart(items) {
+            var isMobile = window.innerWidth < 768;
+
+            // 尺寸：班组多时横向撑开，外层容器可横向滚动
+            var groupW = isMobile ? 46 : 58;           // 每个班组占的宽度
+            var plotH = isMobile ? 250 : 320;          // 绘图区高度
+            var padTop = 26, padBottom = 74, padLeft = 50, padRight = 18;
+            var innerW = Math.max(items.length * groupW, 240);
+            var width = padLeft + innerW + padRight;
+            var height = padTop + plotH + padBottom;
+
+            // 纵轴最大值 = 各班组记录数最大值
+            var maxVal = 0;
+            items.forEach(function (it) { maxVal = Math.max(maxVal, num(it.record_count)); });
+            if (maxVal <= 0) { maxVal = 1; }
+            var step = niceStep(maxVal / 5);
+            var axisMax = Math.ceil(maxVal / step) * step;
+            if (axisMax <= 0) { axisMax = step; }
+
+            function yOf(v) { return padTop + plotH - (num(v) / axisMax) * plotH; }
+
+            var parts = [];
+            // 网格线 + Y 轴刻度
+            for (var v = 0; v <= axisMax + 0.0001; v += step) {
+                var y = yOf(v);
+                parts.push('<line class="' + (v === 0 ? 'axis-line' : 'grid-line') +
+                    '" x1="' + padLeft + '" y1="' + y + '" x2="' + (padLeft + innerW) + '" y2="' + y + '"/>');
+                parts.push('<text class="axis-text" x="' + (padLeft - 8) + '" y="' + (y + 4) +
+                    '" text-anchor="end">' + thousands(v) + '</text>');
+            }
+            // Y 轴
+            parts.push('<line class="axis-line" x1="' + padLeft + '" y1="' + padTop +
+                '" x2="' + padLeft + '" y2="' + (padTop + plotH) + '"/>');
+
+            // 柱体（每个班组一根）
+            var n = items.length;
+            var slot = innerW / n;
+            var barW = Math.min(slot * 0.5, isMobile ? 26 : 34);
+
+            items.forEach(function (it, i) {
+                var cx = padLeft + slot * i + slot / 2;
+                var x = cx - barW / 2;
+                var val = num(it.record_count);
+                var y = yOf(val);
+                var h = (padTop + plotH) - y;
+                if (h < 1 && val > 0) { h = 1; }
+
+                parts.push('<g class="bar-group" data-idx="' + i + '">');
+                parts.push('<rect class="bar-rect" x="' + x.toFixed(2) + '" y="' + y.toFixed(2) +
+                    '" width="' + barW.toFixed(2) + '" height="' + Math.max(h, 0).toFixed(2) +
+                    '" rx="3" fill="' + COLOR_CHECK + '" data-idx="' + i + '"/>');
+                // 数据标签（柱顶）
+                if (val > 0) {
+                    parts.push('<text class="bar-label" x="' + cx.toFixed(2) +
+                        '" y="' + (y - 5).toFixed(2) + '" text-anchor="middle">' + thousands(val) + '</text>');
+                }
+                // X 轴班组名（过长截断，完整名在悬浮提示与汇总表中展示）
+                var label = String(it.team_name || '');
+                var shown = label.length > 6 ? label.slice(0, 6) + '…' : label;
+                var ty = padTop + plotH + 18;
+                parts.push('<text class="axis-text" x="' + cx.toFixed(2) + '" y="' + ty +
+                    '" text-anchor="end" transform="rotate(-35 ' + cx.toFixed(2) + ' ' + ty + ')">' +
+                    esc(shown) + '</text>');
+                parts.push('</g>');
+            });
+
+            // 关键：保留 #chartSvg 元素本身，只更新其宽高与内部内容，
+            // 避免用 outerHTML 替换导致元素丢失、后续 getElementById 取到 null。
+            var target = document.getElementById('chartSvg');
+            if (!target) { return; }
+            target.setAttribute('width', width);
+            target.setAttribute('height', height);
+            target.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+            target.innerHTML = parts.join('');
+            bindChartEvents();
+        }
+
+        function niceStep(raw) {
+            if (raw <= 0) { return 1; }
+            var exp = Math.floor(Math.log(raw) / Math.LN10);
+            var base = Math.pow(10, exp);
+            var f = raw / base;
+            var nice = f <= 1 ? 1 : (f <= 2 ? 2 : (f <= 5 ? 5 : 10));
+            return nice * base;
+        }
+
+        // ---------- 悬浮提示 ----------
+        var tip = document.getElementById('chartTip');
+        function bindChartEvents() {
+            var svg = document.getElementById('chartSvg');
+            if (!svg) { return; }
+
+            function showTip(e, idx) {
+                var it = lastItems[idx];
+                if (!it) { return; }
+                tip.innerHTML =
+                    '<div class="tip-title">' + esc(it.team_name) + '</div>' +
+                    '<div class="tip-row"><span>盘点记录数</span><b style="color:#74c0fc">' +
+                        thousands(it.record_count) + ' 笔</b></div>';
+                tip.style.display = 'block';
+                moveTip(e);
+            }
+            function moveTip(e) {
+                var x, y;
+                if (e.touches && e.touches.length) {
+                    x = e.touches[0].clientX; y = e.touches[0].clientY;
+                } else {
+                    x = e.clientX; y = e.clientY;
+                }
+                var w = tip.offsetWidth, h = tip.offsetHeight;
+                var left = x + 14, top = y - h - 10;
+                if (left + w > window.innerWidth - 8) { left = x - w - 14; }
+                if (left < 8) { left = 8; }
+                if (top < 8) { top = y + 16; }
+                tip.style.left = left + 'px';
+                tip.style.top = top + 'px';
+            }
+            function hideTip() { tip.style.display = 'none'; }
+
+            // 悬停：只挂到柱体上，减少事件量
+            svg.querySelectorAll('.bar-rect').forEach(function (rect) {
+                rect.addEventListener('mouseenter', function (e) {
+                    showTip(e, parseInt(rect.getAttribute('data-idx'), 10));
+                });
+                rect.addEventListener('mousemove', moveTip);
+                rect.addEventListener('mouseleave', hideTip);
+                // 移动端：按住查看
+                rect.addEventListener('touchstart', function (e) {
+                    showTip(e, parseInt(rect.getAttribute('data-idx'), 10));
+                }, { passive: true });
+                rect.addEventListener('touchmove', moveTip, { passive: true });
+                rect.addEventListener('touchend', hideTip);
+            });
+        }
+
+        // ---------- 初始化 ----------
+        // 首次聚焦时按需加载 Litepicker，加载完成后再初始化
+        var pickerBound = false;
+        function bindPicker() {
+            if (pickerBound || !window.Litepicker) { return; }
+            pickerBound = true;
+            picker = new Litepicker({
+                element: dateRange,
+                singleMode: false,
+                numberOfMonths: 2,
+                numberOfColumns: 2,
+                autoApply: true,
+                format: 'YYYY-MM-DD',
+                lang: 'zh-CN',
+                tooltipText: { one: '天', other: '天' },
+                setup: function (p) {
+                    p.on('selected', function (d1, d2) {
+                        if (d1 && d2) {
+                            dateRange.value = d1.format('YYYY-MM-DD') + ' ~ ' + d2.format('YYYY-MM-DD');
+                            document.getElementById('quickRange').value = '';
+                            loadData();
+                        }
+                    });
+                }
+            });
+        }
+
+        function init() {
+            // 日期框未加载 Litepicker 前退化为手工输入，聚焦时再按需加载
+            dateRange.readOnly = false;
+            dateRange.placeholder = '格式：2026-01-01 ~ 2026-01-31';
+            dateRange.addEventListener('focus', function () {
+                if (window.Litepicker) { bindPicker(); return; }
+                window.__bomLoadLitepicker().then(bindPicker).catch(function (e) {
+                    console.error('日期选择器加载失败:', e);
+                });
+            });
+
+            document.getElementById('quickRange').addEventListener('change', function () {
+                applyQuick(this.value);
+                loadData();
+            });
+            document.getElementById('btnQuery').addEventListener('click', loadData);
+            document.getElementById('btnReset').addEventListener('click', function () {
+                document.getElementById('quickRange').value = '7';
+                applyQuick('7');
+                loadData();
+            });
+            dateRange.addEventListener('keydown', function (e) {
+                if (e.key !== 'Enter') { return; }
+                e.preventDefault();
+                var v = (dateRange.value || '').split('~');
+                if (v.length === 2) {
+                    if (picker && picker.setDateRange) {
+                        try { picker.setDateRange(v[0].trim(), v[1].trim()); } catch (err) { /* 忽略 */ }
+                    }
+                    loadData();
+                }
+            });
+
+            // 窗口尺寸变化时重绘（班组多时保持可读）
+            var rsz = null;
+            window.addEventListener('resize', function () {
+                if (rsz) { clearTimeout(rsz); }
+                rsz = setTimeout(function () {
+                    if (lastItems.length && document.getElementById('chartSvg')) {
+                        drawChart(lastItems);
+                    }
+                }, 220);
+            });
+
+            document.getElementById('quickRange').value = '7';
+            applyQuick('7');
+
+            // 盘点清单交互
+            document.getElementById('btnListQuery').addEventListener('click', function () { loadList(true); });
+            document.getElementById('listKeyword').addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); loadList(true); }
+            });
+            document.getElementById('listTeam').addEventListener('change', function () { loadList(true); });
+            document.getElementById('btnPrev').addEventListener('click', function () {
+                if (listPage > 1) { listPage--; loadList(false); }
+            });
+            document.getElementById('btnNext').addEventListener('click', function () {
+                if (listPage < listPages) { listPage++; loadList(false); }
+            });
+            document.getElementById('btnListExport').addEventListener('click', exportList);
+
+            loadTeamOptions();
+            loadData();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    })();
+    </script>
+</body>
+</html>

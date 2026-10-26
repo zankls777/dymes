@@ -1,0 +1,111 @@
+<!-- 无品番数据冲突解决模板 -->
+<div class="modal fade" id="noPartConflictModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">无品番数据冲突处理</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    发现以下数据没有品番信息，请选择处理方式：
+                </div>
+                
+                <div id="noPartConflictList">
+                    <!-- 动态生成冲突列表 -->
+                </div>
+                
+                <div class="mt-3">
+                    <label class="form-label">批量处理选项：</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="batchAction" id="skipAll" value="skip">
+                        <label class="form-check-label" for="skipAll">跳过所有无品番数据</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="batchAction" id="useDefault" value="default">
+                        <label class="form-check-label" for="useDefault">使用默认品番（车种_序号）</label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="resolveNoPartConflicts()">确认处理</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showNoPartConflictModal(conflicts) {
+    const modal = new bootstrap.Modal(document.getElementById('noPartConflictModal'));
+    const conflictList = document.getElementById('noPartConflictList');
+    
+    // 生成冲突列表
+    conflictList.innerHTML = conflicts.map(conflict => {
+        const data = conflict.excel_data;
+        return `
+            <div class="card mb-2">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-2">
+                            <strong>LOT:</strong> ${data.lot_number}
+                        </div>
+                        <div class="col-md-2">
+                            <strong>车种:</strong> ${data.vehicle_name}
+                        </div>
+                        <div class="col-md-2">
+                            <strong>数量:</strong> ${data.quantity}
+                        </div>
+                        <div class="col-md-4">
+                            <strong>备注:</strong> ${data.remark}
+                        </div>
+                        <div class="col-md-2">
+                            <input type="text" class="form-control form-control-sm" 
+                                   placeholder="输入品番" 
+                                   data-lot="${data.lot_number}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    modal.show();
+}
+
+function resolveNoPartConflicts() {
+    // 处理无品番冲突的逻辑
+    const batchAction = document.querySelector('input[name="batchAction"]:checked')?.value;
+    const customPartNumbers = {};
+    
+    // 收集用户输入的品番
+    document.querySelectorAll('#noPartConflictList input[data-lot]').forEach(input => {
+        if (input.value.trim()) {
+            customPartNumbers[input.dataset.lot] = input.value.trim();
+        }
+    });
+    
+    // 发送到后端处理
+    fetch('/api/finished_products/resolve_no_part_conflicts', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            batch_action: batchAction,
+            custom_part_numbers: customPartNumbers
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showMessage('无品番冲突处理成功', 'success');
+            location.reload();
+        } else {
+            showMessage('处理失败: ' + data.error, 'danger');
+        }
+    })
+    .catch(error => {
+        showMessage('处理失败: ' + error, 'danger');
+    });
+}
+</script>

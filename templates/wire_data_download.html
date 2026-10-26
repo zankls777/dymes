@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>数据下载 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .card { margin-bottom: 20px; }
+        .table th { background-color: #f8f9fa; white-space: nowrap; }
+        .table td { vertical-align: middle; }
+        #resultWrap { max-height: 65vh; overflow: auto; }
+        .table-editing { background-color: #fffde7 !important; }
+        .loading-overlay {
+            position: absolute; inset: 0; background: rgba(255,255,255,.8);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 10; border-radius: 4px;
+        }
+        .toast-container { z-index: 1090; }
+        @media (max-width: 575.98px) {
+            .container-fluid.mt-4 { margin-top: .75rem !important; }
+            .card { margin-bottom: .75rem; }
+            .card-body { padding: .75rem; }
+            #resultWrap { max-height: 50vh; }
+            .btn-sm-mobile { flex: 1 1 45%; font-size: .85rem; padding: .4rem .5rem; }
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    {% set permissions = session.get('user_permissions', {}) %}
+
+    <div class="container-fluid mt-4">
+        <!-- 消息提示 -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 查询条件 -->
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="card-title mb-0"><i class="fa fa-filter me-2"></i>历史数据查询下载</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label for="startDate" class="form-label">开始日期</label>
+                        <input type="date" class="form-control" id="startDate">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="endDate" class="form-label">结束日期</label>
+                        <input type="date" class="form-control" id="endDate">
+                    </div>
+                    <div class="col-md-6 d-flex gap-2 flex-wrap">
+                        {% if session.get('is_admin') or permissions.get('can_wire_data_download_query') %}
+                        <button class="btn btn-primary flex-fill" id="queryBtn" type="button">
+                            <i class="fa fa-search me-1"></i>查询
+                        </button>
+                        {% endif %}
+                        <button class="btn btn-outline-secondary" id="recent3Btn" type="button">
+                            <i class="fa fa-calendar me-1"></i>最近3天
+                        </button>
+                        {% if session.get('is_admin') or permissions.get('can_wire_data_download_download') %}
+                        <button class="btn btn-success flex-fill" id="downloadBtn" type="button">
+                            <i class="fa fa-download me-1"></i>下载Excel
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="form-text mt-2">
+                    页面默认显示最近3天数据；可选日期范围查询完整历史数据并下载（含品番 / EO / 线束明细等全部列）。
+                </div>
+            </div>
+        </div>
+
+        <!-- 查询结果 -->
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="card-title mb-0"><i class="fa fa-table me-2"></i>查询结果
+                    <span class="badge bg-light text-dark ms-2" id="resultCount">0</span>
+                </h5>
+            </div>
+            <div class="card-body position-relative" id="resultCardBody">
+                <!-- 加载状态提示 -->
+                <div class="loading-overlay" id="loadingOverlay" style="display:none;">
+                    <div class="text-center text-muted">
+                        <i class="fa fa-spinner fa-spin fa-2x mb-2"></i>
+                        <div>数据加载中...</div>
+                    </div>
+                </div>
+                <div class="table-responsive" id="resultWrap">
+                    <table class="table table-hover table-bordered table-sm" id="resultTable">
+                        <thead>
+                            <tr id="resultHeader"></tr>
+                        </thead>
+                        <tbody id="resultTbody">
+                            <tr><td colspan="17" class="text-center text-muted py-4">数据加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ============ 修改记录弹窗 ============ -->
+    <div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true"
+         data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="fa fa-edit me-2"></i>修改记录</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="editError" class="alert alert-danger py-2 small" style="display:none;"></div>
+                    <form id="editForm" novalidate>
+                        <input type="hidden" id="editId">
+                        <div class="mb-3">
+                            <label for="editLotNo" class="form-label">LOT NO <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editLotNo">
+                        </div>
+                        <div class="mb-3">
+                            <label for="editCircuitNo" class="form-label">回路号</label>
+                            <input type="text" class="form-control" id="editCircuitNo">
+                        </div>
+                        <div class="mb-3">
+                            <label for="editMachineNo" class="form-label">号机名</label>
+                            <input type="text" class="form-control" id="editMachineNo" placeholder="留空为回路行">
+                        </div>
+                        <div class="mb-3">
+                            <label for="editWireQty" class="form-label">补线数量</label>
+                            <input type="number" class="form-control" id="editWireQty" min="0">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="fa fa-times me-1"></i>取消
+                    </button>
+                    <button type="button" class="btn btn-primary" id="editSaveBtn">
+                        <i class="fa fa-check me-1"></i>保存修改
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ 删除确认弹窗 ============ -->
+    <div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="fa fa-trash me-2"></i>确认删除</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-0">确定要删除以下记录吗？此操作不可恢复！</p>
+                    <div class="mt-2 p-2 bg-light rounded small" id="deleteInfo"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="fa fa-times me-1"></i>取消
+                    </button>
+                    <button type="button" class="btn btn-danger" id="deleteConfirmBtn">
+                        <i class="fa fa-trash me-1"></i>确认删除
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ Toast 通知 ============ -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div class="toast align-items-center text-white border-0" id="appToast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body" id="toastBody"></div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+        (function() {
+            const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+            const tbody = document.getElementById('resultTbody');
+            const headerRow = document.getElementById('resultHeader');
+            const resultCount = document.getElementById('resultCount');
+            const startDate = document.getElementById('startDate');
+            const endDate = document.getElementById('endDate');
+            const loadingOverlay = document.getElementById('loadingOverlay');
+
+            const editModal = new bootstrap.Modal(document.getElementById('editModal'));
+            const deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+            const toastEl = document.getElementById('appToast');
+            const toastBody = document.getElementById('toastBody');
+            const toast = new bootstrap.Toast(toastEl, { delay: 3000 });
+
+            function showToast(msg, type) {
+                toastBody.textContent = msg;
+                toastEl.className = 'toast align-items-center text-white border-0 bg-' +
+                    (type === 'error' ? 'danger' : type === 'warn' ? 'warning text-dark' : 'success');
+                toast.show();
+            }
+
+            const COLUMNS = [
+                ['操作', '_actions', 'sticky-col'],
+                ['车种别', 'vehicle'],
+                ['序号', 'seq'], ['EO', 'eo'], ['品番', 'part_no'], ['LOT/NO', 'lot_no'],
+                ['回路号', 'circuit_no'], ['线质', 'wire'], ['规格/颜色', 'spec_color'],
+                ['长度', 'length_cut2'], ['数量', 'qty'], ['配线区分', 'div_type'],
+                ['端子名1/2', 'terminal'], ['号机名', 'machine'], ['压高', 'crimp'], ['日期', 'date']
+            ];
+
+            function esc(s) {
+                return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+                    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                }[c]));
+            }
+
+            function formatUTC8(dateStr) {
+                if (!dateStr) return '';
+                try {
+                    const date = new Date(dateStr);
+                    if (isNaN(date.getTime())) return dateStr;
+                    return date.getFullYear()
+                        + '-' + String(date.getMonth() + 1).padStart(2, '0')
+                        + '-' + String(date.getDate()).padStart(2, '0')
+                        + ' ' + String(date.getHours()).padStart(2, '0')
+                        + ':' + String(date.getMinutes()).padStart(2, '0')
+                        + ':' + String(date.getSeconds()).padStart(2, '0');
+                } catch (e) {
+                    return dateStr;
+                }
+            }
+
+            function wireDivType(d) {
+                if (!d) return '';
+                const rk = String(d.remark1 || '').trim();
+                if (/^TW-?/i.test(rk)) return 'TW';
+                return String(d.rel2 || '') || String(d.rel1 || '');
+            }
+
+            function getFilter() {
+                return { start: startDate.value || '', end: endDate.value || '' };
+            }
+
+            function showLoading(on) {
+                loadingOverlay.style.display = on ? 'flex' : 'none';
+            }
+
+            const canEdit = {{ 'true' if session.get('is_admin') or permissions.get('can_wire_data_download_edit') else 'false' }};
+            const canDelete = {{ 'true' if session.get('is_admin') or permissions.get('can_wire_data_download_delete') else 'false' }};
+
+            function actionsCellHtml(r) {
+                const id = r._id;
+                const editBtn = canEdit
+                    ? `<button class="btn btn-outline-primary btn-sm py-0 px-1 me-1 js-edit-btn" data-id="${id}" title="修改"><i class="fa fa-edit"></i></button>`
+                    : '';
+                const delBtn = canDelete
+                    ? `<button class="btn btn-outline-danger btn-sm py-0 px-1 js-del-btn" data-id="${id}" title="删除"><i class="fa fa-trash"></i></button>`
+                    : '';
+                return `<td class="text-center text-nowrap sticky-col" style="left:0; background:inherit; z-index:1;">${editBtn}${delBtn}</td>`;
+            }
+
+            function renderRows(rows) {
+                headerRow.innerHTML = COLUMNS.map(c =>
+                    `<th class="${c[2] || ''}">${c[0]}</th>`).join('');
+                tbody.innerHTML = '';
+                if (!rows.length) {
+                    tbody.innerHTML = `<tr><td colspan="${COLUMNS.length}" class="text-center text-muted py-4">
+                        <i class="fa fa-inbox d-block mb-1" style="font-size:2rem;opacity:.5;"></i>未查询到数据</td></tr>`;
+                } else {
+                    const frag = document.createDocumentFragment();
+                    rows.forEach(r => {
+                        const tr = document.createElement('tr');
+                        tr.dataset.id = r._id;
+                        tr.innerHTML = COLUMNS.map(c => {
+                            if (c[1] === '_actions') return actionsCellHtml(r);
+                            const v = String(r[c[1]] == null ? '' : r[c[1]]);
+                            if (c[1] === 'terminal' || c[1] === 'crimp' || c[1] === 'div_type') {
+                                return `<td>${esc(v).replace(/\n/g, '<br>')}</td>`;
+                            }
+                            return `<td>${esc(v)}</td>`;
+                        }).join('');
+                        frag.appendChild(tr);
+                    });
+                    tbody.appendChild(frag);
+                }
+                resultCount.textContent = `${rows.length} 条`;
+            }
+
+            let currentRows = [];
+            const CACHE_KEY = 'wire_data_dl_v1';
+            let abortCtrl = null;
+
+            function processResp(data) {
+                const sorted = (data.records || []).slice().sort((a, b) => {
+                    const ta = String(a.created_at || '');
+                    const tb = String(b.created_at || '');
+                    if (ta !== tb) return tb.localeCompare(ta);
+                    return String(a.lot_no || '').localeCompare(String(b.lot_no || ''));
+                });
+                const rows = [];
+                let no = 0;
+                const seen = new Set();
+                sorted.forEach(r => {
+                    if (!r.machine_no) return;
+                    const li = (data.lot_info || {})[r.lot_no] || {};
+                    const circUp = (r.circuit_no || '').trim().toUpperCase();
+                    // 取数优先用「LOT|回路」稳定键（不依赖品番/EO，LOT登录资料删除后仍命中），
+                    // 未命中再回退旧的 品番|EO|回路 键
+                    const byLot = (data.sublist_by_lot || {})[`${String(r.lot_no).trim()}|${circUp}`];
+                    const key = `${(li.part_no || '').trim().toUpperCase()}|${(li.jx_eo || '').trim().toUpperCase()}|${circUp}`;
+                    const dtlList = byLot !== undefined ? byLot : ((data.sublist || {})[key] || []);
+                    const eff = dtlList.length ? dtlList : [null];
+                    eff.forEach(dtl => {
+                        no++;
+                        const seq = seen.has(r.lot_no) ? '' : 1;
+                        seen.add(r.lot_no);
+                        const machine = String(r.machine_no || '').split('$')[0];
+                        rows.push({
+                            _id: r.id, _raw: r, date: formatUTC8(r.created_at),
+                            vehicle: li.vehicle_type || '', seq: seq,
+                            part_no: li.part_no || '', eo: li.jx_eo || '',
+                            lot_no: r.lot_no, circuit_no: r.circuit_no || '',
+                            wire: dtl ? (dtl.wire || '') : '',
+                            spec_color: dtl ? `${dtl.sq || ''}/${dtl.color || ''}` : '',
+                            length_cut2: dtl ? (dtl.length_cut2 || '') : '',
+                            qty: r.wire_qty, div_type: wireDivType(dtl),
+                            terminal: dtl ? `${dtl.tml1 || ''}\n${dtl.tml2 || ''}` : '',
+                            machine: machine,
+                            crimp: dtl ? `${dtl.strip1 || ''}\n${dtl.strip2 || ''}` : '',
+                        });
+                    });
+                });
+                return rows;
+            }
+
+            async function doQuery(silent) {
+                if (abortCtrl) abortCtrl.abort();
+                abortCtrl = new AbortController();
+                const f = getFilter();
+                if (!silent) showLoading(true);
+                resultCount.textContent = silent ? `${currentRows.length} 条 (刷新中...)` : '加载中...';
+                try {
+                    const params = new URLSearchParams();
+                    if (f.start) params.set('start', f.start);
+                    if (f.end) params.set('end', f.end);
+                    const resp = await fetch('/wire/scan_entry/data?' + params.toString(), {
+                        headers: { 'X-CSRFToken': CSRF }, signal: abortCtrl.signal
+                    });
+                    const data = await resp.json();
+                    if (!data.success) throw new Error(data.error || '查询失败');
+                    currentRows = processResp(data);
+                    renderRows(currentRows);
+                    try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch(e) {}
+                } catch (err) {
+                    if (err.name === 'AbortError') return;
+                    if (!silent) {
+                        resultCount.textContent = '0 条';
+                        tbody.innerHTML = `<tr><td colspan="${COLUMNS.length}" class="text-center text-danger py-4">
+                            <i class="fa fa-exclamation-circle me-1"></i>${esc(err.message)}</td></tr>`;
+                    }
+                } finally {
+                    if (!silent) showLoading(false);
+                    abortCtrl = null;
+                }
+            }
+
+            // ---- 查询按钮 ----
+            document.getElementById('queryBtn').addEventListener('click', doQuery);
+
+            // ---- 最近3天快捷按钮 ----
+            document.getElementById('recent3Btn').addEventListener('click', function() {
+                startDate.value = '';
+                endDate.value = '';
+                doQuery();
+            });
+
+            // ---- 默认日期为当天 ----
+            (function initDefaultDate() {
+                const now = new Date();
+                const pad = n => String(n).padStart(2, '0');
+                const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+                startDate.value = today;
+                endDate.value = today;
+            })();
+
+            // ---- 下载 ----
+            document.getElementById('downloadBtn').addEventListener('click', function() {
+                const f = getFilter();
+                const params = new URLSearchParams();
+                if (f.start) params.set('start', f.start);
+                if (f.end) params.set('end', f.end);
+                window.location.href = '/wire/scan_entry/download?' + params.toString();
+            });
+
+            // ---- 修改弹窗 ----
+            const editId = document.getElementById('editId');
+            const editLotNo = document.getElementById('editLotNo');
+            const editCircuitNo = document.getElementById('editCircuitNo');
+            const editMachineNo = document.getElementById('editMachineNo');
+            const editWireQty = document.getElementById('editWireQty');
+            const editError = document.getElementById('editError');
+            const editSaveBtn = document.getElementById('editSaveBtn');
+            let editingId = null;
+
+            function findRowById(id) {
+                return currentRows.find(r => String(r._id) === String(id));
+            }
+
+            tbody.addEventListener('click', function(e) {
+                const editBtn = e.target.closest('.js-edit-btn');
+                const delBtn = e.target.closest('.js-del-btn');
+                if (editBtn) {
+                    const id = editBtn.dataset.id;
+                    const row = findRowById(id);
+                    if (!row) return;
+                    const raw = row._raw;
+                    editingId = id;
+                    editId.value = id;
+                    editLotNo.value = raw.lot_no || '';
+                    editCircuitNo.value = raw.circuit_no || '';
+                    // 预填完整号机名（含 $编号 后缀），避免保存时丢失后缀导致数据不完整
+                    editMachineNo.value = raw.machine_no || '';
+                    editWireQty.value = raw.wire_qty != null ? raw.wire_qty : '';
+                    editError.style.display = 'none';
+                    editSaveBtn.disabled = false;
+                    editSaveBtn.innerHTML = '<i class="fa fa-check me-1"></i>保存修改';
+                    editModal.show();
+                }
+                if (delBtn) {
+                    const id = delBtn.dataset.id;
+                    const row = findRowById(id);
+                    if (!row) return;
+                    document.getElementById('deleteInfo').innerHTML =
+                        `LOT: <b>${esc(row.lot_no)}</b> | 回路号: ${esc(row.circuit_no)} | ` +
+                        `号机: ${esc(row.machine)} | 数量: ${esc(row.qty)} | ${esc(row.date)}`;
+                    document.getElementById('deleteConfirmBtn').dataset.id = id;
+                    deleteModal.show();
+                }
+            });
+
+            editSaveBtn.addEventListener('click', async function() {
+                if (!editingId) return;
+                editError.style.display = 'none';
+                const payload = {
+                    id: parseInt(editingId, 10),
+                    lot_no: editLotNo.value.trim(),
+                    circuit_no: editCircuitNo.value.trim(),
+                    machine_no: editMachineNo.value.trim(),
+                    wire_qty: editWireQty.value === '' ? null : parseInt(editWireQty.value, 10),
+                };
+                if (!payload.lot_no) {
+                    editError.textContent = 'LOT不能为空';
+                    editError.style.display = 'block';
+                    return;
+                }
+                editSaveBtn.disabled = true;
+                editSaveBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>保存中...';
+                try {
+                    const resp = await fetch('/wire/scan_entry/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        editModal.hide();
+                        showToast('修改成功', 'success');
+                        await doQuery(); // 刷新数据
+                    } else {
+                        editError.textContent = data.error || '修改失败';
+                        editError.style.display = 'block';
+                    }
+                } catch (err) {
+                    editError.textContent = '网络错误，修改失败';
+                    editError.style.display = 'block';
+                } finally {
+                    editSaveBtn.disabled = false;
+                    editSaveBtn.innerHTML = '<i class="fa fa-check me-1"></i>保存修改';
+                }
+            });
+
+            // ---- 删除确认 ----
+            const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
+            deleteConfirmBtn.addEventListener('click', async function() {
+                const id = this.dataset.id;
+                if (!id) return;
+                this.disabled = true;
+                this.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>删除中...';
+                try {
+                    const resp = await fetch('/wire/scan_entry/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify({ id: parseInt(id, 10) })
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        deleteModal.hide();
+                        showToast('删除成功', 'success');
+                        await doQuery(); // 刷新数据
+                    } else {
+                        showToast(data.error || '删除失败', 'error');
+                    }
+                } catch (err) {
+                    showToast('网络错误，删除失败', 'error');
+                } finally {
+                    this.disabled = false;
+                    this.innerHTML = '<i class="fa fa-trash me-1"></i>确认删除';
+                }
+            });
+
+            // ---- 页面打开：先秒显缓存，后台静默刷新（按默认当天日期查询） ----
+            doQuery();
+        })();
+    </script>
+</body>
+</html>

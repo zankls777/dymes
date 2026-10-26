@@ -1,0 +1,2700 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>用户与权限管理</title>
+    <!-- 引入Bootstrap CSS -->
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <!-- 引入Font Awesome -->
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .permission-section {
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+        
+        .page-permission-group {
+            background-color: white;
+            border: 1px solid #dee2e6;
+            border-radius: 3px;
+            padding: 6px;
+            margin-bottom: 6px;
+        }
+        
+        .page-header {
+            background-color: #f8f9fa;
+            padding: 6px;
+            border-radius: 2px;
+            margin-bottom: 6px;
+        }
+        
+        .page-permissions {
+            border-left: 2px solid #007bff;
+            padding-left: 8px;
+            margin-top: 6px;
+        }
+        
+        .permission-tag {
+            display: inline-block;
+            padding: 4px 10px;
+            margin: 4px 8px 4px 0;
+            border-radius: 14px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #ffffff; /* 白字 */
+            background-color: #0d6efd; /* 纯色高对比填充 */
+            border: 1px solid #0a58ca; /* 深色边框增强轮廓 */
+            box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+        }
+
+        .permission-tag:hover {
+            background-color: #0b5ed7;
+            border-color: #0a53be;
+        }
+
+        /* 仅用作容器，不上底色，不与页面争抢对比 */
+        .permission-container {
+            background-color: transparent;
+            border: 0;
+            border-radius: 0;
+            padding: 0;
+        }
+        
+        .form-check-input:indeterminate {
+            background-color: #ffc107;
+            border-color: #ffc107;
+        }
+        
+        .page-checkbox:checked + label {
+            color: #007bff;
+            font-weight: bold;
+        }
+        
+        .page-permission-group:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: box-shadow 0.3s ease;
+        }
+        
+        /* 权限管理弹窗宽度设置 */
+        #permissionManagementModal .modal-dialog {
+            max-width: 85%;
+            width: 85%;
+        }
+        
+        @media (min-width: 1200px) {
+            #permissionManagementModal .modal-dialog {
+                max-width: 75%;
+                width: 75%;
+            }
+        }
+        
+        @media (min-width: 1400px) {
+            #permissionManagementModal .modal-dialog {
+                max-width: 70%;
+                width: 70%;
+            }
+        }
+        
+        /* 紧凑布局优化 */
+        #permissionManagementModal .modal-body {
+            padding: 12px;
+        }
+        
+        #permissionManagementModal .form-check {
+            margin-bottom: 4px;
+        }
+        
+        #permissionManagementModal .form-check-label {
+            font-size: 12px;
+            padding-left: 3px;
+        }
+        
+        #permissionManagementModal .row {
+            margin-bottom: 6px;
+        }
+        
+        #permissionManagementModal .col-md-3 {
+            padding: 0 6px;
+        }
+        
+        #permissionManagementModal h6 {
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        
+        #permissionManagementModal .badge {
+            font-size: 9px;
+            padding: 2px 4px;
+        }
+
+        /* ---------- 用户列表 ---------- */
+        .filter-toolbar {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 8px 12px;
+        }
+
+        .user-table {
+            margin-bottom: 0;
+            font-size: 13px;
+            /* 固定表格布局，严格按各 <th> 设定的列宽渲染，避免列被拉伸 */
+            table-layout: fixed;
+            width: 100%;
+        }
+
+        /* 用户名 / 权限组列过长时省略号截断，保持列宽稳定 */
+        .user-table td:nth-child(2),
+        .user-table td:nth-child(3),
+        .user-table td:nth-child(4),
+        .user-table td:nth-child(8) {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* 收紧表格行的上下内边距，消除行内多余留白 */
+        .user-table thead th,
+        .user-table tbody td {
+            padding-top: 4px;
+            padding-bottom: 4px;
+        }
+
+        .user-table thead th {
+            white-space: nowrap;
+            background: #f1f3f5;
+            font-weight: 600;
+            font-size: 12px;
+            color: #495057;
+        }
+
+        .user-table th.sortable:hover {
+            background: #e7ebef;
+            color: #0d6efd;
+        }
+
+        .user-table td {
+            vertical-align: middle;
+        }
+
+        .user-table .btn-group .btn {
+            padding: 1px 6px;
+            font-size: 11px;
+            line-height: 1.6;
+        }
+
+        .user-table .badge {
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        /* 表格单元格内联徽标不换行换行控制 */
+        .user-table td:nth-child(6) {
+            max-width: 240px;
+        }
+
+        /* 加载指示器 */
+        .loader {
+            display: none;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: um-spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+
+        @keyframes um-spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* ---------- 响应式适配 ---------- */
+        @media (max-width: 991.98px) {
+            .filter-toolbar .col-12,
+            .filter-toolbar .col-6 {
+                margin-bottom: 6px;
+            }
+        }
+
+        @media (max-width: 767.98px) {
+            .user-table {
+                font-size: 12px;
+            }
+            .user-table thead th,
+            .user-table td {
+                padding: 6px 4px;
+            }
+            /* 小屏把更多列折叠为隐藏，减少横向滚动 */
+            .user-table th:nth-child(6),
+            .user-table td:nth-child(6) {
+                display: none;
+            }
+            #batchPermissionModal .modal-body,
+            #importUserModal .modal-body {
+                padding: 10px;
+            }
+        }
+
+        @media (max-width: 575.98px) {
+            .user-table th:nth-child(5),
+            .user-table td:nth-child(5),
+            .user-table th:nth-child(9),
+            .user-table td:nth-child(9) {
+                display: none;
+            }
+            .card-header .h5,
+            .card-header h5 {
+                font-size: 15px;
+            }
+        }
+    </style>
+
+</head>
+<body>
+    {% include '_navbar.html' %}
+
+    <div class="container-fluid mt-4">
+
+        <!-- 闪现消息 -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 主内容区域 -->
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <h5 class="card-title mb-0"><i class="fa fa-users mr-1"></i> 用户与权限管理</h5>
+                            <div class="d-flex gap-2 flex-wrap">
+                                {% if current_user and (current_user.is_admin or (current_user.permission and current_user.permission.can_user_mgmt_add_user)) %}
+                                    <button type="button" class="btn btn-primary" id="addUserBtn" data-bs-toggle="modal" data-bs-target="#addUserModal">
+                                        <i class="fa fa-plus mr-1"></i> 添加用户
+                                    </button>
+                                    <button type="button" class="btn btn-outline-success" id="importUserBtn" data-bs-toggle="modal" data-bs-target="#importUserModal">
+                                        <i class="fa fa-file-excel-o mr-1"></i> 批量导入
+                                    </button>
+                                {% endif %}
+                                {% if current_user and (current_user.is_admin or (current_user.permission and current_user.permission.can_user_mgmt_manage_permissions)) %}
+                                    <button type="button" class="btn btn-outline-info" id="batchPermissionBtn" disabled data-bs-toggle="modal" data-bs-target="#batchPermissionModal">
+                                        <i class="fa fa-object-group mr-1"></i> 批量权限 <span class="badge bg-secondary" id="batchSelectedCount">0</span>
+                                    </button>
+                                    <a href="{{ url_for('rbac.role_management_page') }}" class="btn btn-outline-secondary">
+                                        <i class="fa fa-layer-group mr-1"></i> 权限组管理
+                                    </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- 筛选工具栏 -->
+                        <div class="filter-toolbar mb-2">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-12 col-md-4 col-lg-3">
+                                    <label class="form-label mb-1 small text-muted">关键字</label>
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text"><i class="fa fa-search"></i></span>
+                                        <input type="text" class="form-control" id="filterKeyword" placeholder="用户名 / 姓名 / 部门">
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3 col-lg-2">
+                                    <label class="form-label mb-1 small text-muted">部门</label>
+                                    <select class="form-select form-select-sm" id="filterDepartment">
+                                        <option value="">全部部门</option>
+                                    </select>
+                                </div>
+                                <div class="col-6 col-md-3 col-lg-2">
+                                    <label class="form-label mb-1 small text-muted">权限组</label>
+                                    <select class="form-select form-select-sm" id="filterRole">
+                                        <option value="">全部权限组</option>
+                                    </select>
+                                </div>
+                                <div class="col-6 col-md-2 col-lg-2">
+                                    <label class="form-label mb-1 small text-muted">状态</label>
+                                    <select class="form-select form-select-sm" id="filterStatus">
+                                        <option value="">全部状态</option>
+                                        <option value="active">启用</option>
+                                        <option value="disabled">已禁用</option>
+                                    </select>
+                                </div>
+                                <div class="col-6 col-md-2 col-lg-1">
+                                    <label class="form-label mb-1 small text-muted">类型</label>
+                                    <select class="form-select form-select-sm" id="filterIsAdmin">
+                                        <option value="">全部</option>
+                                        <option value="1">管理员</option>
+                                        <option value="0">普通用户</option>
+                                    </select>
+                                </div>
+                                <div class="col-6 col-md-2 col-lg-1">
+                                    <label class="form-label mb-1 small text-muted">作业者</label>
+                                    <select class="form-select form-select-sm" id="filterIsOperator">
+                                        <option value="">全部</option>
+                                        <option value="1">作业者</option>
+                                        <option value="0">非作业者</option>
+                                    </select>
+                                </div>
+                                <div class="col-12 col-md-12 col-lg-2 d-flex gap-2">
+                                    <button type="button" class="btn btn-sm btn-primary flex-fill" id="applyFilterBtn">
+                                        <i class="fa fa-filter mr-1"></i> 查询
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="resetFilterBtn" title="重置">
+                                        <i class="fa fa-undo"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 用户列表 -->
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover align-middle user-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:36px;">
+                                            <input type="checkbox" class="form-check-input" id="selectAllUsers" title="全选本页">
+                                        </th>
+                                        <th class="sortable" data-sort="id" style="width:60px;">ID <i class="fa fa-sort text-muted"></i></th>
+                                        <th class="sortable" data-sort="username" style="width:130px;">用户名 <i class="fa fa-sort text-muted"></i></th>
+                                        <th style="width:110px;">权限组</th>
+                                        <th class="sortable" data-sort="is_admin" style="width:90px;">管理员 <i class="fa fa-sort text-muted"></i></th>
+                                        <th class="sortable" data-sort="is_operator" style="width:90px;">作业者 <i class="fa fa-sort text-muted"></i></th>
+                                        <th class="sortable" data-sort="is_active" style="width:80px;">状态 <i class="fa fa-sort text-muted"></i></th>
+                                        <th style="width:180px;">权限</th>
+                                        <th style="width:210px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="userTableBody">
+                                    <tr><td colspan="11" class="text-center text-muted py-4">
+                                        <span class="spinner-border spinner-border-sm mr-2"></span>加载中...
+                                    </td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- 分页 -->
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3">
+                            <div class="text-muted small" id="paginationInfo"></div>
+                            <nav aria-label="用户分页">
+                                <ul class="pagination pagination-sm mb-0" id="pagination"></ul>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加用户模态框 -->
+    <div class="modal fade" id="addUserModal" tabindex="-1" aria-labelledby="addUserModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addUserModalLabel">添加用户</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="addUserForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="add_user">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="add_username" class="form-label">用户名 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="add_username" name="username" required>
+                            <div class="error-message" id="add_username_error"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="add_password" class="form-label">密码 <span class="text-danger">*</span></label>
+                            <input type="password" class="form-control" id="add_password" name="password" required>
+                            <div class="error-message" id="add_password_error"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="add_confirm_password" class="form-label">确认密码 <span class="text-danger">*</span></label>
+                            <input type="password" class="form-control" id="add_confirm_password" required>
+                            <div class="error-message" id="add_confirm_password_error"></div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="add_full_name" class="form-label">姓名</label>
+                                <input type="text" class="form-control" id="add_full_name" name="full_name" maxlength="80" placeholder="选填">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="add_department" class="form-label">部门</label>
+                                <input type="text" class="form-control" id="add_department" name="department" maxlength="80" placeholder="选填">
+                            </div>
+                        </div>
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="add_is_admin" name="is_admin">
+                            <label class="form-check-label" for="add_is_admin">设为管理员</label>
+                        </div>
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="add_is_operator" name="is_operator">
+                            <label class="form-check-label" for="add_is_operator">设为作业者</label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">
+                            添加用户 <span class="loader" id="addUserLoader"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修改密码模态框 -->
+    <div class="modal fade" id="changePasswordModal" tabindex="-1" aria-labelledby="changePasswordModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="changePasswordModalLabel">修改密码</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="changePasswordForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="change_password">
+                    <input type="hidden" id="change_user_id" name="user_id">
+                    <div class="modal-body">
+                        <p>为用户 <strong><span id="change_username"></span></strong> 修改密码</p>
+                        <div class="mb-3">
+                            <label for="change_password" class="form-label">新密码 <span class="text-danger">*</span></label>
+                            <input type="password" class="form-control" id="change_password" name="new_password" required>
+                            <div class="error-message" id="change_password_error"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="change_confirm_password" class="form-label">确认新密码 <span class="text-danger">*</span></label>
+                            <input type="password" class="form-control" id="change_confirm_password" required>
+                            <div class="error-message" id="change_confirm_password_error"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">
+                            修改密码 <span class="loader" id="changePasswordLoader"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 重置密码模态框 -->
+    <div class="modal fade" id="resetPasswordModal" tabindex="-1" aria-labelledby="resetPasswordModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="resetPasswordModalLabel">重置密码</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="resetPasswordForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="reset_password">
+                    <input type="hidden" id="reset_user_id" name="user_id">
+                    <div class="modal-body">
+                        <div class="alert alert-warning" role="alert">
+                            <i class="fa fa-exclamation-triangle mr-2"></i>
+                            确认重置用户 <strong><span id="reset_username"></span></strong> 的密码？
+                            <br>重置后密码将恢复为默认值：123456
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning">
+                            确认重置 <span class="loader" id="resetPasswordLoader"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 删除用户模态框 -->
+    <div class="modal fade" id="deleteUserModal" tabindex="-1" aria-labelledby="deleteUserModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deleteUserModalLabel">删除用户</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="deleteUserForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="delete_user">
+                    <input type="hidden" id="delete_user_id" name="user_id">
+                    <div class="modal-body">
+                        <div class="alert alert-danger" role="alert">
+                            <i class="fa fa-exclamation-circle mr-2"></i>
+                            确认删除用户 <strong><span id="delete_username"></span></strong>？
+                            <br>此操作不可撤销，用户相关数据将被永久删除。
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-danger">
+                            确认删除 <span class="loader" id="deleteUserLoader"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 账号启用/禁用模态框 -->
+    <div class="modal fade" id="toggleUserStatusModal" tabindex="-1" aria-labelledby="toggleUserStatusModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="toggleUserStatusModalLabel">账号状态</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="toggleUserStatusForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="toggle_user_status">
+                    <input type="hidden" id="toggle_user_id" name="user_id">
+                    <input type="hidden" id="toggle_user_enable" name="enable">
+                    <div class="modal-body">
+                        <div class="alert alert-warning" role="alert">
+                            <i class="fa fa-exclamation-triangle mr-2"></i>
+                            <span id="toggleStatusTip"></span>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary" id="toggleStatusSubmitBtn">确认</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 权限管理模态框 -->
+    <div class="modal fade" id="permissionManagementModal" tabindex="-1" aria-labelledby="permissionManagementModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="permissionManagementModalLabel">权限管理</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="permissionManagementForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="permission_management">
+                    <input type="hidden" id="permission_user_id" name="user_id">
+                    <div class="modal-body">
+                        <p>为用户 <strong><span id="permission_username"></span></strong> 管理权限</p>
+
+                        <!-- 权限列表 -->
+                        <div class="mb-1">
+                            <!-- 页面权限（二级选择） -->
+                            <div class="permission-section mb-2">
+                                <h6 class="text-success border-bottom pb-1" style="margin-bottom: 6px;">
+                                    <i class="fa fa-sitemap"></i> 权限管理
+                                </h6>
+                                
+                                <!-- 成品管理页面 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_products" data-page="products">
+                                            <label class="form-check-label fw-bold" for="page_products">成品管理页面</label>
+                                        </div>
+                                        <span class="badge bg-info">页面访问 + 按钮权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_products_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_products" name="permissions" value="can_products" data-page="products">
+                                                    <label class="form-check-label" for="can_products">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_products_add" name="permissions" value="can_products_add" data-page="products">
+                                                    <label class="form-check-label" for="can_products_add">添加成品</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_products_batch_add" name="permissions" value="can_products_batch_add" data-page="products">
+                                                    <label class="form-check-label" for="can_products_batch_add">批量添加</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_products_edit" name="permissions" value="can_products_edit" data-page="products">
+                                                    <label class="form-check-label" for="can_products_edit">编辑成品</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_products_delete" name="permissions" value="can_products_delete" data-page="products">
+                                                    <label class="form-check-label" for="can_products_delete">删除成品</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_products_batch_delete" name="permissions" value="can_products_batch_delete" data-page="products">
+                                                    <label class="form-check-label" for="can_products_batch_delete">批量删除</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_products_download" name="permissions" value="can_products_download" data-page="products">
+                                                    <label class="form-check-label" for="can_products_download">下载成品</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_products_import" name="permissions" value="can_products_import" data-page="products">
+                                                    <label class="form-check-label" for="can_products_import">导入成品</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {# 车种管理页面隐藏：结构保留但默认不显示 #}
+                                <div class="page-permission-group mb-1 d-none" aria-hidden="true">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_vehicle_types" data-page="vehicle_types">
+                                            <label class="form-check-label fw-bold" for="page_vehicle_types">车种管理页面</label>
+                                        </div>
+                                        <span class="badge bg-success">页面访问 + 按钮权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_vehicle_types_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_vehicle_types" name="permissions" value="can_vehicle_types" data-page="vehicle_types">
+                                                    <label class="form-check-label" for="can_vehicle_types">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_vehicle_types_add" name="permissions" value="can_vehicle_types_add" data-page="vehicle_types">
+                                                    <label class="form-check-label" for="can_vehicle_types_add">添加车种</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_vehicle_types_batch_add" name="permissions" value="can_vehicle_types_batch_add" data-page="vehicle_types">
+                                                    <label class="form-check-label" for="can_vehicle_types_batch_add">批量添加</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_vehicle_types_edit" name="permissions" value="can_vehicle_types_edit" data-page="vehicle_types">
+                                                    <label class="form-check-label" for="can_vehicle_types_edit">编辑车种</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_vehicle_types_delete" name="permissions" value="can_vehicle_types_delete" data-page="vehicle_types">
+                                                    <label class="form-check-label" for="can_vehicle_types_delete">删除车种</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_vehicle_types_batch_delete" name="permissions" value="can_vehicle_types_batch_delete" data-page="vehicle_types">
+                                                    <label class="form-check-label" for="can_vehicle_types_batch_delete">批量删除</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_vehicle_types_download" name="permissions" value="can_vehicle_types_download" data-page="vehicle_types">
+                                                    <label class="form-check-label" for="can_vehicle_types_download">下载车种</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_vehicle_types_import" name="permissions" value="can_vehicle_types_import" data-page="vehicle_types">
+                                                    <label class="form-check-label" for="can_vehicle_types_import">导入车种(Excel)</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 资材量下载页面 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_material_download" data-page="material_download">
+                                            <label class="form-check-label fw-bold" for="page_material_download">资材量下载页面</label>
+                                        </div>
+                                        <span class="badge bg-secondary">页面访问 + 按钮权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_material_download_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_download" name="permissions" value="can_material_download" data-page="material_download">
+                                                    <label class="form-check-label" for="can_material_download">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_download_download" name="permissions" value="can_material_download_download" data-page="material_download">
+                                                    <label class="form-check-label" for="can_material_download_download">下载资材量</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_download_update" name="permissions" value="can_material_download_update" data-page="material_download">
+                                                    <label class="form-check-label" for="can_material_download_update">更新资材量</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 文件管理页面 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_file_management" data-page="file_management">
+                                            <label class="form-check-label fw-bold" for="page_file_management">文件管理页面</label>
+                                        </div>
+                                        <span class="badge bg-dark">页面访问 + 按钮权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_file_management_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_file_management" name="permissions" value="can_file_management" data-page="file_management">
+                                                    <label class="form-check-label" for="can_file_management">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_file_management_upload" name="permissions" value="can_file_management_upload" data-page="file_management">
+                                                    <label class="form-check-label" for="can_file_management_upload">上传文件</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_file_management_delete" name="permissions" value="can_file_management_delete" data-page="file_management">
+                                                    <label class="form-check-label" for="can_file_management_delete">删除文件（单个）</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_file_management_download" name="permissions" value="can_file_management_download" data-page="file_management">
+                                                    <label class="form-check-label" for="can_file_management_download">下载文件</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_file_management_export_file_list" name="permissions" value="can_file_management_export_file_list" data-page="file_management">
+                                                    <label class="form-check-label" for="can_file_management_export_file_list">下载文件清单明细</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_batch_delete" name="permissions" value="can_batch_delete" data-page="file_management">
+                                                    <label class="form-check-label" for="can_batch_delete">批量删除文件</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 数据对比页面 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_file_comparison" data-page="file_comparison">
+                                            <label class="form-check-label fw-bold" for="page_file_comparison">数据对比页面</label>
+                                        </div>
+                                        <span class="badge bg-primary">页面访问</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_file_comparison_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_file_comparison" name="permissions" value="can_file_comparison" data-page="file_comparison">
+                                                    <label class="form-check-label" for="can_file_comparison">页面访问</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- RW对比页面 -->
+                                <div class="page-permission-group mb-3">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_rw_comparison" data-page="rw_comparison">
+                                            <label class="form-check-label fw-bold" for="page_rw_comparison">RW对比页面</label>
+                                        </div>
+                                        <span class="badge bg-info">页面访问</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_rw_comparison_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_rw_comparison" name="permissions" value="can_rw_comparison" data-page="rw_comparison">
+                                                    <label class="form-check-label" for="can_rw_comparison">页面访问</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- SubList页面 -->
+                                <div class="page-permission-group mb-3">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_sub_list" data-page="sub_list">
+                                            <label class="form-check-label fw-bold" for="page_sub_list">SubList页面</label>
+                                        </div>
+                                        <span class="badge bg-success">页面访问 + 按钮权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_sub_list_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_sub_list" name="permissions" value="can_sub_list" data-page="sub_list">
+                                                    <label class="form-check-label" for="can_sub_list">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_sub_list_download" name="permissions" value="can_sub_list_download" data-page="sub_list">
+                                                    <label class="form-check-label" for="can_sub_list_download">下载SubList</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_sub_list_show_differences" name="permissions" value="can_sub_list_show_differences" data-page="sub_list">
+                                                    <label class="form-check-label" for="can_sub_list_show_differences">显示差异</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- UsageList页面 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_usage_list" data-page="usage_list">
+                                            <label class="form-check-label fw-bold" for="page_usage_list">UsageList页面</label>
+                                        </div>
+                                        <span class="badge bg-warning">页面访问 + 按钮权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_usage_list_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_usage_list" name="permissions" value="can_usage_list" data-page="usage_list">
+                                                    <label class="form-check-label" for="can_usage_list">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_usage_list_download" name="permissions" value="can_usage_list_download" data-page="usage_list">
+                                                    <label class="form-check-label" for="can_usage_list_download">下载UsageList</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 资材换算页面 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_material_calculator" data-page="material_calculator">
+                                            <label class="form-check-label fw-bold" for="page_material_calculator">资材换算</label>
+                                        </div>
+                                        <span class="badge bg-info">页面访问</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_material_calculator_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_calculator" name="permissions" value="can_material_calculator" data-page="material_calculator">
+                                                    <label class="form-check-label" for="can_material_calculator">页面访问</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 生产管理页面 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_production" data-page="production">
+                                            <label class="form-check-label fw-bold" for="page_production">生产管理</label>
+                                        </div>
+                                        <span class="badge bg-warning">页面访问</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_production_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_invest_tidy" name="permissions" value="can_invest_tidy" data-page="production">
+                                                    <label class="form-check-label" for="can_invest_tidy">投入计划书</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_invest_summary" name="permissions" value="can_invest_summary" data-page="production">
+                                                    <label class="form-check-label" for="can_invest_summary">投资汇总</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_corrugated_location" name="permissions" value="can_corrugated_location" data-page="production">
+                                                    <label class="form-check-label" for="can_corrugated_location">波纹管位置</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 数据管理页面 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_data_management" data-page="data_management">
+                                            <label class="form-check-label fw-bold" for="page_data_management">数据管理</label>
+                                        </div>
+                                        <span class="badge bg-secondary">页面访问</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_data_management_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_data_management" name="permissions" value="can_data_management" data-page="data_management">
+                                                    <label class="form-check-label" for="can_data_management">页面访问</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 其他页面 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_others" data-page="others">
+                                            <label class="form-check-label fw-bold" for="page_others">其他页面</label>
+                                        </div>
+                                        <span class="badge bg-light text-dark">页面访问</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_others_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_test_sheet" name="permissions" value="can_test_sheet" data-page="others">
+                                                    <label class="form-check-label" for="can_test_sheet">测试表</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_index" name="permissions" value="can_index" data-page="others">
+                                                    <label class="form-check-label" for="can_index">首页/仪表盘</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 系统管理页面：允许授予系统管理访问及用户管理操作权限 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_system_management" data-page="system_management">
+                                            <label class="form-check-label fw-bold" for="page_system_management">系统管理</label>
+                                        </div>
+                                        <span class="badge bg-danger">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_system_management_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_system_management" name="permissions" value="can_system_management" data-page="system_management">
+                                                    <label class="form-check-label" for="can_system_management">系统管理访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_user_mgmt_add_user" name="permissions" value="can_user_mgmt_add_user" data-page="system_management">
+                                                    <label class="form-check-label" for="can_user_mgmt_add_user">添加用户</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_user_mgmt_change_password" name="permissions" value="can_user_mgmt_change_password" data-page="system_management">
+                                                    <label class="form-check-label" for="can_user_mgmt_change_password">修改密码</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_user_mgmt_reset_password" name="permissions" value="can_user_mgmt_reset_password" data-page="system_management">
+                                                    <label class="form-check-label" for="can_user_mgmt_reset_password">重置密码</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_user_mgmt_manage_permissions" name="permissions" value="can_user_mgmt_manage_permissions" data-page="system_management">
+                                                    <label class="form-check-label" for="can_user_mgmt_manage_permissions">管理权限</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_user_mgmt_delete_user" name="permissions" value="can_user_mgmt_delete_user" data-page="system_management">
+                                                    <label class="form-check-label" for="can_user_mgmt_delete_user">删除用户</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                                <!-- 补线打端子权限 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-2">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_wire" data-page="wire">
+                                            <label class="form-check-label fw-bold" for="page_wire">补线打端子</label>
+                                        </div>
+                                        <span class="badge bg-danger">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_wire_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_lot_login" name="permissions" value="can_wire_lot_login" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_lot_login">LOT登录页面</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_lot_login_add" name="permissions" value="can_wire_lot_login_add" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_lot_login_add">手动登录</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_lot_login_upload" name="permissions" value="can_wire_lot_login_upload" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_lot_login_upload">Excel批量导入</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_lot_login_clear" name="permissions" value="can_wire_lot_login_clear" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_lot_login_clear">清空列表</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_lot_login_download" name="permissions" value="can_wire_lot_login_download" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_lot_login_download">下载LOT登录</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_scan_entry" name="permissions" value="can_wire_scan_entry" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_scan_entry">扫描录入页面</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_scan_entry_scan" name="permissions" value="can_wire_scan_entry_scan" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_scan_entry_scan">扫码/手动添加</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_scan_entry_save" name="permissions" value="can_wire_scan_entry_save" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_scan_entry_save">保存数据</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_scan_entry_edit" name="permissions" value="can_wire_scan_entry_edit" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_scan_entry_edit">修改记录</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_scan_entry_delete" name="permissions" value="can_wire_scan_entry_delete" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_scan_entry_delete">删除记录</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_scan_entry_download" name="permissions" value="can_wire_scan_entry_download" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_scan_entry_download">下载扫描数据</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_data_download" name="permissions" value="can_wire_data_download" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_data_download">数据下载页面</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_data_download_query" name="permissions" value="can_wire_data_download_query" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_data_download_query">查询数据</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_data_download_download" name="permissions" value="can_wire_data_download_download" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_data_download_download">下载Excel</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_data_download_edit" name="permissions" value="can_wire_data_download_edit" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_data_download_edit">修改记录</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_data_download_delete" name="permissions" value="can_wire_data_download_delete" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_data_download_delete">删除记录</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_crimp_login" name="permissions" value="can_wire_crimp_login" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_crimp_login">压高登陆页面</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_wire_crimp_login_upload" name="permissions" value="can_wire_crimp_login_upload" data-page="wire">
+                                                    <label class="form-check-label" for="can_wire_crimp_login_upload">Excel批量导入</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 资材入库 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_material_inbound" data-page="material_inbound">
+                                            <label class="form-check-label fw-bold" for="page_material_inbound">资材入库</label>
+                                        </div>
+                                        <span class="badge bg-primary">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_material_inbound_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound_daily" name="permissions" value="can_material_inbound_daily" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound_daily">资材每日入库页面</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound_daily_upload" name="permissions" value="can_material_inbound_daily_upload" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound_daily_upload">Excel上传明细</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound_daily_add" name="permissions" value="can_material_inbound_daily_add" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound_daily_add">手动新增明细</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound_daily_edit" name="permissions" value="can_material_inbound_daily_edit" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound_daily_edit">编辑明细</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound_daily_delete" name="permissions" value="can_material_inbound_daily_delete" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound_daily_delete">删除明细</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound_daily_download" name="permissions" value="can_material_inbound_daily_download" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound_daily_download">导出明细</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound" name="permissions" value="can_material_inbound" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound">资材入库页面</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound_scan" name="permissions" value="can_material_inbound_scan" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound_scan">扫码/搜索定位</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound_submit" name="permissions" value="can_material_inbound_submit" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound_submit">提交入库</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_material_inbound_revoke" name="permissions" value="can_material_inbound_revoke" data-page="material_inbound">
+                                                    <label class="form-check-label" for="can_material_inbound_revoke">撤销入库</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 盘点管理 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_inventory" data-page="inventory">
+                                            <label class="form-check-label fw-bold" for="page_inventory">盘点管理</label>
+                                        </div>
+                                        <span class="badge bg-primary">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_inventory_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_login" name="permissions" value="can_inventory_login" data-page="inventory">
+                                                    <label class="form-check-label" for="can_inventory_login">盘点数据登录页面</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_check" name="permissions" value="can_inventory_check" data-page="inventory">
+                                                    <label class="form-check-label" for="can_inventory_check">盘点实查页面</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_summary" name="permissions" value="can_inventory_summary" data-page="inventory">
+                                                    <label class="form-check-label" for="can_inventory_summary">数据汇总页面</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_login_edit" name="permissions" value="can_inventory_login_edit" data-page="inventory">
+                                                    <label class="form-check-label" for="can_inventory_login_edit">编辑盘点班组</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_check_submit" name="permissions" value="can_inventory_check_submit" data-page="inventory">
+                                                    <label class="form-check-label" for="can_inventory_check_submit">提交盘点实查</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_summary_delete" name="permissions" value="can_inventory_summary_delete" data-page="inventory">
+                                                    <label class="form-check-label" for="can_inventory_summary_delete">删除盘点记录</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 汽车厂装车实际：页面访问 + 上传/删除/导出权限 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_auto_loading" data-page="auto_loading">
+                                            <label class="form-check-label fw-bold" for="page_auto_loading">汽车厂装车实际</label>
+                                        </div>
+                                        <span class="badge bg-primary">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_auto_loading_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_auto_loading" name="permissions" value="can_auto_loading" data-page="auto_loading">
+                                                    <label class="form-check-label" for="can_auto_loading">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_auto_loading_upload" name="permissions" value="can_auto_loading_upload" data-page="auto_loading">
+                                                    <label class="form-check-label" for="can_auto_loading_upload">上传权限</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_auto_loading_delete" name="permissions" value="can_auto_loading_delete" data-page="auto_loading">
+                                                    <label class="form-check-label" for="can_auto_loading_delete">删除权限</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_auto_loading_export" name="permissions" value="can_auto_loading_export" data-page="auto_loading">
+                                                    <label class="form-check-label" for="can_auto_loading_export">下载/导出权限</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- NAS文件搜索：页面访问 + 配置/搜索/导入权限 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_nas_file_search" data-page="nas_file_search">
+                                            <label class="form-check-label fw-bold" for="page_nas_file_search">NAS文件搜索</label>
+                                        </div>
+                                        <span class="badge bg-primary">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_nas_file_search_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_nas_file_search" name="permissions" value="can_nas_file_search" data-page="nas_file_search">
+                                                    <label class="form-check-label" for="can_nas_file_search">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_nas_file_search_config" name="permissions" value="can_nas_file_search_config" data-page="nas_file_search">
+                                                    <label class="form-check-label" for="can_nas_file_search_config">NAS 连接配置</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_nas_file_search_search" name="permissions" value="can_nas_file_search_search" data-page="nas_file_search">
+                                                    <label class="form-check-label" for="can_nas_file_search_search">上传 Excel 并搜索</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_nas_file_search_import" name="permissions" value="can_nas_file_search_import" data-page="nas_file_search">
+                                                    <label class="form-check-label" for="can_nas_file_search_import">导入文件管理</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 不良品登录 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_defective_login" data-page="defective_login">
+                                            <label class="form-check-label fw-bold" for="page_defective_login">不良品登录</label>
+                                        </div>
+                                        <span class="badge bg-danger">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_defective_login_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_defective_login" name="permissions" value="can_defective_login" data-page="defective_login">
+                                                    <label class="form-check-label" for="can_defective_login">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_defective_login_submit" name="permissions" value="can_defective_login_submit" data-page="defective_login">
+                                                    <label class="form-check-label" for="can_defective_login_submit">提交不良品登录</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_defective_login_delete" name="permissions" value="can_defective_login_delete" data-page="defective_login">
+                                                    <label class="form-check-label" for="can_defective_login_delete">删除不良品记录</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 不良品清单导出 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_defective_export" data-page="defective_export">
+                                            <label class="form-check-label fw-bold" for="page_defective_export">不良品清单导出</label>
+                                        </div>
+                                        <span class="badge bg-danger">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_defective_export_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_defective_export" name="permissions" value="can_defective_export" data-page="defective_export">
+                                                    <label class="form-check-label" for="can_defective_export">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_defective_export_download" name="permissions" value="can_defective_export_download" data-page="defective_export">
+                                                    <label class="form-check-label" for="can_defective_export_download">导出不良品清单</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- MES分组 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_mes_group" data-page="mes_group">
+                                            <label class="form-check-label fw-bold" for="page_mes_group">MES分组</label>
+                                        </div>
+                                        <span class="badge bg-danger">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_mes_group_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_group" name="permissions" value="can_mes_group" data-page="mes_group">
+                                                    <label class="form-check-label" for="can_mes_group">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_group_add" name="permissions" value="can_mes_group_add" data-page="mes_group">
+                                                    <label class="form-check-label" for="can_mes_group_add">新增分组</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_group_edit" name="permissions" value="can_mes_group_edit" data-page="mes_group">
+                                                    <label class="form-check-label" for="can_mes_group_edit">编辑分组</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_group_delete" name="permissions" value="can_mes_group_delete" data-page="mes_group">
+                                                    <label class="form-check-label" for="can_mes_group_delete">删除分组</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_group_download" name="permissions" value="can_mes_group_download" data-page="mes_group">
+                                                    <label class="form-check-label" for="can_mes_group_download">下载分组数据</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_group_unmask" name="permissions" value="can_mes_group_unmask" data-page="mes_group">
+                                                    <label class="form-check-label" for="can_mes_group_unmask">查看结算单价/金额</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 计划登录 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_mes_plan" data-page="mes_plan">
+                                            <label class="form-check-label fw-bold" for="page_mes_plan">计划登录</label>
+                                        </div>
+                                        <span class="badge bg-danger">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_mes_plan_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_plan" name="permissions" value="can_mes_plan" data-page="mes_plan">
+                                                    <label class="form-check-label" for="can_mes_plan">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_plan_add" name="permissions" value="can_mes_plan_add" data-page="mes_plan">
+                                                    <label class="form-check-label" for="can_mes_plan_add">新增计划</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_plan_edit" name="permissions" value="can_mes_plan_edit" data-page="mes_plan">
+                                                    <label class="form-check-label" for="can_mes_plan_edit">编辑计划</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_plan_delete" name="permissions" value="can_mes_plan_delete" data-page="mes_plan">
+                                                    <label class="form-check-label" for="can_mes_plan_delete">删除计划</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_plan_download" name="permissions" value="can_mes_plan_download" data-page="mes_plan">
+                                                    <label class="form-check-label" for="can_mes_plan_download">导出计划</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 生产入库 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_mes_production" data-page="mes_production">
+                                            <label class="form-check-label fw-bold" for="page_mes_production">生产入库</label>
+                                        </div>
+                                        <span class="badge bg-danger">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_mes_production_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_production" name="permissions" value="can_mes_production" data-page="mes_production">
+                                                    <label class="form-check-label" for="can_mes_production">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_production_add" name="permissions" value="can_mes_production_add" data-page="mes_production">
+                                                    <label class="form-check-label" for="can_mes_production_add">新增入库</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_production_edit" name="permissions" value="can_mes_production_edit" data-page="mes_production">
+                                                    <label class="form-check-label" for="can_mes_production_edit">编辑入库</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_production_delete" name="permissions" value="can_mes_production_delete" data-page="mes_production">
+                                                    <label class="form-check-label" for="can_mes_production_delete">删除入库</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_production_download" name="permissions" value="can_mes_production_download" data-page="mes_production">
+                                                    <label class="form-check-label" for="can_mes_production_download">导出入库</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_production_unmask" name="permissions" value="can_mes_production_unmask" data-page="mes_production">
+                                                    <label class="form-check-label" for="can_mes_production_unmask">查看生产入库单价</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 品质检查(包装) -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_mes_quality" data-page="mes_quality">
+                                            <label class="form-check-label fw-bold" for="page_mes_quality">品质检查(包装)</label>
+                                        </div>
+                                        <span class="badge bg-danger">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_mes_quality_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_quality" name="permissions" value="can_mes_quality" data-page="mes_quality">
+                                                    <label class="form-check-label" for="can_mes_quality">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_quality_add" name="permissions" value="can_mes_quality_add" data-page="mes_quality">
+                                                    <label class="form-check-label" for="can_mes_quality_add">新增检查</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_quality_edit" name="permissions" value="can_mes_quality_edit" data-page="mes_quality">
+                                                    <label class="form-check-label" for="can_mes_quality_edit">编辑检查</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_quality_delete" name="permissions" value="can_mes_quality_delete" data-page="mes_quality">
+                                                    <label class="form-check-label" for="can_mes_quality_delete">删除检查</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_quality_download" name="permissions" value="can_mes_quality_download" data-page="mes_quality">
+                                                    <label class="form-check-label" for="can_mes_quality_download">导出检查</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 单价登陆 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_mes_price" data-page="mes_price">
+                                            <label class="form-check-label fw-bold" for="page_mes_price">单价登陆</label>
+                                        </div>
+                                        <span class="badge bg-danger">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_mes_price_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_price" name="permissions" value="can_mes_price" data-page="mes_price">
+                                                    <label class="form-check-label" for="can_mes_price">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_price_add" name="permissions" value="can_mes_price_add" data-page="mes_price">
+                                                    <label class="form-check-label" for="can_mes_price_add">新增单价</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_price_edit" name="permissions" value="can_mes_price_edit" data-page="mes_price">
+                                                    <label class="form-check-label" for="can_mes_price_edit">编辑单价</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_price_delete" name="permissions" value="can_mes_price_delete" data-page="mes_price">
+                                                    <label class="form-check-label" for="can_mes_price_delete">删除单价</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_mes_price_download" name="permissions" value="can_mes_price_download" data-page="mes_price">
+                                                    <label class="form-check-label" for="can_mes_price_download">导出单价</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        <div class="mb-1">
+                            <h6 class="mb-1" style="font-size: 12px;">当前权限:</h6>
+                            <div id="current-permissions-preview" class="permission-container">
+                                <span class="text-muted" style="font-size: 11px;">加载中...</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">
+                            保存权限 <span class="loader" id="permissionManagementLoader"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 复用权限模态框 -->
+    <div class="modal fade" id="copyPermissionModal" tabindex="-1" aria-labelledby="copyPermissionModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="copyPermissionModalLabel">复用权限</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="copy_target_user_id">
+                    <p>将把模板用户的<strong>全部权限完全覆盖</strong>到用户：<strong class="text-info" id="copy_target_username"></strong></p>
+                    <div class="mb-3">
+                        <label for="copy_source_user_id" class="form-label">选择模板用户</label>
+                        <select class="form-select" id="copy_source_user_id" required>
+                            <option value="">请选择</option>
+                            {% for u in users %}
+                                <option value="{{ u.id }}" data-username="{{ u.username }}">{{ u.username }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="text-muted" style="font-size: 12px;">提示：目标用户原有权限将被模板用户权限整体替换（完全覆盖）。</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="copyPermissionConfirmBtn">
+                        确认复用 <span class="loader" id="copyPermissionLoader"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自定义确认模态框 -->
+    <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="confirmModalLabel">操作确认</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="confirmModalBody">
+                    <!-- 确认消息将通过JavaScript动态设置 -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="confirmModalBtn">确认</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Excel 批量导入模态框 -->
+    <div class="modal fade" id="importUserModal" tabindex="-1" aria-labelledby="importUserModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="importUserModalLabel"><i class="fa fa-file-excel-o mr-1"></i> 批量导入用户</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <ol class="small text-muted pl-3 mb-3">
+                        <li>下载模板，按列填写：<strong>用户名*、密码*、姓名、部门、权限组、是否管理员</strong></li>
+                        <li>删除模板中的示例行后保存为 <code>.xlsx</code></li>
+                        <li>选择文件并上传，系统将逐行校验并反馈结果</li>
+                    </ol>
+                    <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                        <a class="btn btn-sm btn-outline-success" href="/api/user-mgmt/import-template">
+                            <i class="fa fa-download mr-1"></i> 下载导入模板
+                        </a>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small text-muted">选择 Excel 文件</label>
+                        <input type="file" class="form-control form-control-sm" id="importFile" accept=".xlsx,.xlsm">
+                        <div class="form-text" id="importFileName">未选择文件</div>
+                    </div>
+
+                    <div id="importResult" style="display:none;">
+                        <hr>
+                        <div class="mb-2" id="importSummary"></div>
+                        <div class="table-responsive" style="max-height:280px; overflow:auto;">
+                            <table class="table table-sm table-bordered mb-0">
+                                <thead class="table-light">
+                                    <tr><th style="width:70px;">行号</th><th style="width:150px;">用户名</th>
+                                        <th style="width:90px;">结果</th><th>说明</th></tr>
+                                </thead>
+                                <tbody id="importResultBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-success" id="importUploadBtn">
+                        开始导入 <span class="loader" id="importLoader"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量权限管理模态框 -->
+    <div class="modal fade" id="batchPermissionModal" tabindex="-1" aria-labelledby="batchPermissionModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="batchPermissionModalLabel">
+                        <i class="fa fa-object-group mr-1"></i> 批量权限管理
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info py-2 mb-3">
+                        将对 <strong id="batchTargetCount">0</strong> 位用户生效（管理员账号自动跳过）：
+                        <div class="mt-1" id="batchTargetList"></div>
+                    </div>
+
+                    <ul class="nav nav-tabs mb-3" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabBatchRoles" type="button" role="tab">
+                                <i class="fa fa-users mr-1"></i> 批量分配权限组
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabBatchPerms" type="button" role="tab">
+                                <i class="fa fa-shield mr-1"></i> 用户级权限覆盖
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- 权限组分配 -->
+                        <div class="tab-pane fade show active" id="tabBatchRoles" role="tabpanel">
+                            <div class="row g-2 align-items-end mb-2">
+                                <div class="col-md-4">
+                                    <label class="form-label small text-muted mb-1">分配模式</label>
+                                    <select class="form-select form-select-sm" id="batchRoleMode">
+                                        <option value="add">追加（在原有权限组上增加）</option>
+                                        <option value="replace">覆盖（替换为下列权限组）</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-8 text-end">
+                                    <button type="button" class="btn btn-sm btn-primary" id="batchApplyRolesBtn">
+                                        应用权限组 <span class="loader" id="batchRoleLoader"></span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="border rounded p-2" style="max-height:300px; overflow:auto;">
+                                <div class="row g-1" id="batchRoleList"></div>
+                            </div>
+                        </div>
+
+                        <!-- 用户级权限覆盖 -->
+                        <div class="tab-pane fade" id="tabBatchPerms" role="tabpanel">
+                            <div class="row g-2 align-items-end mb-2">
+                                <div class="col-md-6">
+                                    <label class="form-label small text-muted mb-1">应用模式</label>
+                                    <select class="form-select form-select-sm" id="batchPermMode">
+                                        <option value="merge">合并（保留用户已有覆盖，逐项更新）</option>
+                                        <option value="replace">覆盖（用下方设置替换全部覆盖）</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 text-end">
+                                    <button type="button" class="btn btn-sm btn-primary" id="batchApplyPermsBtn">
+                                        应用权限 <span class="loader" id="batchPermLoader"></span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="alert alert-light border py-2 small mb-2">
+                                <i class="fa fa-info-circle mr-1 text-primary"></i>
+                                权限继承关系：<strong>用户级覆盖</strong>（允许/禁止）优先于 <strong>权限组</strong>；
+                                选择「继承」表示该权限不单独设置，沿用权限组结果。
+                                <span class="badge bg-success">允许</span>
+                                <span class="badge bg-danger">禁止</span>
+                                <span class="badge bg-secondary">继承</span>
+                            </div>
+                            <div class="border rounded p-2" style="max-height:340px; overflow:auto;" id="batchPermTree"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 引入Bootstrap JS -->
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 供外部模块使用的权限/身份标记
+        window.UM_CAN_ADD_USER = {{ 'true' if current_user and (current_user.is_admin or (current_user.permission and current_user.permission.can_user_mgmt_add_user)) else 'false' }};
+        window.UM_CAN_MANAGE_PERM = {{ 'true' if current_user and (current_user.is_admin or (current_user.permission and current_user.permission.can_user_mgmt_manage_permissions)) else 'false' }};
+        window.UM_SELF_ID = {{ current_user.id if current_user else 'null' }};
+    </script>
+    <script src="{{ url_for('static', filename='js/user-management.js') }}"></script>
+    <script>
+        // 全局变量，存储所有权限信息
+        const allPermissions = {
+            // 基础权限
+            'can_upload': { id: 'can_upload', name: '上传权限' },
+            'can_delete': { id: 'can_delete', name: '删除权限' },
+            'can_batch_delete': { id: 'can_batch_delete', name: '批量删除权限' },
+            'can_page': { id: 'can_page', name: '用户与权限页面可见' },
+            
+            // 页面访问权限
+            // 车种相关权限保留但不展示（用于将来启用）
+            'can_vehicle_types': { id: 'can_vehicle_types', name: '车种管理页面' },
+            'can_vehicle_types_add': { id: 'can_vehicle_types_add', name: '添加车种' },
+            'can_vehicle_types_edit': { id: 'can_vehicle_types_edit', name: '编辑车种' },
+            'can_vehicle_types_delete': { id: 'can_vehicle_types_delete', name: '删除车种' },
+            'can_vehicle_types_download': { id: 'can_vehicle_types_download', name: '下载车种' },
+            'can_vehicle_types_batch_add': { id: 'can_vehicle_types_batch_add', name: '批量添加车种' },
+            'can_vehicle_types_batch_delete': { id: 'can_vehicle_types_batch_delete', name: '批量删除车种' },
+            'can_vehicle_types_import': { id: 'can_vehicle_types_import', name: '导入车种(Excel)' },
+            'can_products': { id: 'can_products', name: '成品管理页面' },
+            'can_material_download': { id: 'can_material_download', name: '资材量下载页面' },
+            'can_file_management': { id: 'can_file_management', name: '文件管理页面' },
+            'can_file_comparison': { id: 'can_file_comparison', name: '数据对比页面' },
+            'can_rw_comparison': { id: 'can_rw_comparison', name: 'RW对比页面' },
+            'can_rw_comparison_compare': { id: 'can_rw_comparison_compare', name: '对比文件' },
+            'can_rw_comparison_download': { id: 'can_rw_comparison_download', name: '下载对比结果' },
+            'can_sub_list': { id: 'can_sub_list', name: 'SubList页面' },
+            'can_usage_list': { id: 'can_usage_list', name: 'UsageList页面' },
+            
+            // 成品页面按钮权限
+            'can_products_add': { id: 'can_products_add', name: '添加成品' },
+            'can_products_edit': { id: 'can_products_edit', name: '编辑成品' },
+            'can_products_delete': { id: 'can_products_delete', name: '删除成品' },
+            'can_products_download': { id: 'can_products_download', name: '下载成品' },
+            'can_products_import': { id: 'can_products_import', name: '导入成品' },
+            'can_products_batch_add': { id: 'can_products_batch_add', name: '批量添加成品' },
+            'can_products_batch_delete': { id: 'can_products_batch_delete', name: '批量删除成品' },
+            
+            // 车种按钮项不注册
+            
+            // 资材量下载页面按钮权限
+            'can_material_download_download': { id: 'can_material_download_download', name: '下载资材量' },
+            'can_material_download_update': { id: 'can_material_download_update', name: '更新资材量' },
+            
+            // 文件管理页面按钮权限
+            'can_file_management_upload': { id: 'can_file_management_upload', name: '上传文件' },
+            'can_file_management_delete': { id: 'can_file_management_delete', name: '删除文件（单个）' },
+            'can_file_management_download': { id: 'can_file_management_download', name: '下载文件' },
+            'can_file_management_export_file_list': { id: 'can_file_management_export_file_list', name: '下载文件清单明细' },
+            
+            // 数据对比页面按钮权限
+            'can_file_comparison_compare': { id: 'can_file_comparison_compare', name: '对比文件' },
+            'can_file_comparison_download': { id: 'can_file_comparison_download', name: '下载对比结果' },
+            
+            // SubList页面按钮权限
+            'can_sub_list_add': { id: 'can_sub_list_add', name: '添加SubList' },
+            'can_sub_list_edit': { id: 'can_sub_list_edit', name: '编辑SubList' },
+            'can_sub_list_delete': { id: 'can_sub_list_delete', name: '删除SubList' },
+            'can_sub_list_download': { id: 'can_sub_list_download', name: '下载SubList' },
+            'can_sub_list_show_differences': { id: 'can_sub_list_show_differences', name: '显示差异' },
+            
+            // UsageList页面按钮权限
+            'can_usage_list_add': { id: 'can_usage_list_add', name: '添加UsageList' },
+            'can_usage_list_edit': { id: 'can_usage_list_edit', name: '编辑UsageList' },
+            'can_usage_list_delete': { id: 'can_usage_list_delete', name: '删除UsageList' },
+            'can_usage_list_download': { id: 'can_usage_list_download', name: '下载UsageList' },
+
+            // 其他页面访问权限
+            'can_material_calculator': { id: 'can_material_calculator', name: '资材换算页面' },
+            'can_invest_tidy': { id: 'can_invest_tidy', name: '投入计划书页面' },
+            'can_auto_loading': { id: 'can_auto_loading', name: '汽车厂装车实际页面' },
+            'can_auto_loading_upload': { id: 'can_auto_loading_upload', name: '上传装车实际数据' },
+            'can_auto_loading_delete': { id: 'can_auto_loading_delete', name: '删除装车实际数据' },
+            'can_auto_loading_export': { id: 'can_auto_loading_export', name: '导出装车实际数据' },
+            'can_invest_summary': { id: 'can_invest_summary', name: '投资汇总页面' },
+            'can_data_management': { id: 'can_data_management', name: '数据管理页面' },
+            'can_corrugated_location': { id: 'can_corrugated_location', name: '波纹管位置页面' },
+            'can_test_sheet': { id: 'can_test_sheet', name: '测试表页面' },
+            'can_index': { id: 'can_index', name: '首页/仪表盘' },
+
+            // 补线打端子页面权限
+            'can_wire_lot_login': { id: 'can_wire_lot_login', name: 'LOT登录页面' },
+            'can_wire_lot_login_add': { id: 'can_wire_lot_login_add', name: '手动登录' },
+            'can_wire_lot_login_upload': { id: 'can_wire_lot_login_upload', name: 'Excel批量导入' },
+            'can_wire_lot_login_clear': { id: 'can_wire_lot_login_clear', name: '清空列表' },
+            'can_wire_lot_login_download': { id: 'can_wire_lot_login_download', name: '下载LOT登录' },
+            'can_wire_scan_entry': { id: 'can_wire_scan_entry', name: '扫描录入页面' },
+            'can_wire_scan_entry_scan': { id: 'can_wire_scan_entry_scan', name: '扫码/手动添加' },
+            'can_wire_scan_entry_save': { id: 'can_wire_scan_entry_save', name: '保存数据' },
+            'can_wire_scan_entry_edit': { id: 'can_wire_scan_entry_edit', name: '修改记录' },
+            'can_wire_scan_entry_delete': { id: 'can_wire_scan_entry_delete', name: '删除记录' },
+            'can_wire_scan_entry_download': { id: 'can_wire_scan_entry_download', name: '下载扫描数据' },
+            'can_wire_data_download': { id: 'can_wire_data_download', name: '数据下载页面' },
+            'can_wire_data_download_query': { id: 'can_wire_data_download_query', name: '查询数据' },
+            'can_wire_data_download_download': { id: 'can_wire_data_download_download', name: '下载Excel' },
+            'can_wire_data_download_edit': { id: 'can_wire_data_download_edit', name: '修改记录' },
+            'can_wire_data_download_delete': { id: 'can_wire_data_download_delete', name: '删除记录' },
+            'can_wire_crimp_login': { id: 'can_wire_crimp_login', name: '压高登陆页面' },
+            'can_wire_crimp_login_upload': { id: 'can_wire_crimp_login_upload', name: 'Excel批量导入' },
+            // 资材入库
+            'can_material_inbound_daily': { id: 'can_material_inbound_daily', name: '资材每日入库页面' },
+            'can_material_inbound_daily_upload': { id: 'can_material_inbound_daily_upload', name: 'Excel上传明细' },
+            'can_material_inbound_daily_add': { id: 'can_material_inbound_daily_add', name: '手动新增明细' },
+            'can_material_inbound_daily_edit': { id: 'can_material_inbound_daily_edit', name: '编辑明细' },
+            'can_material_inbound_daily_delete': { id: 'can_material_inbound_daily_delete', name: '删除明细' },
+            'can_material_inbound_daily_download': { id: 'can_material_inbound_daily_download', name: '导出明细' },
+            'can_material_inbound': { id: 'can_material_inbound', name: '资材入库页面' },
+            'can_material_inbound_scan': { id: 'can_material_inbound_scan', name: '扫码/搜索定位' },
+            'can_material_inbound_submit': { id: 'can_material_inbound_submit', name: '提交入库' },
+            'can_material_inbound_revoke': { id: 'can_material_inbound_revoke', name: '撤销入库' },
+            // 盘点管理
+            'can_inventory_login': { id: 'can_inventory_login', name: '盘点数据登录页面' },
+            'can_inventory_check': { id: 'can_inventory_check', name: '盘点实查页面' },
+            'can_inventory_summary': { id: 'can_inventory_summary', name: '数据汇总页面' },
+            'can_inventory_login_edit': { id: 'can_inventory_login_edit', name: '编辑盘点班组' },
+            'can_inventory_check_submit': { id: 'can_inventory_check_submit', name: '提交盘点实查' },
+            'can_inventory_summary_delete': { id: 'can_inventory_summary_delete', name: '删除盘点记录' },
+            // NAS文件搜索
+            'can_nas_file_search': { id: 'can_nas_file_search', name: 'NAS文件搜索页面' },
+            'can_nas_file_search_config': { id: 'can_nas_file_search_config', name: 'NAS 连接配置' },
+            'can_nas_file_search_search': { id: 'can_nas_file_search_search', name: '上传 Excel 并搜索' },
+            'can_nas_file_search_import': { id: 'can_nas_file_search_import', name: '导入文件管理' },
+            // 不良品登录
+            'can_defective_login': { id: 'can_defective_login', name: '不良品登录页面' },
+            'can_defective_login_submit': { id: 'can_defective_login_submit', name: '提交不良品登录' },
+            'can_defective_login_delete': { id: 'can_defective_login_delete', name: '删除不良品记录' },
+            // 不良品清单导出
+            'can_defective_export': { id: 'can_defective_export', name: '不良品导出页面' },
+            'can_defective_export_download': { id: 'can_defective_export_download', name: '导出不良品清单' },
+            // MES分组
+            'can_mes_group': { id: 'can_mes_group', name: 'MES分组页面' },
+            'can_mes_group_add': { id: 'can_mes_group_add', name: '新增分组' },
+            'can_mes_group_edit': { id: 'can_mes_group_edit', name: '编辑分组' },
+            'can_mes_group_delete': { id: 'can_mes_group_delete', name: '删除分组' },
+            'can_mes_group_download': { id: 'can_mes_group_download', name: '下载分组数据' },
+            'can_mes_group_unmask': { id: 'can_mes_group_unmask', name: '查看结算单价/金额' },
+            // 计划登录
+            'can_mes_plan': { id: 'can_mes_plan', name: '计划登录页面' },
+            'can_mes_plan_add': { id: 'can_mes_plan_add', name: '新增计划' },
+            'can_mes_plan_edit': { id: 'can_mes_plan_edit', name: '编辑计划' },
+            'can_mes_plan_delete': { id: 'can_mes_plan_delete', name: '删除计划' },
+            'can_mes_plan_download': { id: 'can_mes_plan_download', name: '导出计划' },
+            // 生产入库
+            'can_mes_production': { id: 'can_mes_production', name: '生产入库页面' },
+            'can_mes_production_add': { id: 'can_mes_production_add', name: '新增入库' },
+            'can_mes_production_edit': { id: 'can_mes_production_edit', name: '编辑入库' },
+            'can_mes_production_delete': { id: 'can_mes_production_delete', name: '删除入库' },
+            'can_mes_production_download': { id: 'can_mes_production_download', name: '导出入库' },
+            'can_mes_production_unmask': { id: 'can_mes_production_unmask', name: '查看生产入库单价' },
+            // 品质检查(包装)
+            'can_mes_quality': { id: 'can_mes_quality', name: '品质检查页面' },
+            'can_mes_quality_add': { id: 'can_mes_quality_add', name: '新增检查' },
+            'can_mes_quality_edit': { id: 'can_mes_quality_edit', name: '编辑检查' },
+            'can_mes_quality_delete': { id: 'can_mes_quality_delete', name: '删除检查' },
+            'can_mes_quality_download': { id: 'can_mes_quality_download', name: '导出检查' },
+            // 单价登陆
+            'can_mes_price': { id: 'can_mes_price', name: '单价登陆页面' },
+            'can_mes_price_add': { id: 'can_mes_price_add', name: '新增单价' },
+            'can_mes_price_edit': { id: 'can_mes_price_edit', name: '编辑单价' },
+            'can_mes_price_delete': { id: 'can_mes_price_delete', name: '删除单价' },
+            'can_mes_price_download': { id: 'can_mes_price_download', name: '导出单价' }
+        };
+
+        // 权限管理服务
+        const PermissionService = {
+            // 用户权限缓存
+            userPermissions: null,
+            isAdmin: false,
+
+            // 初始化权限数据
+            async init() {
+                try {
+                    // 检查用户是否为管理员
+                    this.isAdmin = {{ session.get('is_admin', False) | tojson }};
+
+                    // 如果是管理员，拥有所有权限
+                    if (this.isAdmin) {
+                        this.userPermissions = new Set(Object.keys(allPermissions));
+                        return;
+                    }
+
+                    // 如果用户未登录，没有权限
+                    if (!{{ session.get('user_id', False) | tojson }}) {
+                        this.userPermissions = new Set();
+                        return;
+                    }
+
+                    // 从服务器获取用户权限
+                    const response = await fetch('/api/users/{{ session.get('user_id') }}/permissions');
+                    if (!response.ok) {
+                        throw new Error('获取用户权限失败');
+                    }
+
+                    const data = await response.json();
+                    const normalize = (perm) => (perm === 'can_vehicle_types_import_excel' ? 'can_vehicle_types_import' : perm);
+                    const perms = (data.permissions || []).map(normalize);
+                    this.userPermissions = new Set(perms);
+                } catch (error) {
+                    console.error('初始化权限失败:', error);
+                    this.userPermissions = new Set();
+                }
+            },
+
+            // 检查用户是否拥有特定权限
+            hasPermission(permissionName) {
+                // 如果未初始化，尝试初始化
+                if (this.userPermissions === null) {
+                    this.init();
+                    return false;
+                }
+
+                // 管理员拥有所有权限
+                if (this.isAdmin) {
+                    return true;
+                }
+
+                // 检查用户是否拥有指定权限
+                return this.userPermissions.has(permissionName);
+            },
+
+            // 刷新权限数据
+            async refresh() {
+                await this.init();
+            }
+        };
+
+        // 模态框事件监听
+        document.addEventListener('DOMContentLoaded', async function() {
+            // 初始化权限服务
+            await PermissionService.init();
+
+            // 根据权限控制UI元素显示
+            if (!PermissionService.hasPermission('can_page')) {
+                // 如果没有用户管理页面权限，重定向到首页
+                window.location.href = "{{ url_for('main.index') }}";
+            }
+
+            // 控制添加用户按钮显示
+            const addUserBtn = document.getElementById('addUserBtn');
+            if (!PermissionService.hasPermission('can_page')) {
+                addUserBtn.style.display = 'none';
+            }
+
+            // 修改密码模态框事件
+            const changePasswordModal = document.getElementById('changePasswordModal');
+            changePasswordModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const userId = button.getAttribute('data-user-id');
+                const username = button.getAttribute('data-username');
+
+                // 调试：打印获取到的 user_id
+                console.log('获取到的 user_id:', userId);
+
+                document.getElementById('change_user_id').value = userId;
+                document.getElementById('change_username').textContent = username;
+            });
+
+            // 密码验证函数
+            function validatePasswords(passwordId, confirmId, passwordErrorId, confirmErrorId) {
+                const password = document.getElementById(passwordId).value;
+                const confirmPassword = document.getElementById(confirmId).value;
+                const passwordError = document.getElementById(passwordErrorId);
+                const confirmError = document.getElementById(confirmErrorId);
+
+                let isValid = true;
+
+                // 验证两次密码是否一致
+                if (password !== confirmPassword) {
+                    confirmError.textContent = '两次输入的密码不一致';
+                    isValid = false;
+                } else {
+                    confirmError.textContent = '';
+                }
+
+                return isValid;
+            }
+
+            // 添加用户表单提交
+            document.getElementById('addUserForm').addEventListener('submit', function(e) {
+                // 验证密码
+                if (!validatePasswords('add_password', 'add_confirm_password', 'add_password_error', 'add_confirm_password_error')) {
+                    e.preventDefault();
+                    return;
+                }
+
+                // 显示加载指示器
+                document.getElementById('addUserLoader').style.display = 'inline-block';
+            });
+
+            // 修改密码表单提交
+            document.getElementById('changePasswordForm').addEventListener('submit', function(e) {
+                // 验证密码
+                if (!validatePasswords('change_password', 'change_confirm_password', 'change_password_error', 'change_confirm_password_error')) {
+                    e.preventDefault();
+                    return;
+                }
+
+                // 显示加载指示器
+                document.getElementById('changePasswordLoader').style.display = 'inline-block';
+            });
+
+            // 重置密码模态框事件
+            const resetPasswordModal = document.getElementById('resetPasswordModal');
+            resetPasswordModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const userId = button.getAttribute('data-user-id');
+                const username = button.getAttribute('data-username');
+
+                document.getElementById('reset_user_id').value = userId;
+                document.getElementById('reset_username').textContent = username;
+            });
+
+            // 删除用户模态框事件
+            const deleteUserModal = document.getElementById('deleteUserModal');
+            deleteUserModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const userId = button.getAttribute('data-user-id');
+                const username = button.getAttribute('data-username');
+
+                document.getElementById('delete_user_id').value = userId;
+                document.getElementById('delete_username').textContent = username;
+            });
+
+            // 账号启用/禁用模态框事件
+            const toggleUserStatusModal = document.getElementById('toggleUserStatusModal');
+            toggleUserStatusModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const userId = button.getAttribute('data-user-id');
+                const username = button.getAttribute('data-username');
+                const active = button.getAttribute('data-active');
+                const isEnabling = active === '0'; // 当前禁用 -> 本次操作是启用
+
+                document.getElementById('toggle_user_id').value = userId;
+                document.getElementById('toggle_user_enable').value = isEnabling ? '1' : '0';
+                document.getElementById('toggleUserStatusModalLabel').textContent = isEnabling ? '启用账号' : '禁用账号';
+                document.getElementById('toggleStatusTip').textContent = isEnabling
+                    ? '确认启用账号 ' + username + '？启用后该账号可正常登录并恢复原有权限。'
+                    : '确认禁用账号 ' + username + '？禁用后该账号将无法登录，已登录的会话会在下次请求时被强制退出。';
+                const submitBtn = document.getElementById('toggleStatusSubmitBtn');
+                submitBtn.className = 'btn ' + (isEnabling ? 'btn-success' : 'btn-danger');
+                submitBtn.textContent = isEnabling ? '确认启用' : '确认禁用';
+            });
+
+            // 权限管理模态框事件
+            const permissionManagementModal = document.getElementById('permissionManagementModal');
+            permissionManagementModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const userId = button.getAttribute('data-user-id');
+                const username = button.getAttribute('data-username');
+
+                document.getElementById('permission_user_id').value = userId;
+                document.getElementById('permission_username').textContent = username;
+
+                // 清空权限选择
+                Object.values(allPermissions).forEach(perm => {
+                    const element = document.getElementById(perm.id);
+                    if (element) {
+                        element.checked = false;
+                    }
+                });
+
+                // 清空页面复选框状态
+                const pageCheckboxes = document.querySelectorAll('.page-checkbox');
+                pageCheckboxes.forEach(checkbox => {
+                    checkbox.checked = false;
+                    checkbox.indeterminate = false;
+                });
+
+                // 显示加载中
+                document.getElementById('current-permissions-preview').innerHTML = '<span class="text-muted">加载中...</span>';
+
+                // 通过AJAX获取用户的权限信息
+                fetch(`/api/users/${userId}/permissions`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        console.log('权限数据:', data);
+                        // 处理返回的权限数据
+                        if (data.permissions) {
+                            const normalize = (perm) => (perm === 'can_vehicle_types_import_excel' ? 'can_vehicle_types_import' : perm);
+                            data.permissions.forEach(rawPerm => {
+                                const perm = normalize(rawPerm);
+                                if (allPermissions[perm]) {
+                                    const element = document.getElementById(allPermissions[perm].id);
+                                    if (element) {
+                                        element.checked = true;
+                                    } else {
+                                        console.warn('权限元素不存在:', allPermissions[perm].id);
+                                    }
+                                }
+                            });
+                        }
+                        
+                        // 更新页面复选框状态
+                        updatePageCheckboxStates();
+                        updatePermissionPreview();
+                        
+                        // 绑定页面权限联动事件
+                        setTimeout(() => {
+                            bindPagePermissionEvents();
+                        }, 100);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching permissions:', error);
+                        document.getElementById('current-permissions-preview').innerHTML = '<span class="text-muted">获取权限信息失败</span>';
+                    });
+
+            });
+
+            // 权限管理弹窗隐藏时清空状态
+            permissionManagementModal.addEventListener('hidden.bs.modal', function() {
+                // 清空权限选择
+                Object.values(allPermissions).forEach(perm => {
+                    const element = document.getElementById(perm.id);
+                    if (element) {
+                        element.checked = false;
+                    }
+                });
+
+                // 清空页面复选框状态
+                const pageCheckboxes = document.querySelectorAll('.page-checkbox');
+                pageCheckboxes.forEach(checkbox => {
+                    checkbox.checked = false;
+                    checkbox.indeterminate = false;
+                });
+
+                // 清空权限预览
+                document.getElementById('current-permissions-preview').innerHTML = '<span class="text-muted">无权限</span>';
+            });
+
+            // 更新权限预览（按页面分组：有任一二级权限即展示一级标签）
+            function updatePermissionPreview() {
+                const previewContainer = document.getElementById('current-permissions-preview');
+
+                // 页面与对应“一级显示名”的映射（使用 allPermissions 中的页面项）
+                const pageKeyByName = {
+                    'products': 'can_products',
+                    // 'vehicle_types': 'can_vehicle_types', // 隐藏车种页面，不在预览中展示
+                    'material_download': 'can_material_download',
+                    'file_management': 'can_file_management',
+                    'file_comparison': 'can_file_comparison',
+                    'rw_comparison': 'can_rw_comparison',
+                    'sub_list': 'can_sub_list',
+                    'usage_list': 'can_usage_list',
+                    'material_calculator': 'can_material_calculator',
+                    'production': 'can_invest_tidy',
+                    'data_management': 'can_data_management',
+                    'others': 'can_test_sheet',
+                    'system_management': 'can_system_management',
+                    'wire': 'can_wire_lot_login',
+                    'material_inbound': 'can_material_inbound',
+                    'inventory': 'can_inventory_login',
+                    'auto_loading': 'can_auto_loading',
+                    'nas_file_search': 'can_nas_file_search',
+                    'defective_login': 'can_defective_login',
+                    'defective_export': 'can_defective_export',
+                    'mes_group': 'can_mes_group',
+                    'mes_plan': 'can_mes_plan',
+                    'mes_production': 'can_mes_production',
+                    'mes_quality': 'can_mes_quality',
+                    'mes_price': 'can_mes_price'
+                };
+
+                const pageDisplayNames = [];
+
+                Object.entries(pageKeyByName).forEach(([pageName, pageKey]) => {
+                    // 查找该页面下的所有二级权限（包含“页面访问”和各按钮权限）
+                    const pagePermissions = document.querySelectorAll(`.page-permission[data-page="${pageName}"]`);
+                    const anyChecked = Array.from(pagePermissions).some(p => p.checked);
+
+                    if (anyChecked && allPermissions[pageKey]) {
+                        pageDisplayNames.push(allPermissions[pageKey].name);
+                    }
+                });
+
+                if (pageDisplayNames.length > 0) {
+                    previewContainer.innerHTML = pageDisplayNames.map(name =>
+                        `<span class="permission-tag">${name}</span>`
+                    ).join('');
+                } else {
+                    previewContainer.innerHTML = '<span class="text-muted">无权限</span>';
+                }
+            }
+
+            // 更新页面复选框状态
+            function updatePageCheckboxStates() {
+                const pageCheckboxes = document.querySelectorAll('.page-checkbox');
+                pageCheckboxes.forEach(checkbox => {
+                    const pageName = checkbox.getAttribute('data-page');
+                    const pagePermissions = document.querySelectorAll(`.page-permission[data-page="${pageName}"]`);
+                    const checkedPermissions = Array.from(pagePermissions).filter(p => p.checked);
+                    
+                    if (checkedPermissions.length === pagePermissions.length) {
+                        checkbox.checked = true;
+                        checkbox.indeterminate = false;
+                    } else if (checkedPermissions.length > 0) {
+                        checkbox.checked = false;
+                        checkbox.indeterminate = true;
+                    } else {
+                        checkbox.checked = false;
+                        checkbox.indeterminate = false;
+                    }
+                });
+            }
+
+            // 监听权限复选框变化，实时更新预览
+            Object.values(allPermissions).forEach(perm => {
+                const element = document.getElementById(perm.id);
+                if (element) {
+                    element.addEventListener('change', updatePermissionPreview);
+                }
+            });
+            
+            // 页面加载时绑定页面权限联动事件
+            document.addEventListener('DOMContentLoaded', function() {
+                setTimeout(() => {
+                    bindPagePermissionEvents();
+                }, 500);
+            });
+
+            // 绑定页面权限联动事件
+            function bindPagePermissionEvents() {
+                // 页面权限二级选择逻辑
+                const pageCheckboxes = document.querySelectorAll('.page-checkbox');
+                pageCheckboxes.forEach(checkbox => {
+                    // 移除之前的事件监听器（如果存在）
+                    checkbox.removeEventListener('change', checkbox.pageChangeHandler);
+                    
+                    // 创建新的事件处理函数
+                    checkbox.pageChangeHandler = function() {
+                        const pageName = this.getAttribute('data-page');
+                        const pagePermissions = document.querySelectorAll(`.page-permission[data-page="${pageName}"]`);
+                        const isChecked = this.checked;
+                        
+                        console.log('页面复选框变化:', pageName, isChecked, '找到权限数量:', pagePermissions.length);
+                        
+                        // 选中/取消选中该页面下的所有权限
+                        pagePermissions.forEach(perm => {
+                            perm.checked = isChecked;
+                            console.log('设置权限:', perm.id, '为:', isChecked);
+                        });
+                        
+                        updatePermissionPreview();
+                    };
+                    
+                    // 添加事件监听器
+                    checkbox.addEventListener('change', checkbox.pageChangeHandler);
+                });
+
+                // 页面权限变化时检查页面复选框状态
+                const pagePermissions = document.querySelectorAll('.page-permission');
+                pagePermissions.forEach(permission => {
+                    // 移除之前的事件监听器（如果存在）
+                    permission.removeEventListener('change', permission.permissionChangeHandler);
+                    
+                    // 创建新的事件处理函数
+                    permission.permissionChangeHandler = function() {
+                        const pageName = this.getAttribute('data-page');
+                        const pageCheckbox = document.getElementById(`page_${pageName}`);
+                        const pagePermissions = document.querySelectorAll(`.page-permission[data-page="${pageName}"]`);
+                        const checkedPermissions = Array.from(pagePermissions).filter(p => p.checked);
+                        
+                        console.log('权限变化:', this.id, '页面:', pageName, '选中数量:', checkedPermissions.length, '总数量:', pagePermissions.length);
+                        
+                        // 如果该页面下的所有权限都被选中，则选中页面复选框
+                        if (checkedPermissions.length === pagePermissions.length) {
+                            pageCheckbox.checked = true;
+                            pageCheckbox.indeterminate = false;
+                        }
+                        // 如果该页面下的部分权限被选中，则设置页面复选框为半选状态
+                        else if (checkedPermissions.length > 0) {
+                            pageCheckbox.checked = false;
+                            pageCheckbox.indeterminate = true;
+                        }
+                        // 如果该页面下的所有权限都未选中，则取消选中页面复选框
+                        else {
+                            pageCheckbox.checked = false;
+                            pageCheckbox.indeterminate = false;
+                        }
+                        
+                        updatePermissionPreview();
+                    };
+                    
+                    // 添加事件监听器
+                    permission.addEventListener('change', permission.permissionChangeHandler);
+                });
+            }
+
+            // 重置密码表单提交
+            document.getElementById('resetPasswordForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                // 显示加载指示器
+                document.getElementById('resetPasswordLoader').style.display = 'inline-block';
+
+                // 提交表单
+                this.submit();
+            });
+
+            // 删除用户表单提交
+            document.getElementById('deleteUserForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                // 显示加载指示器
+                document.getElementById('deleteUserLoader').style.display = 'inline-block';
+
+                // 提交表单
+                this.submit();
+            });
+
+            // 权限管理表单提交
+            document.getElementById('permissionManagementForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const userId = document.getElementById('permission_user_id').value;
+                const checkedPermissions = [];
+
+                // 获取所有选中的权限
+                Object.entries(allPermissions).forEach(([key, perm]) => {
+                    const element = document.getElementById(perm.id);
+                    if (element && element.checked) {
+                        checkedPermissions.push(key);
+                    }
+                });
+
+                // 显示加载指示器
+                document.getElementById('permissionManagementLoader').style.display = 'inline-block';
+
+                // 使用AJAX提交权限数据
+                fetch(`/api/users/${userId}/permissions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    body: JSON.stringify({
+                        permissions: checkedPermissions
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    // 隐藏加载指示器
+                    document.getElementById('permissionManagementLoader').style.display = 'none';
+
+                    if (data.success) {
+                        // 显示成功消息
+                        const alert = document.createElement('div');
+                        alert.className = 'alert alert-success alert-dismissible fade show';
+                        alert.innerHTML = '权限更新成功! <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>';
+                        document.body.prepend(alert);
+
+                        // 关闭模态框
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('permissionManagementModal'));
+                        modal.hide();
+
+                        // 刷新页面
+                        setTimeout(() => {
+                            location.reload();
+                        }, 1000);
+                    } else {
+                        // 显示错误消息
+                        const alert = document.createElement('div');
+                        alert.className = 'alert alert-danger alert-dismissible fade show';
+                        alert.innerHTML = '权限更新失败! <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>';
+                        document.body.prepend(alert);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error updating permissions:', error);
+                    document.getElementById('permissionManagementLoader').style.display = 'none';
+
+                    // 显示错误消息
+                    const alert = document.createElement('div');
+                    alert.className = 'alert alert-danger alert-dismissible fade show';
+                    alert.innerHTML = '权限更新失败! <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>';
+                    document.body.prepend(alert);
+                });
+            });
+
+            // ==================== 复用权限（完全覆盖） ====================
+            const copyPermissionModal = document.getElementById('copyPermissionModal');
+
+            // 打开弹窗：记录目标用户，禁用“目标用户自身”作为模板
+            copyPermissionModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const targetId = button.getAttribute('data-user-id');
+                document.getElementById('copy_target_user_id').value = targetId;
+                document.getElementById('copy_target_username').textContent = button.getAttribute('data-username');
+
+                const select = document.getElementById('copy_source_user_id');
+                Array.from(select.options).forEach(function(opt) {
+                    opt.disabled = (opt.value === targetId);
+                });
+                select.value = '';
+            });
+
+            // 确认复用：读取模板用户权限 -> 完全覆盖写入目标用户
+            document.getElementById('copyPermissionConfirmBtn').addEventListener('click', function() {
+                const targetId = document.getElementById('copy_target_user_id').value;
+                const sourceSelect = document.getElementById('copy_source_user_id');
+                const sourceId = sourceSelect.value;
+                const sourceName = sourceSelect.options[sourceSelect.selectedIndex]
+                    ? sourceSelect.options[sourceSelect.selectedIndex].getAttribute('data-username') : '';
+
+                if (!sourceId) {
+                    alert('请选择模板用户');
+                    return;
+                }
+                if (sourceId === targetId) {
+                    alert('模板用户与目标用户不能相同');
+                    return;
+                }
+
+                const loader = document.getElementById('copyPermissionLoader');
+                loader.style.display = 'inline-block';
+                const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
+                // 1) 读取模板用户的有效权限
+                fetch(`/api/users/${sourceId}/permissions`)
+                    .then(function(resp) {
+                        if (!resp.ok) { throw new Error('读取模板用户权限失败'); }
+                        return resp.json();
+                    })
+                    .then(function(data) {
+                        const permissions = data.permissions || [];
+                        // 2) 完全覆盖：把模板权限整体写入目标用户
+                        return fetch(`/api/users/${targetId}/permissions`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': csrfToken
+                            },
+                            body: JSON.stringify({ permissions: permissions })
+                        });
+                    })
+                    .then(function(resp) {
+                        if (!resp.ok) { throw new Error('复用权限失败'); }
+                        return resp.json();
+                    })
+                    .then(function(data) {
+                        loader.style.display = 'none';
+                        if (data.success) {
+                            const modal = bootstrap.Modal.getInstance(copyPermissionModal);
+                            if (modal) { modal.hide(); }
+                            const alert = document.createElement('div');
+                            alert.className = 'alert alert-success alert-dismissible fade show';
+                            alert.innerHTML = `已复用「${sourceName}」的权限到目标用户! <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>`;
+                            document.body.prepend(alert);
+                            setTimeout(function() { location.reload(); }, 1000);
+                        } else {
+                            throw new Error(data.error || '复用权限失败');
+                        }
+                    })
+                    .catch(function(error) {
+                        console.error('Error copying permissions:', error);
+                        loader.style.display = 'none';
+                        const alert = document.createElement('div');
+                        alert.className = 'alert alert-danger alert-dismissible fade show';
+                        alert.innerHTML = '复用权限失败! <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>';
+                        document.body.prepend(alert);
+                    });
+            });
+
+            // 表单输入事件监听 - 实时验证
+            document.getElementById('add_password').addEventListener('input', function() {
+                validatePasswords('add_password', 'add_confirm_password', 'add_password_error', 'add_confirm_password_error');
+            });
+
+            document.getElementById('add_confirm_password').addEventListener('input', function() {
+                validatePasswords('add_password', 'add_confirm_password', 'add_password_error', 'add_confirm_password_error');
+            });
+
+            document.getElementById('change_password').addEventListener('input', function() {
+                validatePasswords('change_password', 'change_confirm_password', 'change_password_error', 'change_confirm_password_error');
+            });
+
+            document.getElementById('change_confirm_password').addEventListener('input', function() {
+                validatePasswords('change_password', 'change_confirm_password', 'change_password_error', 'change_confirm_password_error');
+            });
+        });
+    </script>
+</body>
+</html>

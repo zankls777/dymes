@@ -1,0 +1,22 @@
+{
+  "name": "bom2",
+  "version": "1.0.0",
+  "description": "大焱资料管理系统是一个用于管理、对比和分析SubList和UsageList文件的Web应用程序，支持单文件和多文件对比，提供详细的差异分析和结果导出功能。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/yangtaogo/sub1.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "autoprefixer": "^10.4.23",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18"
+  }
+}

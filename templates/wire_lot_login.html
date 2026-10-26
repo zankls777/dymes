@@ -1,0 +1,1393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>LOT登录 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .card { margin-bottom: 20px; }
+        .lot-input {
+            font-size: 1.2rem;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+        .scan-tip { font-size: 0.85rem; color: #6c757d; }
+        .table th { background-color: #f8f9fa; white-space: nowrap; }
+        .table td { vertical-align: middle; }
+
+        /* ---------- 触发按钮区 ---------- */
+        .action-bar {
+            display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
+        }
+        .action-bar .page-title {
+            font-size: 1.15rem; font-weight: 600; margin: 0;
+        }
+        .trigger-btn {
+            min-width: 150px;
+            font-size: 1rem;
+            padding: .55rem 1.1rem;
+            box-shadow: 0 2px 6px rgba(0,0,0,.12);
+            transition: transform .15s, box-shadow .15s;
+        }
+        .trigger-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.18); }
+        .trigger-btn i { font-size: 1.05rem; }
+
+        /* ---------- Excel 拖拽区 ---------- */
+        .upload-zone {
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            padding: 24px 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all .2s;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #0d6efd;
+            background-color: #f0f7ff;
+        }
+        .upload-zone .fa-cloud-upload { font-size: 2.2rem; color: #6c757d; }
+        .upload-zone:hover .fa-cloud-upload,
+        .upload-zone.dragover .fa-cloud-upload { color: #0d6efd; }
+        .col-name-badge {
+            background-color: #eef2ff; color: #3858e9; border-radius: 4px;
+            padding: 2px 8px; font-size: .8rem; margin: 2px; display: inline-block;
+        }
+        #uploadResult { display: none; max-height: 260px; overflow-y: auto; }
+
+        /* ---------- 资料核对面板 ---------- */
+        #checkPanel .table { margin-bottom: 0; }
+        #checkPanel .table th { background-color: #f8f9fa; white-space: nowrap; }
+        .check-missing { color: #dc3545; font-weight: 600; }
+
+        /* ---------- 登录结果最大化覆盖层 ---------- */
+        #resultOverlay {
+            position: fixed; inset: 0; z-index: 2000;
+            background: #f3f5f9;
+            display: none; overflow-y: auto;
+        }
+        #resultOverlay.show { display: block; animation: overlayFade .25s ease; }
+        #resultOverlay .overlay-inner { animation: overlayUp .3s ease; }
+        @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes overlayUp {
+            from { opacity: 0; transform: translateY(18px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .overlay-header {
+            position: sticky; top: 0; z-index: 5;
+            background: #fff; border-bottom: 1px solid #e5e8ef;
+            box-shadow: 0 2px 8px rgba(0,0,0,.06);
+        }
+        .stat-card {
+            border: none; border-radius: 10px; color: #fff;
+            box-shadow: 0 3px 10px rgba(0,0,0,.10);
+        }
+        .stat-card .stat-num { font-size: 1.9rem; font-weight: 700; line-height: 1.1; }
+        .stat-card .stat-label { font-size: .85rem; opacity: .92; }
+        .bg-stat-total { background: linear-gradient(135deg, #4e73df, #224abe); }
+        .bg-stat-ok { background: linear-gradient(135deg, #28a745, #1c7430); }
+        .bg-stat-dup { background: linear-gradient(135deg, #f0ad4e, #cc8a00); }
+        .bg-stat-none { background: linear-gradient(135deg, #e74c3c, #b52a1d); }
+        .result-success-icon {
+            width: 76px; height: 76px; border-radius: 50%;
+            background: #d1f2dd; color: #1c7430;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2.4rem; margin: 0 auto .75rem;
+            animation: popIn .35s ease;
+        }
+        @keyframes popIn {
+            0% { transform: scale(.4); opacity: 0; }
+            70% { transform: scale(1.08); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* ---------- 响应式 ---------- */
+        @media (max-width: 575.98px) {
+            .container-fluid.mt-4 { margin-top: .75rem !important; }
+            .card { margin-bottom: .75rem; }
+            .card-body { padding: .75rem; }
+            .lot-input { font-size: 1.05rem; }
+            .action-bar { gap: .4rem; }
+            .trigger-btn { min-width: 0; flex: 1 1 45%; font-size: .9rem; padding: .5rem .6rem; }
+            #checkPanel .file-list-wrap { max-height: 45vw; overflow-y: auto; }
+            .stat-card .stat-num { font-size: 1.5rem; }
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    {% set permissions = session.get('user_permissions', {}) %}
+
+    <div class="container-fluid mt-4">
+        <!-- 消息提示 -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 操作栏：触发按钮 + 下载入口 -->
+        <div class="card">
+            <div class="card-body py-3">
+                <div class="action-bar">
+                    <h4 class="page-title me-auto"><i class="fa fa-sign-in me-2 text-primary"></i>LOT 登录管理</h4>
+                    {% if session.get('is_admin') or permissions.get('can_wire_lot_login_add') %}
+                    <button type="button" class="btn btn-primary trigger-btn" id="openManualBtn">
+                        <i class="fa fa-user-plus me-1"></i>手动登录
+                    </button>
+                    {% endif %}
+                    {% if session.get('is_admin') or permissions.get('can_wire_lot_login_upload') %}
+                    <button type="button" class="btn btn-warning trigger-btn" id="openExcelBtn">
+                        <i class="fa fa-file-excel-o me-1"></i>Excel批量导入
+                    </button>
+                    {% endif %}
+                    {% if session.get('is_admin') or permissions.get('can_wire_lot_login_download') %}
+                    <a class="btn btn-outline-success trigger-btn" href="/wire/lot_login/download">
+                        <i class="fa fa-download me-1"></i>下载 Excel
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 已登记 LOT 列表（全宽） -->
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="card-title mb-0"><i class="fa fa-list me-2"></i>已登记 LOT 列表</h5>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3 g-2">
+                    <div class="col-md-4">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text bg-white text-muted"><i class="fa fa-search"></i></span>
+                            <input type="text" class="form-control" id="lotSearch" placeholder="搜索 LOT号 / 车种 / 品番..."
+                                   autocomplete="off" enterkeyhint="search">
+                            <button class="btn btn-outline-secondary" type="button" id="searchClearBtn" title="清除搜索" style="display:none;">
+                                <i class="fa fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-8 text-md-end">
+                        <span class="text-muted me-2 small" id="listSummary">共 0 条记录</span>
+                        <button class="btn btn-outline-danger btn-sm mb-1 mb-md-0" id="filterNoDataBtn" type="button" data-active="false">
+                            <i class="fa fa-filter me-1"></i>仅看无资料
+                        </button>
+                        {% if session.get('is_admin') or permissions.get('can_wire_lot_login_clear') %}
+                        <button class="btn btn-outline-danger btn-sm" id="clearAllBtn" type="button">
+                            <i class="fa fa-trash me-1"></i>清空列表
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- 筛选条件（默认折叠，展开后按车种 / 日期范围过滤） -->
+                <div class="row g-2 align-items-end mb-3" id="filterPanel">
+                    <div class="col-6 col-md-2">
+                        <label for="filterVehicleType" class="form-label mb-1 small text-muted">车种</label>
+                        <select class="form-select form-select-sm" id="filterVehicleType">
+                            <option value="">全部车种</option>
+                        </select>
+                    </div>
+                    <div class="col-6 col-md-2">
+                        <label for="filterStartDate" class="form-label mb-1 small text-muted">登记开始日期</label>
+                        <input type="date" class="form-control form-control-sm" id="filterStartDate">
+                    </div>
+                    <div class="col-6 col-md-2">
+                        <label for="filterEndDate" class="form-label mb-1 small text-muted">登记结束日期</label>
+                        <input type="date" class="form-control form-control-sm" id="filterEndDate">
+                    </div>
+                    <div class="col-6 col-md-2">
+                        <label for="limitSelect" class="form-label mb-1 small text-muted">拉取范围</label>
+                        <select class="form-select form-select-sm" id="limitSelect">
+                            <option value="50" selected>最近 50 套</option>
+                            <option value="100">最近 100 套</option>
+                            <option value="200">最近 200 套</option>
+                            <option value="0">全部（分页）</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4 d-flex gap-2">
+                        <button class="btn btn-primary btn-sm flex-fill" id="applyFilterBtn" type="button">
+                            <i class="fa fa-filter me-1"></i>应用筛选
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm flex-fill" id="resetFilterBtn" type="button">
+                            <i class="fa fa-undo me-1"></i>重置
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-responsive" style="max-height: calc(100vh - 340px); overflow-y: auto;">
+                    <table class="table table-hover table-bordered table-sm" id="lotTable">
+                        <thead>
+                            <tr>
+                                <th>LOT NO</th>
+                                <th>车种</th>
+                                <th>ITEM名</th>
+                                <th>品番</th>
+                                <th>京信EO</th>
+                                <th>资料状态</th>
+                                <th>入荷数量</th>
+                                <th>来源</th>
+                                <th>登记时间</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lotTbody">
+                            <tr id="emptyRow">
+                                <td colspan="9" class="text-center text-muted py-4">暂无登记记录</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 最近N套 提示条（limit 模式：显示"还有更多"与切换入口） -->
+                <div class="alert alert-info py-2 small mt-3 mb-0 d-none" id="limitTip">
+                    <i class="fa fa-info-circle me-1"></i>当前仅显示<b id="limitTipCount">50</b>套最新记录
+                    <button class="btn btn-link btn-sm p-0 ms-1 align-baseline" id="loadAllBtn" type="button">加载全部（分页查看）</button>
+                </div>
+
+                <!-- 分页条（仅"全部"模式显示） -->
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3 d-none" id="pagerBar">
+                    <div class="d-flex align-items-center gap-2 small text-muted">
+                        <span>每页</span>
+                        <select class="form-select form-select-sm" id="perPageSelect" style="width:80px;">
+                            <option value="100">100</option>
+                            <option value="200" selected>200</option>
+                            <option value="500">500</option>
+                        </select>
+                        <span>条</span>
+                        <span class="ms-2" id="pageRange">-</span>
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary" id="firstPageBtn" type="button" title="首页"><i class="fa fa-angle-double-left"></i></button>
+                        <button class="btn btn-outline-primary" id="prevPageBtn" type="button" title="上一页"><i class="fa fa-angle-left"></i></button>
+                        <span class="btn btn-light disabled" id="pageIndicator">1 / 1</span>
+                        <button class="btn btn-outline-primary" id="nextPageBtn" type="button" title="下一页"><i class="fa fa-angle-right"></i></button>
+                        <button class="btn btn-outline-primary" id="lastPageBtn" type="button" title="末页"><i class="fa fa-angle-double-right"></i></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ 弹窗①：手动登录 ============ -->
+    <div class="modal fade" id="manualLoginModal" tabindex="-1" aria-hidden="true"
+         aria-labelledby="manualLoginModalLabel" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="manualLoginModalLabel">
+                        <i class="fa fa-user-plus me-2"></i>手动登录（LOT 登记）
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white js-manual-close" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- 弹窗内错误提示（非核对类错误） -->
+                    <div id="manualError" class="alert alert-danger py-2 small" style="display:none;"></div>
+                    <form id="lotLoginForm" novalidate>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="vehicleType" class="form-label">车种</label>
+                                <input type="text" class="form-control" id="vehicleType" placeholder="如：CN8">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="itemName" class="form-label">ITEM名</label>
+                                <input type="text" class="form-control" id="itemName" placeholder="如：main">
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="partNo" class="form-label">品番 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="partNo" placeholder="必填，请输入或扫描品番" autocomplete="off">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="jxEo" class="form-label">京信EO <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="jxEo" placeholder="必填，如：a8" autocomplete="off">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="lotNo" class="form-label">LOT NO <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control lot-input" id="lotNo" placeholder="请输入或扫描LOT号" required>
+                            <div class="form-text scan-tip">支持扫描枪输入，完成后自动回车</div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="quantity" class="form-label">入荷数量</label>
+                                <input type="number" class="form-control" id="quantity" min="0" placeholder="如：500">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="operator" class="form-label">操作员</label>
+                                <input type="text" class="form-control" id="operator" value="{{ session.get('username', '') }}">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="remark" class="form-label">备注</label>
+                            <textarea class="form-control" id="remark" rows="2" placeholder="可选"></textarea>
+                        </div>
+
+                        <!-- 资料核对结果（存在：资料清单 / 不存在：无资料清单） -->
+                        <div id="checkPanel" class="mt-1" style="display:none;">
+                            <div id="checkAlert" class="alert mb-2 py-2" role="alert"></div>
+                            <div id="checkBody"></div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary js-manual-close">
+                        <i class="fa fa-times me-1"></i>取消
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" id="manualResetBtn">
+                        <i class="fa fa-eraser me-1"></i>清空
+                    </button>
+                    <button type="submit" form="lotLoginForm" class="btn btn-primary" id="submitBtn">
+                        <i class="fa fa-check me-1"></i>登记 LOT
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ 弹窗②：Excel 批量导入 ============ -->
+    <div class="modal fade" id="excelImportModal" tabindex="-1" aria-hidden="true"
+         aria-labelledby="excelImportModalLabel" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title" id="excelImportModalLabel">
+                        <i class="fa fa-file-excel-o me-2"></i>Excel 批量导入
+                    </h5>
+                    <button type="button" class="btn-close js-excel-close" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="excelError" class="alert alert-danger py-2 small" style="display:none;"></div>
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="upload-zone" id="uploadZone">
+                            <i class="fa fa-cloud-upload"></i>
+                            <p class="mb-1 mt-2 fw-bold" id="uploadZoneText">点击选择 或 拖拽 Excel 文件到此处</p>
+                            <p class="text-muted mb-0 small">支持 .xlsx / .xls 格式</p>
+                            <input type="file" id="excelFile" name="file" accept=".xlsx,.xls" class="d-none">
+                        </div>
+                        <div class="mt-3">
+                            <div class="text-muted small mb-1">Excel 表头请使用以下列名（顺序不限，LOT NO 必填）：</div>
+                            <div>
+                                <span class="col-name-badge">车种</span>
+                                <span class="col-name-badge">ITEM名</span>
+                                <span class="col-name-badge">品番</span>
+                                <span class="col-name-badge">京信EO</span>
+                                <span class="col-name-badge">LOT NO</span>
+                                <span class="col-name-badge">入荷数量</span>
+                            </div>
+                        </div>
+                        <div id="uploadResult" class="alert alert-info mt-3 mb-0 py-2 small"></div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary js-excel-close">
+                        <i class="fa fa-times me-1"></i>取消
+                    </button>
+                    <button type="submit" form="uploadForm" class="btn btn-warning" id="uploadBtn" disabled>
+                        <i class="fa fa-upload me-1"></i>上传导入
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ 无资料明细弹窗 ============ -->
+    <div class="modal fade" id="noDataModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="fa fa-file-text-o me-2"></i>无资料明细</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="noDataModalBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ 登录结果最大化覆盖层 ============ -->
+    <div id="resultOverlay" aria-live="polite">
+        <div class="overlay-header">
+            <div class="container-fluid py-2">
+                <div class="d-flex align-items-center flex-wrap gap-2">
+                    <h5 class="mb-0 me-auto" id="resultOverlayTitle"><i class="fa fa-flag-checkered me-2 text-success"></i>登录结果</h5>
+                    <a class="btn btn-outline-success btn-sm" href="/wire/lot_login/download" id="resultDownloadBtn">
+                        <i class="fa fa-download me-1"></i>下载 Excel 核实
+                    </a>
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="resultAgainBtn" style="display:none;">
+                        <i class="fa fa-repeat me-1"></i><span id="resultAgainText">继续登录</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="resultCloseBtn">
+                        <i class="fa fa-arrow-left me-1"></i>返回列表
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="container-fluid py-4">
+            <div class="overlay-inner" id="resultOverlayBody"></div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+        (function() {
+            const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+            const tbody = document.getElementById('lotTbody');
+            const emptyRow = document.getElementById('emptyRow');
+            const searchInput = document.getElementById('lotSearch');
+
+            // ---------- 弹窗实例 ----------
+            const manualModalEl = document.getElementById('manualLoginModal');
+            const excelModalEl = document.getElementById('excelImportModal');
+            const manualModal = new bootstrap.Modal(manualModalEl);
+            const excelModal = new bootstrap.Modal(excelModalEl);
+            const noDataModal = new bootstrap.Modal(document.getElementById('noDataModal'));
+
+            // ---------- 数据加载（服务端分页 + sessionStorage 秒显 + 静默刷新） ----------
+            let lots = [];
+            let resourceMap = {};   // "品番||EO" -> true(有资料)/false(无资料)
+            const state = {
+                page: 1, perPage: 50, q: '', onlyNoData: false,
+                vehicleType: '', startDate: '', endDate: '',
+                limit: 50,          // 0 表示"全部（分页）"模式
+                total: 0, totalPages: 1, loading: false,
+                limited: true, hasMore: false, facetsLoaded: false
+            };
+            // 缓存键按用户隔离：LOT 列表为全员共享数据，避免切换账号后误用他人缓存
+            const CURRENT_USER = {{ session.get('user_id') | tojson }};
+            const SESSION_KEY = 'lot_login_list_v2_u' + (CURRENT_USER == null ? '0' : CURRENT_USER);
+            // 清理旧版本无用户标识的缓存，避免脏数据残留
+            try { sessionStorage.removeItem('lot_login_list_v2'); } catch (_) {}
+            let abortCtrl = null;
+
+            function querySignature() {
+                return `${state.q}|${state.onlyNoData}|${state.vehicleType}|` +
+                       `${state.startDate}|${state.endDate}|${state.page}|${state.perPage}|${state.limit}`;
+            }
+
+            function resourceStatus(l) {
+                const p = (l.part_no || '').trim();
+                const e = (l.jx_eo || '').trim();
+                if (!p || !e) return 'incomplete';
+                return resourceMap[p + '||' + e] === true ? 'has' : 'none';
+            }
+
+            function statusBadge(l) {
+                const st = resourceStatus(l);
+                if (st === 'has') {
+                    return '<span class="badge bg-success" title="资料库中已存在该品番+EO"><i class="fa fa-check-circle me-1"></i>有资料</span>';
+                }
+                if (st === 'none') {
+                    const p = encodeURIComponent(l.part_no);
+                    const e = encodeURIComponent(l.jx_eo);
+                    return `<button type="button" class="badge bg-danger border-0 js-no-data" data-part="${p}" data-eo="${e}" title="点击查看缺失资料明细"><i class="fa fa-exclamation-circle me-1"></i>无资料</button>`;
+                }
+                return '<span class="badge bg-secondary" title="品番或京信EO未填写，无法核对"><i class="fa fa-minus-circle me-1"></i>待补充</span>';
+            }
+
+            function applyData(data) {
+                lots = data.records || [];
+                resourceMap = data.resource_map || {};
+                state.total = data.total || 0;
+                state.totalPages = data.total_pages || 1;
+                state.limited = !!data.limited;
+                state.hasMore = !!data.has_more;
+                if (state.page > state.totalPages) state.page = state.totalPages;
+                // 车种下拉选项（facets）仅在首次或需要时更新，避免频繁重绘
+                if (Array.isArray(data.vehicle_types)) applyVehicleTypes(data.vehicle_types);
+                render();
+            }
+
+            /** 填充车种下拉选项（保留当前选中值）**/
+            function applyVehicleTypes(list) {
+                const sel = document.getElementById('filterVehicleType');
+                const current = state.vehicleType;
+                sel.innerHTML = '<option value="">全部车种</option>' +
+                    list.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+                sel.value = current || '';
+                state.facetsLoaded = true;
+            }
+
+            /**
+             * 加载当前查询页。
+             * useCache=true（默认）：先同步渲染 sessionStorage 缓存（切换页面秒显），
+             *                        再后台静默拉取最新数据覆盖（stale-while-revalidate）。
+             */
+            async function loadData(useCache = true) {
+                if (abortCtrl) { try { abortCtrl.abort(); } catch (_) {} }
+                abortCtrl = new AbortController();
+                const sig = querySignature();
+
+                // 1) 会话缓存秒显（仅当查询条件完全一致）
+                if (useCache) {
+                    try {
+                        const raw = sessionStorage.getItem(SESSION_KEY);
+                        if (raw) {
+                            const cached = JSON.parse(raw);
+                            if (cached.sig === sig && cached.data) {
+                                applyData(cached.data);
+                            }
+                        }
+                    } catch (_) { /* 缓存损坏忽略 */ }
+                }
+
+                // 2) 后台静默刷新
+                state.loading = true;
+                renderPager();
+                try {
+                    const params = new URLSearchParams({
+                        page: String(state.page),
+                        per_page: String(state.perPage),
+                        limit: String(state.limit),
+                        q: state.q,
+                        only_no_data: state.onlyNoData ? '1' : '0',
+                        vehicle_type: state.vehicleType,
+                        start_date: state.startDate,
+                        end_date: state.endDate
+                    });
+                    // 车种下拉选项只需拉取一次（首次或重置后）；避免每次请求都做 distinct
+                    if (!state.facetsLoaded) params.set('facets', '1');
+                    const resp = await fetch(`/wire/lot_login/data?${params.toString()}`, {
+                        headers: { 'X-CSRFToken': CSRF },
+                        signal: abortCtrl.signal
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        applyData(data);
+                        try {
+                            sessionStorage.setItem(SESSION_KEY, JSON.stringify({ sig, data, ts: Date.now() }));
+                        } catch (_) { /* 存储满等异常忽略 */ }
+                    } else if (!useCache) {
+                        alert(data.error || '加载列表失败');
+                    }
+                } catch (err) {
+                    if (err.name === 'AbortError') return; // 被更新的请求取代
+                    if (!useCache) alert('网络错误，加载列表失败');
+                } finally {
+                    state.loading = false;
+                    renderPager();
+                }
+            }
+
+            /** 数据变更后强制回到第1页并绕过缓存重新加载（保留当前筛选条件） */
+            function reloadFirstPage() {
+                state.page = 1;
+                sessionStorage.removeItem(SESSION_KEY);
+                loadData(false);
+            }
+
+            /** 重置全部查询条件（关键词 + 筛选 + 范围）回到默认状态（开始日期默认三天前，结束日期默认当天） */
+            function resetAllConditions() {
+                const today = todayStr();
+                const start = threeDaysAgoStr();
+                searchInput.value = '';
+                document.getElementById('searchClearBtn').style.display = 'none';
+                state.q = '';
+                state.onlyNoData = false;
+                state.vehicleType = '';
+                state.startDate = start;
+                state.endDate = today;
+                state.limit = 50;
+                state.perPage = 50;
+                state.page = 1;
+                document.getElementById('filterVehicleType').value = '';
+                document.getElementById('filterStartDate').value = start;
+                document.getElementById('filterEndDate').value = today;
+                document.getElementById('limitSelect').value = '50';
+                document.getElementById('perPageSelect').value = '200';
+                syncFilterBtn();
+                sessionStorage.removeItem(SESSION_KEY);
+                loadData(false);
+            }
+
+            /** 本地日期 YYYY-MM-DD（避免 toISOString 的 UTC 偏移） */
+            function dateStr(d) {
+                const p = n => String(n).padStart(2, '0');
+                return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+            }
+
+            function todayStr() {
+                return dateStr(new Date());
+            }
+
+            /** 三天前日期 YYYY-MM-DD */
+            function threeDaysAgoStr() {
+                const d = new Date();
+                d.setDate(d.getDate() - 3);
+                return dateStr(d);
+            }
+
+            function esc(s) {
+                return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+                    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                }[c]));
+            }
+
+            function recordRowHtml(l) {
+                return `
+                    <td class="fw-bold">${esc(l.lot_no)}</td>
+                    <td>${esc(l.vehicle_type) || '-'}</td>
+                    <td>${esc(l.item_name) || '-'}</td>
+                    <td>${esc(l.part_no) || '-'}</td>
+                    <td>${esc(l.jx_eo) || '-'}</td>
+                    <td>${statusBadge(l)}</td>
+                    <td class="text-end">${l.quantity != null ? esc(l.quantity) : '-'}</td>
+                    <td>${l.source === 'excel' ? '<span class="badge bg-warning text-dark">Excel</span>' : '<span class="badge bg-secondary">手动</span>'}</td>
+                    <td>${esc(l.created_at) || '-'}</td>`;
+            }
+
+            const pagerBar = document.getElementById('pagerBar');
+            const listSummary = document.getElementById('listSummary');
+            const pageIndicator = document.getElementById('pageIndicator');
+            const pageRange = document.getElementById('pageRange');
+            const limitTip = document.getElementById('limitTip');
+            const limitTipCount = document.getElementById('limitTipCount');
+
+            function renderPager() {
+                // limit 模式：隐藏分页条，显示"最近N套"提示；全部模式：显示分页条
+                if (state.limited) {
+                    pagerBar.classList.add('d-none');
+                    limitTip.classList.toggle('d-none', state.total === 0);
+                    limitTipCount.textContent = state.total;
+                    const loadAllBtn = document.getElementById('loadAllBtn');
+                    // 无更多数据时不显示"加载全部"入口
+                    loadAllBtn.classList.toggle('d-none', !state.hasMore);
+                    const filterTip = filterTipText();
+                    listSummary.textContent = `最近 ${state.total} 套${filterTip}${state.loading ? '（更新中…）' : ''}`;
+                    return;
+                }
+                limitTip.classList.add('d-none');
+                pagerBar.classList.toggle('d-none', state.total === 0);
+                const start = state.total === 0 ? 0 : (state.page - 1) * state.perPage + 1;
+                const end = Math.min(state.total, state.page * state.perPage);
+                pageRange.textContent = state.total
+                    ? `显示 ${start}-${end} / 共 ${state.total} 条${state.loading ? '（更新中…）' : ''}`
+                    : '';
+                listSummary.textContent = `共 ${state.total} 条记录${filterTipText()}`;
+                pageIndicator.textContent = `${state.page} / ${state.totalPages}`;
+                document.getElementById('firstPageBtn').disabled = state.page <= 1;
+                document.getElementById('prevPageBtn').disabled = state.page <= 1;
+                document.getElementById('nextPageBtn').disabled = state.page >= state.totalPages;
+                document.getElementById('lastPageBtn').disabled = state.page >= state.totalPages;
+            }
+
+            /** 当前生效筛选条件的提示文案 */
+            function filterTipText() {
+                const parts = [];
+                if (state.q) parts.push(`搜索：${state.q}`);
+                if (state.vehicleType) parts.push(`车种：${state.vehicleType}`);
+                if (state.startDate || state.endDate) {
+                    parts.push(`日期：${state.startDate || '不限'} ~ ${state.endDate || '不限'}`);
+                }
+                if (state.onlyNoData) parts.push('仅无资料');
+                return parts.length ? `（${parts.join('，')}）` : '';
+            }
+
+            function render() {
+                tbody.innerHTML = '';
+                if (!lots.length) {
+                    const hasFilter = state.q || state.onlyNoData || state.vehicleType ||
+                                      state.startDate || state.endDate;
+                    emptyRow.firstElementChild.innerHTML = hasFilter
+                        ? '<i class="fa fa-search fa-2x d-block mb-2 text-muted opacity-50"></i>没有匹配条件的记录'
+                        : '<i class="fa fa-inbox fa-2x d-block mb-2 text-muted opacity-50"></i>暂无登记记录，请点击上方"手动登录"或"Excel批量导入"';
+                    tbody.appendChild(emptyRow);
+                } else {
+                    // DocumentFragment 批量插入，减少重排
+                    const frag = document.createDocumentFragment();
+                    lots.forEach(l => {
+                        const tr = document.createElement('tr');
+                        if (resourceStatus(l) === 'none') tr.classList.add('table-danger');
+                        tr.innerHTML = recordRowHtml(l);
+                        frag.appendChild(tr);
+                    });
+                    tbody.appendChild(frag);
+                }
+                renderPager();
+            }
+
+            // ---------- 资料核对面板（弹窗内） ----------
+            const form = document.getElementById('lotLoginForm');
+            const checkPanel = document.getElementById('checkPanel');
+            const checkAlert = document.getElementById('checkAlert');
+            const checkBody = document.getElementById('checkBody');
+            const manualError = document.getElementById('manualError');
+
+            function showManualError(msg) {
+                manualError.textContent = msg;
+                manualError.style.display = 'block';
+            }
+            function hideManualError() {
+                manualError.style.display = 'none';
+                manualError.textContent = '';
+            }
+            function hideCheckPanel() {
+                checkPanel.style.display = 'none';
+                checkAlert.className = 'alert mb-2 py-2';
+                checkAlert.innerHTML = '';
+                checkBody.innerHTML = '';
+            }
+
+            function fileRows(files) {
+                if (!files || !files.length) return '';
+                const rows = files.map(f => `
+                    <tr>
+                        <td class="text-break">${esc(f.filename)}</td>
+                        <td><span class="badge bg-secondary">${esc(f.file_type)}</span></td>
+                        <td class="text-nowrap">${esc(f.upload_time) || '-'}</td>
+                        <td>${f.is_frozen
+                            ? '<span class="badge bg-danger">已冻结</span>'
+                            : '<span class="badge bg-success">正常</span>'}</td>
+                    </tr>`).join('');
+                return `
+                    <div class="table-responsive file-list-wrap">
+                        <table class="table table-sm table-bordered align-middle">
+                            <thead><tr><th>文件名</th><th>类型</th><th>上传时间</th><th>状态</th></tr></thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>`;
+            }
+
+            function renderCheckPanel(data) {
+                checkPanel.style.display = 'block';
+                if (data.exists) {
+                    checkAlert.className = 'alert alert-success mb-2 py-2';
+                    checkAlert.innerHTML = `<i class="fa fa-check-circle me-1"></i>资料核对通过：品番 <b>${esc(data.part_no)}</b> + EO <b>${esc(data.eo)}</b> 已存在资料，可登记。`;
+                    checkBody.innerHTML = data.checklist.map(c => {
+                        const tag = c.exists
+                            ? '<span class="badge bg-success">已存在</span>'
+                            : '<span class="badge bg-warning text-dark">缺失</span>';
+                        return `
+                            <div class="d-flex align-items-center justify-content-between flex-wrap gap-1 mb-1">
+                                <span>${esc(c.item)} ${tag}</span>
+                                <span class="text-muted small">共 ${(c.files || []).length} 个文件</span>
+                            </div>${c.exists ? fileRows(c.files) : ''}`;
+                    }).join('');
+                } else {
+                    checkAlert.className = 'alert alert-danger mb-2 py-2';
+                    checkAlert.innerHTML = `<i class="fa fa-exclamation-triangle me-1"></i><b>登记失败：</b>品番 <b>${esc(data.part_no)}</b> + EO <b>${esc(data.eo)}</b> 组合在资料库中不存在，请核对后再试。`;
+                    const rows = (data.checklist || []).map(c => `
+                        <tr>
+                            <td>${esc(c.item)}</td>
+                            <td class="check-missing"><i class="fa fa-times-circle me-1"></i>缺失</td>
+                            <td class="text-muted small">需在「文件管理」上传该品番+EO 的 ${esc(c.file_type)} 文件后方可登记</td>
+                        </tr>`).join('');
+                    const hasOthers = data.other_eos && data.other_eos.length;
+                    const latestLine = data.latest_eo
+                        ? `<div class="mb-1"><i class="fa fa-arrow-up me-1"></i>当前资料库最新版本：<b class="text-danger">${esc(data.latest_eo)}</b></div>`
+                        : '';
+                    const otherTip = (hasOthers || data.latest_eo)
+                        ? `<div class="alert alert-warning py-2 small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>同品番 <b>${esc(data.part_no)}</b> 的资料 EO 版本：<b>${(data.other_eos || []).map(esc).join('、') || '无'}</b>，请确认 EO 是否输入正确。${latestLine}</div>`
+                        : '';
+                    checkBody.innerHTML = `
+                        <div class="card border-danger">
+                            <div class="card-header bg-light py-2"><b>无资料清单</b>（缺失信息项）</div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-bordered align-middle mb-0">
+                                        <thead><tr><th>资料项</th><th>状态</th><th>说明</th></tr></thead>
+                                        <tbody>${rows}</tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>${otherTip}`;
+                }
+                checkPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+
+            ['partNo', 'jxEo'].forEach(id => {
+                document.getElementById(id).addEventListener('input', () => {
+                    hideCheckPanel();
+                    hideManualError();
+                });
+            });
+
+            // ---------- 手动弹窗：打开/重置/关闭 ----------
+            function resetManualForm() {
+                form.reset();
+                document.getElementById('operator').value = '{{ session.get("username", "") }}';
+                hideCheckPanel();
+                hideManualError();
+            }
+            // 按钮受权限控制，可能未渲染，绑定前需判空，避免脚本中断导致列表不加载
+            const openManualBtn = document.getElementById('openManualBtn');
+            if (openManualBtn) openManualBtn.addEventListener('click', () => {
+                resetManualForm();
+                manualModal.show();
+            });
+            document.getElementById('manualResetBtn').addEventListener('click', resetManualForm);
+            document.querySelectorAll('.js-manual-close').forEach(b =>
+                b.addEventListener('click', () => manualModal.hide()));
+            manualModalEl.addEventListener('shown.bs.modal', () => {
+                document.getElementById('lotNo').focus();
+            });
+
+            // ---------- 手动登记提交（失败留弹窗，成功关弹窗→结果覆盖层） ----------
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                hideManualError();
+                const lotNo = document.getElementById('lotNo').value.trim();
+                const partNo = document.getElementById('partNo').value.trim();
+                const jxEo = document.getElementById('jxEo').value.trim();
+                if (!lotNo) {
+                    showManualError('请输入 LOT 号');
+                    document.getElementById('lotNo').focus();
+                    return;
+                }
+                if (!partNo || !jxEo) {
+                    renderCheckPanel({
+                        exists: false,
+                        part_no: partNo || '（未填写）',
+                        eo: jxEo || '（未填写）',
+                        checklist: [
+                            { item: 'SubList 资料（子明细表）', file_type: 'SubList' },
+                            { item: 'UsageList 资料（用量明细表）', file_type: 'UsageList' }
+                        ],
+                        other_eos: []
+                    });
+                    checkAlert.innerHTML = `<i class="fa fa-exclamation-triangle me-1"></i><b>登记失败：</b>品番和京信EO为必填项，请填写后重试。`;
+                    return;
+                }
+                const btn = document.getElementById('submitBtn');
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>核对资料中...';
+                try {
+                    const vResp = await fetch('/wire/lot_login/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify({ part_no: partNo, jx_eo: jxEo })
+                    });
+                    const vData = await vResp.json();
+                    if (!vData.success) {
+                        showManualError(vData.error || '资料核对失败');
+                        return;
+                    }
+                    if (!vData.exists) {
+                        // 失败：弹窗内显示无资料清单，保持弹窗
+                        renderCheckPanel(vData);
+                        return;
+                    }
+                    renderCheckPanel(vData);
+                    btn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>登记中...';
+                    const payload = {
+                        lot_no: lotNo,
+                        vehicle_type: document.getElementById('vehicleType').value.trim(),
+                        item_name: document.getElementById('itemName').value.trim(),
+                        part_no: partNo,
+                        jx_eo: jxEo,
+                        quantity: document.getElementById('quantity').value,
+                        operator: document.getElementById('operator').value.trim(),
+                        remark: document.getElementById('remark').value.trim()
+                    };
+                    const resp = await fetch('/wire/lot_login/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        // 成功：关闭弹窗，最大化展示结果
+                        manualModal.hide();
+                        resetManualForm();
+                        reloadFirstPage();
+                        showManualResult(data.record, vData);
+                    } else if (data.checklist) {
+                        // 后端双重校验拦截：弹窗内展示无资料清单
+                        renderCheckPanel(data);
+                    } else {
+                        // 其他失败（如 LOT 重复）：弹窗内错误提示，保持弹窗
+                        showManualError(data.error || '登记失败');
+                    }
+                } catch (err) {
+                    showManualError('网络错误，登记失败，请重试');
+                } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa fa-check me-1"></i>登记 LOT';
+                }
+            });
+
+            // ---------- Excel 弹窗 ----------
+            const uploadZone = document.getElementById('uploadZone');
+            const uploadZoneText = document.getElementById('uploadZoneText');
+            const excelFile = document.getElementById('excelFile');
+            const uploadBtn = document.getElementById('uploadBtn');
+            const uploadResult = document.getElementById('uploadResult');
+            const excelError = document.getElementById('excelError');
+
+            function resetExcelForm() {
+                document.getElementById('uploadForm').reset();
+                excelFile.value = '';
+                uploadBtn.disabled = true;
+                uploadZoneText.textContent = '点击选择 或 拖拽 Excel 文件到此处';
+                uploadResult.style.display = 'none';
+                uploadResult.className = 'alert alert-info mt-3 mb-0 py-2 small';
+                uploadResult.innerHTML = '';
+                excelError.style.display = 'none';
+                excelError.textContent = '';
+            }
+            const openExcelBtn = document.getElementById('openExcelBtn');
+            if (openExcelBtn) openExcelBtn.addEventListener('click', () => {
+                resetExcelForm();
+                excelModal.show();
+            });
+            document.querySelectorAll('.js-excel-close').forEach(b =>
+                b.addEventListener('click', () => excelModal.hide()));
+
+            uploadZone.addEventListener('click', () => excelFile.click());
+            excelFile.addEventListener('change', function() {
+                uploadBtn.disabled = !this.files.length;
+                uploadZoneText.textContent = this.files.length
+                    ? this.files[0].name : '点击选择 或 拖拽 Excel 文件到此处';
+            });
+            ['dragenter', 'dragover'].forEach(ev => uploadZone.addEventListener(ev, e => {
+                e.preventDefault();
+                uploadZone.classList.add('dragover');
+            }));
+            ['dragleave', 'drop'].forEach(ev => uploadZone.addEventListener(ev, e => {
+                e.preventDefault();
+                uploadZone.classList.remove('dragover');
+            }));
+            uploadZone.addEventListener('drop', function(e) {
+                const f = e.dataTransfer.files && e.dataTransfer.files[0];
+                if (f) {
+                    excelFile.files = e.dataTransfer.files;
+                    uploadBtn.disabled = false;
+                    uploadZoneText.textContent = f.name;
+                }
+            });
+
+            document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                excelError.style.display = 'none';
+                if (!excelFile.files.length) {
+                    excelError.textContent = '请先选择 Excel 文件';
+                    excelError.style.display = 'block';
+                    return;
+                }
+                const fd = new FormData();
+                fd.append('file', excelFile.files[0]);
+                uploadBtn.disabled = true;
+                uploadBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>导入中...';
+                uploadResult.style.display = 'none';
+                try {
+                    const resp = await fetch('/wire/lot_login/upload', {
+                        method: 'POST',
+                        headers: { 'X-CSRFToken': CSRF },
+                        body: fd
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        // 成功：关闭弹窗，最大化展示导入结果
+                        excelModal.hide();
+                        resetExcelForm();
+                        // 有无资料 LOT 时自动切到"仅看无资料"（保留车种/日期筛选，重置关键词）
+                        searchInput.value = '';
+                        state.q = '';
+                        document.getElementById('searchClearBtn').style.display = 'none';
+                        state.page = 1;
+                        state.onlyNoData = data.no_resource_count > 0;
+                        syncFilterBtn();
+                        sessionStorage.removeItem(SESSION_KEY);
+                        loadData(false);
+                        showExcelResult(data);
+                    } else {
+                        // 失败：弹窗内显示错误，保持弹窗
+                        excelError.textContent = data.error || '导入失败';
+                        excelError.style.display = 'block';
+                    }
+                } catch (err) {
+                    excelError.textContent = '网络错误，导入失败，请重试';
+                    excelError.style.display = 'block';
+                } finally {
+                    uploadBtn.disabled = false;
+                    uploadBtn.innerHTML = '<i class="fa fa-upload me-1"></i>上传导入';
+                }
+            });
+
+            // ---------- 登录结果最大化覆盖层 ----------
+            const resultOverlay = document.getElementById('resultOverlay');
+            const resultOverlayBody = document.getElementById('resultOverlayBody');
+            const resultOverlayTitle = document.getElementById('resultOverlayTitle');
+            const resultAgainBtn = document.getElementById('resultAgainBtn');
+            const resultAgainText = document.getElementById('resultAgainText');
+            let resultAgainMode = 'manual';
+
+            function openOverlay() {
+                resultOverlay.classList.add('show');
+                document.body.style.overflow = 'hidden';
+                resultOverlay.scrollTop = 0;
+            }
+            function closeOverlay() {
+                resultOverlay.classList.remove('show');
+                document.body.style.overflow = '';
+                resultOverlayBody.innerHTML = '';
+            }
+            document.getElementById('resultCloseBtn').addEventListener('click', closeOverlay);
+            resultAgainBtn.addEventListener('click', () => {
+                closeOverlay();
+                if (resultAgainMode === 'excel') {
+                    resetExcelForm();
+                    excelModal.show();
+                } else {
+                    resetManualForm();
+                    manualModal.show();
+                }
+            });
+
+            function detailTable(rowsHtml) {
+                return `
+                    <div class="card shadow-sm">
+                        <div class="card-header bg-white fw-bold"><i class="fa fa-list-alt me-2"></i>登记信息</div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-bordered table-sm align-middle mb-0">
+                                    <tbody>${rowsHtml}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>`;
+            }
+            function dtRow(label, value) {
+                return `<tr><th class="table-light" style="width:130px;">${esc(label)}</th><td>${value}</td></tr>`;
+            }
+
+            // 手动登录成功结果
+            function showManualResult(rec, check) {
+                resultAgainMode = 'manual';
+                resultAgainText.textContent = '继续手动登录';
+                resultOverlayTitle.innerHTML = '<i class="fa fa-flag-checkered me-2 text-success"></i>手动登录结果';
+                const filesHtml = (check.checklist || []).map(c => {
+                    const tag = c.exists
+                        ? '<span class="badge bg-success">已存在</span>'
+                        : '<span class="badge bg-warning text-dark">缺失</span>';
+                    return `<div class="mb-1">${esc(c.item)} ${tag}<span class="text-muted small ms-2">${(c.files || []).length} 个文件</span></div>`;
+                }).join('');
+                resultOverlayBody.innerHTML = `
+                    <div class="text-center mb-4">
+                        <div class="result-success-icon"><i class="fa fa-check"></i></div>
+                        <h4 class="text-success mb-1">LOT 登录成功</h4>
+                        <div class="text-muted">LOT NO：<b class="text-dark">${esc(rec.lot_no)}</b> 已完成登记，可下载 Excel 核实</div>
+                    </div>
+                    <div class="row justify-content-center">
+                        <div class="col-lg-8">
+                            ${detailTable(
+                                dtRow('LOT NO', `<b>${esc(rec.lot_no)}</b>`) +
+                                dtRow('车种', esc(rec.vehicle_type) || '-') +
+                                dtRow('ITEM名', esc(rec.item_name) || '-') +
+                                dtRow('品番', esc(rec.part_no) || '-') +
+                                dtRow('京信EO', esc(rec.jx_eo) || '-') +
+                                dtRow('入荷数量', rec.quantity != null ? esc(rec.quantity) : '-') +
+                                dtRow('操作员', esc(rec.operator) || '-') +
+                                dtRow('备注', esc(rec.remark) || '-') +
+                                dtRow('登记时间', esc(rec.created_at) || '-')
+                            )}
+                            <div class="card shadow-sm mt-3">
+                                <div class="card-header bg-white fw-bold"><i class="fa fa-folder-open-o me-2"></i>关联资料状态</div>
+                                <div class="card-body">${filesHtml}</div>
+                            </div>
+                        </div>
+                    </div>`;
+                resultAgainBtn.style.display = 'inline-block';
+                openOverlay();
+            }
+
+            // Excel 导入成功结果（最大化）
+            function showExcelResult(data) {
+                resultAgainMode = 'excel';
+                resultAgainText.textContent = '继续导入';
+                resultOverlayTitle.innerHTML = '<i class="fa fa-flag-checkered me-2 text-success"></i>Excel 导入结果';
+
+                const noResList = (data.no_resource_rows || []).map(r => {
+                    if (r.incomplete) {
+                        const miss = [!r.part_no ? '品番' : null, !r.jx_eo ? '京信EO' : null]
+                            .filter(Boolean).join('、');
+                        return `<tr class="table-warning">
+                            <td class="fw-bold">${esc(r.lot_no)}</td><td colspan="2">未填写${esc(miss)}，无法核对（已正常登记）</td></tr>`;
+                    }
+                    return `<tr class="table-danger">
+                        <td class="fw-bold">${esc(r.lot_no)}</td>
+                        <td>${esc(r.part_no)}</td><td>${esc(r.jx_eo)}</td></tr>`;
+                }).join('');
+                const noResCard = data.no_resource_count > 0 ? `
+                    <div class="card shadow-sm border-danger mt-4">
+                        <div class="card-header bg-danger text-white fw-bold">
+                            <i class="fa fa-exclamation-triangle me-2"></i>无资料清单（${data.no_resource_count} 条，已全部正常登记）
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height:320px; overflow-y:auto;">
+                                <table class="table table-sm table-bordered align-middle mb-0">
+                                    <thead><tr><th>LOT NO</th><th>品番</th><th>京信EO</th></tr></thead>
+                                    <tbody>${noResList}</tbody>
+                                </table>
+                            </div>
+                            ${data.no_resource_truncated ? '<div class="text-muted small p-2 mb-0">仅展示前 200 条，可在列表使用"仅看无资料"查看全部</div>' : ''}
+                        </div>
+                    </div>` : '';
+
+                // 本次登录的 LOT 清单（分页模式下列表仅含当前页，直接用导入响应的 lot_no 展示）
+                const noResMap = {};
+                (data.no_resource_rows || []).forEach(r => { noResMap[r.lot_no] = r; });
+                const importedNos = data.imported_lot_nos || [];
+                const importedTable = importedNos.length ? `
+                    <div class="card shadow-sm mt-4">
+                        <div class="card-header bg-white fw-bold">
+                            <i class="fa fa-table me-2"></i>本次登录 LOT 清单（${importedNos.length} 条）
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height:360px; overflow-y:auto;">
+                                <table class="table table-sm table-bordered table-hover align-middle mb-0">
+                                    <thead><tr><th style="width:60px;">#</th><th>LOT NO</th><th>资料状态</th></tr></thead>
+                                    <tbody>${importedNos.map((no, i) => {
+                                        const nr = noResMap[no];
+                                        const cls = nr ? ' class="table-danger"' : '';
+                                        const badge = nr
+                                            ? '<span class="badge bg-danger">无资料（已登记）</span>'
+                                            : '<span class="badge bg-success">有资料</span>';
+                                        return `<tr${cls}><td>${i + 1}</td><td class="fw-bold">${esc(no)}</td><td>${badge}</td></tr>`;
+                                    }).join('')}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>` : '';
+
+                resultOverlayBody.innerHTML = `
+                    <div class="text-center mb-4">
+                        <div class="result-success-icon"><i class="fa fa-check"></i></div>
+                        <h4 class="text-success mb-1">Excel 导入完成</h4>
+                        <div class="text-muted">文件共 ${data.total} 行，成功登录 <b class="text-dark">${data.imported_count}</b> 条 LOT，可下载 Excel 核实</div>
+                    </div>
+                    <div class="row g-3 justify-content-center">
+                        <div class="col-6 col-md-3">
+                            <div class="card stat-card bg-stat-total"><div class="card-body text-center py-3">
+                                <div class="stat-num">${data.total}</div><div class="stat-label">总行数</div>
+                            </div></div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="card stat-card bg-stat-ok"><div class="card-body text-center py-3">
+                                <div class="stat-num">${data.imported_count}</div><div class="stat-label">成功登录</div>
+                            </div></div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="card stat-card bg-stat-dup"><div class="card-body text-center py-3">
+                                <div class="stat-num">${data.duplicate_count + data.skipped_no_lot}</div>
+                                <div class="stat-label">重复/缺号跳过${data.skipped_no_lot ? '（缺LOT ' + data.skipped_no_lot + '）' : ''}</div>
+                            </div></div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="card stat-card bg-stat-none"><div class="card-body text-center py-3">
+                                <div class="stat-num">${data.no_resource_count}</div><div class="stat-label">无资料（已登记）</div>
+                            </div></div>
+                        </div>
+                    </div>
+                    <div class="row justify-content-center"><div class="col-lg-10">
+                        ${noResCard}
+                        ${importedTable}
+                    </div></div>`;
+                resultAgainBtn.style.display = 'inline-block';
+                openOverlay();
+            }
+
+            // ---------- 搜索（服务端，防抖 300ms）/ 筛选 / 无资料筛选 / 分页 ----------
+            const filterNoDataBtn = document.getElementById('filterNoDataBtn');
+            const searchClearBtn = document.getElementById('searchClearBtn');
+            const filterVehicleType = document.getElementById('filterVehicleType');
+            const filterStartDate = document.getElementById('filterStartDate');
+            const filterEndDate = document.getElementById('filterEndDate');
+            const limitSelect = document.getElementById('limitSelect');
+
+            function syncFilterBtn() {
+                filterNoDataBtn.dataset.active = state.onlyNoData ? 'true' : 'false';
+                filterNoDataBtn.className = state.onlyNoData
+                    ? 'btn btn-danger btn-sm mb-1 mb-md-0'
+                    : 'btn btn-outline-danger btn-sm mb-1 mb-md-0';
+            }
+
+            let searchTimer = null;
+            searchInput.addEventListener('input', function() {
+                searchClearBtn.style.display = this.value ? 'inline-block' : 'none';
+                clearTimeout(searchTimer);
+                const val = this.value;
+                // 防抖：300ms 内停止输入才发请求，避免逐字请求造成卡顿
+                searchTimer = setTimeout(() => {
+                    const next = val.trim();
+                    if (next === state.q) return;   // 值未变化，跳过重复请求
+                    state.q = next;
+                    state.page = 1;
+                    loadData(true);
+                }, 300);
+            });
+            // 回车立即搜索（跳过防抖）
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    clearTimeout(searchTimer);
+                    const next = this.value.trim();
+                    if (next === state.q) return;
+                    state.q = next;
+                    state.page = 1;
+                    loadData(true);
+                }
+            });
+            searchClearBtn.addEventListener('click', function() {
+                searchInput.value = '';
+                this.style.display = 'none';
+                clearTimeout(searchTimer);
+                if (state.q) {
+                    state.q = '';
+                    state.page = 1;
+                    loadData(true);
+                }
+                searchInput.focus();
+            });
+
+            filterNoDataBtn.addEventListener('click', function() {
+                state.onlyNoData = this.dataset.active !== 'true';
+                state.page = 1;
+                syncFilterBtn();
+                loadData(true);
+            });
+
+            // 应用筛选（车种 / 日期范围 / 拉取范围一次生效，仅发一次请求）
+            document.getElementById('applyFilterBtn').addEventListener('click', function() {
+                const vt = filterVehicleType.value;
+                const sd = filterStartDate.value;
+                const ed = filterEndDate.value;
+                if (sd && ed && sd > ed) {
+                    alert('开始日期不能晚于结束日期');
+                    return;
+                }
+                state.vehicleType = vt;
+                state.startDate = sd;
+                state.endDate = ed;
+                state.limit = parseInt(limitSelect.value, 10) || 0;
+                // 全部模式：每页沿用 perPageSelect；limit 模式：单页返回
+                state.perPage = state.limit || (parseInt(document.getElementById('perPageSelect').value, 10) || 200);
+                state.page = 1;
+                loadData(false);
+            });
+
+            // 重置全部条件
+            document.getElementById('resetFilterBtn').addEventListener('click', resetAllConditions);
+
+            // "加载全部（分页查看）"：从最近N套切换到全量分页模式
+            document.getElementById('loadAllBtn').addEventListener('click', function() {
+                state.limit = 0;
+                state.perPage = parseInt(document.getElementById('perPageSelect').value, 10) || 200;
+                state.page = 1;
+                limitSelect.value = '0';
+                loadData(false);
+            });
+
+            function gotoPage(p) {
+                p = Math.max(1, Math.min(state.totalPages, p));
+                if (p === state.page) return;
+                state.page = p;
+                loadData(true);
+                // 翻页后把表格滚动位置回到顶部
+                document.querySelector('#lotTable').closest('.table-responsive').scrollTop = 0;
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+            document.getElementById('firstPageBtn').addEventListener('click', () => gotoPage(1));
+            document.getElementById('prevPageBtn').addEventListener('click', () => gotoPage(state.page - 1));
+            document.getElementById('nextPageBtn').addEventListener('click', () => gotoPage(state.page + 1));
+            document.getElementById('lastPageBtn').addEventListener('click', () => gotoPage(state.totalPages));
+            document.getElementById('perPageSelect').addEventListener('change', function() {
+                state.perPage = parseInt(this.value, 10) || 200;
+                state.page = 1;
+                loadData(true);
+            });
+
+            // ---------- 无资料明细弹窗 ----------
+            const noDataModalBody = document.getElementById('noDataModalBody');
+
+            async function showNoDataDetail(partNo, eo) {
+                noDataModalBody.innerHTML = '<div class="text-center text-muted py-4"><i class="fa fa-spinner fa-spin me-2"></i>正在核对资料...</div>';
+                noDataModal.show();
+                try {
+                    const resp = await fetch('/wire/lot_login/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify({ part_no: partNo, jx_eo: eo })
+                    });
+                    const d = await resp.json();
+                    if (!d.success) {
+                        noDataModalBody.innerHTML = `<div class="alert alert-danger mb-0">${esc(d.error || '核对失败')}</div>`;
+                        return;
+                    }
+                    const rows = (d.checklist || []).map(c => `
+                        <tr>
+                            <td>${esc(c.item)}</td>
+                            <td class="check-missing"><i class="fa fa-times-circle me-1"></i>缺失</td>
+                            <td class="text-muted small">需在「文件管理」上传该品番+EO 的 ${esc(c.file_type)} 文件</td>
+                        </tr>`).join('');
+                    const otherTip = (d.other_eos && d.other_eos.length)
+                        ? `<div class="alert alert-warning py-2 small mt-3 mb-0"><i class="fa fa-info-circle me-1"></i>同品番 <b>${esc(d.part_no)}</b> 已有其他 EO 版本：<b>${d.other_eos.map(esc).join('、')}</b>，请确认 EO 是否输入正确。</div>`
+                        : '';
+                    noDataModalBody.innerHTML = `
+                        <div class="alert alert-danger"><i class="fa fa-exclamation-triangle me-1"></i>品番 <b>${esc(d.part_no)}</b> + EO <b>${esc(d.eo)}</b> 在资料库中暂无任何资料，该 LOT 已正常登记。补充资料后列表状态将自动更新为"有资料"。</div>
+                        <table class="table table-sm table-bordered align-middle mb-0">
+                            <thead><tr><th>资料项</th><th>状态</th><th>处理说明</th></tr></thead>
+                            <tbody>${rows}</tbody>
+                        </table>${otherTip}`;
+                } catch (err) {
+                    noDataModalBody.innerHTML = '<div class="alert alert-danger mb-0">网络错误，核对失败</div>';
+                }
+            }
+
+            tbody.addEventListener('click', function(e) {
+                const btn = e.target.closest('.js-no-data');
+                if (btn) {
+                    showNoDataDetail(decodeURIComponent(btn.dataset.part), decodeURIComponent(btn.dataset.eo));
+                }
+            });
+
+            const clearAllBtn = document.getElementById('clearAllBtn');
+            if (clearAllBtn) clearAllBtn.addEventListener('click', async function() {
+                if (!state.total) return;
+                if (!confirm('确定清空所有已登记LOT记录？此操作不可恢复！')) return;
+                try {
+                    const resp = await fetch('/wire/lot_login/clear', {
+                        method: 'POST',
+                        headers: { 'X-CSRFToken': CSRF }
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        reloadFirstPage();
+                    } else {
+                        alert(data.error || '清空失败');
+                    }
+                } catch (err) {
+                    alert('网络错误，清空失败');
+                }
+            });
+
+            // 初始化：默认"最近50套"limit 模式（首屏最快），首次进入支持 sessionStorage 秒显
+            state.limit = parseInt(limitSelect.value, 10);
+            if (isNaN(state.limit)) state.limit = 50;
+            state.perPage = state.limit || (parseInt(document.getElementById('perPageSelect').value, 10) || 200);
+            // 日期筛选默认"三天前 ~ 当天"（含）范围
+            const today = todayStr();
+            const startDate = threeDaysAgoStr();
+            filterStartDate.value = startDate;
+            filterEndDate.value = today;
+            state.startDate = startDate;
+            state.endDate = today;
+            syncFilterBtn();
+            loadData();
+        })();
+    </script>
+</body>
+</html>

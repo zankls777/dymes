@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>{{ page_title }} - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        /* 顶部扫码/搜索框：大号输入，便于移动端扫码枪灌入与手指操作 */
+        .scan-input { font-size: 1.15rem; height: 48px; font-weight: 600; letter-spacing: 1px; }
+        /* 移动端卡片列表项 */
+        .rec-card {
+            border: 1px solid #e3e6ea; border-radius: 10px; background: #fff;
+            padding: 10px 12px; margin-bottom: 10px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+        }
+        .rec-card .rec-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+        .rec-card .rec-lot { font-size: 1.05rem; font-weight: 700; color: #0d6efd; word-break: break-all; }
+        .rec-card .rec-pno { font-size: 1rem; font-weight: 600; }
+        .rec-card .rec-meta { font-size: 0.85rem; color: #6c757d; margin-top: 4px; }
+        .rec-card .rec-qty { font-size: 1.1rem; font-weight: 700; color: #198754; white-space: nowrap; }
+        .rec-card .rec-ops { margin-top: 8px; display: flex; gap: 8px; }
+        .rec-card .rec-ops .btn { flex: 1; min-height: 40px; font-size: 0.92rem; }
+        .rec-empty { text-align: center; color: #adb5bd; padding: 32px 0; }
+        /* 移动端底部悬浮“新增”大按钮 */
+        #mobileFab {
+            position: fixed; right: 16px; bottom: 16px; z-index: 1030;
+            width: 56px; height: 56px; border-radius: 50%;
+            font-size: 1.5rem; line-height: 1;
+            box-shadow: 0 4px 12px rgba(13, 110, 253, 0.4);
+        }
+        /* 移动端通过长按或按钮移除键盘，聚焦时用 numeric 便于数字录入 */
+        .desktop-only { display: block; }
+        .mobile-only { display: none; }
+        @media (max-width: 767.98px) {
+            .container-fluid { padding-left: 10px; padding-right: 10px; }
+            .container-fluid.mt-4 { margin-top: 0.5rem !important; }
+            .card-body { padding: 0.75rem; }
+            /* 移动端隐藏 11 列宽表格，改用卡片列表 */
+            .desktop-only { display: none !important; }
+            .mobile-only { display: block !important; }
+            /* 筛选区移动端紧凑排布 */
+            .filter-row .col-auto, .filter-row .col-md-3 { width: 100%; flex: 0 0 100%; max-width: 100%; }
+            .filter-row .date-sep { display: none; }
+            /* 主操作按钮移动端加大触摸区 */
+            .btn-main { min-height: 46px; font-size: 1rem; }
+            #item-modal .modal-body { padding: 0.75rem; }
+            #item-modal .form-control, #item-modal .form-select { min-height: 46px; font-size: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid mt-4">
+        {% include '_navbar.html' %}
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="card-title mb-0"><i class="fa fa-truck mr-1 text-primary"></i>{{ page_title }}</h5>
+                            <div class="d-flex gap-2">
+                                {% if can_add %}
+                                <button type="button" class="btn btn-primary" id="btn-add">
+                                    <i class="fa fa-plus mr-1"></i> 新增
+                                </button>
+                                <button type="button" class="btn btn-outline-success" id="btn-upload">
+                                    <i class="fa fa-file-excel-o mr-1"></i> Excel上传
+                                </button>
+                                <input type="file" id="file-upload" accept=".xlsx,.xls" style="display:none;">
+                                <button type="button" class="btn btn-outline-secondary" id="btn-template">
+                                    <i class="fa fa-download mr-1"></i> 下载模板
+                                </button>
+                                {% endif %}
+                                {% if can_download %}
+                                <button type="button" class="btn btn-success" id="btn-export">
+                                    <i class="fa fa-download mr-1"></i> 导出CSV
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- 筛选 -->
+                        <div class="row mb-3 g-2 filter-row">
+                            <div class="col-md-3">
+                                <input type="text" class="form-control scan-input" id="filter-keyword"
+                                       placeholder="扫码 / 输入 LOT / 品番 / 车种" autocomplete="off">
+                            </div>
+                            <div class="col-auto">
+                                <select class="form-select" id="filter-operator" title="按作业人筛选" style="min-width:160px;">
+                                    <option value="">全部作业人</option>
+                                </select>
+                            </div>
+                            <div class="col-auto">
+                                <input type="text" class="form-control" id="filter-pno"
+                                       placeholder="品番筛选" autocomplete="off" style="min-width:130px;">
+                            </div>
+                            <div class="col-auto">
+                                <input type="date" class="form-control" id="filter-date-from" title="起始日期">
+                            </div>
+                            <div class="col-auto align-self-center text-muted date-sep">至</div>
+                            <div class="col-auto">
+                                <input type="date" class="form-control" id="filter-date-to" title="结束日期">
+                            </div>
+                            <div class="col-auto">
+                                <button class="btn btn-outline-primary btn-main" id="btn-search">
+                                    <i class="fa fa-search mr-1"></i> 查询
+                                </button>
+                                <button class="btn btn-outline-secondary btn-main" id="btn-reset">
+                                    <i class="fa fa-refresh mr-1"></i> 重置
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 桌面端：8 列宽表格 -->
+                        <div class="table-responsive desktop-only">
+                            <table class="table table-hover table-sm align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>入库日期</th>
+                                        <th>LOT NO</th>
+                                        <th>品番</th>
+                                        <th>车种</th>
+                                        <th>入库数量</th>
+                                        <th>单价</th>
+                                        <th>备注</th>
+                                        <th>操作人</th>
+                                        <th>更新时间</th>
+                                        <th style="width:150px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="list-tbody">
+                                    <tr><td colspan="10" class="text-center text-muted py-4">加载中…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- 移动端：卡片列表 -->
+                        <div id="card-list" class="mobile-only">
+                            <div class="rec-empty">加载中…</div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="text-muted small" id="page-info"></div>
+                            <nav>
+                                <ul class="pagination pagination-sm mb-0" id="pager"></ul>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if can_add %}
+    <!-- 移动端悬浮“新增”按钮：一键打开录入弹窗 -->
+    <button type="button" class="btn btn-primary mobile-only" id="mobileFab" title="新增生产入库">
+        <i class="fa fa-plus"></i>
+    </button>
+    {% endif %}
+
+    <!-- 新增/编辑弹窗 -->
+    <div class="modal fade" id="item-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modal-title">新增</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="f-id">
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label">入库日期 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="f-date">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">LOT NO</label>
+                            <input type="text" class="form-control" id="f-lot" maxlength="100"
+                                   placeholder="扫码 / 输入 LOT 后回车带出品番" autocomplete="off">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">品番 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="f-pno" maxlength="50">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">车种</label>
+                            <input type="text" class="form-control" id="f-vehicle" maxlength="100">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">入库数量</label>
+                            <input type="number" class="form-control" id="f-qty" min="0" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">作业者</label>
+                            <select class="form-select" id="f-operator">
+                                <option value="">请选择作业者</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">单价 <small class="text-muted">（系统计算，不可修改）</small></label>
+                            <input type="number" class="form-control" id="f-unit-price" min="0" step="0.0001" value="0" readonly>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">倍数
+                                <small class="text-muted" id="multiplier-hint"></small>
+                            </label>
+                            <input type="number" class="form-control" id="f-multiplier" min="0.0001" step="0.0001" value="1" readonly>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">调整后单价</label>
+                            <input type="text" class="form-control" id="f-final-price" value="0" readonly>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">备注</label>
+                        <textarea class="form-control" id="f-remark" rows="2" maxlength="500"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-save">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+    (function () {
+        const API = '{{ api_base }}';
+        const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+        const CAN_DELETE = {{ 'true' if can_delete else 'false' }};
+        // 单价是否可见（未授权则列表与弹窗均打码）
+        const CAN_UNMASK = {{ 'true' if can_unmask else 'false' }};
+        const PER_PAGE = 20;
+        const COLS = 10;
+        let curPage = 1;
+        let cache = {};
+        // 当前 LOT 的可入库上限（计划登录数量优先，未登录则入荷数量）；null 表示无限制
+        let lotQtyLimit = null;
+        let lotQtyLimitSource = '';
+
+        const modal = new bootstrap.Modal(document.getElementById('item-modal'));
+        const tbody = document.getElementById('list-tbody');
+
+        function esc(s) {
+            return (s === null || s === undefined) ? '' : String(s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // 单价格式化：null/空显示 0，去掉浮点尾随 0（如 0.4290 -> 0.429）
+        function fmtPrice(v) {
+            const n = parseFloat(v);
+            if (isNaN(n)) return '0';
+            return String(Math.round(n * 10000) / 10000);
+        }
+
+        // 单价单元格：无权限时打码（服务端已抹去真实值，此处仅作展示兜底）
+        function priceCell(v) {
+            if (!CAN_UNMASK) {
+                return '<span class="text-muted" title="无查看权限，已脱敏">***</span>';
+            }
+            return fmtPrice(v);
+        }
+
+        // 单价 × 倍数 = 调整后单价，实时回显
+        function refreshFinalPrice() {
+            const price = parseFloat(document.getElementById('f-unit-price').value) || 0;
+            const mult = parseFloat(document.getElementById('f-multiplier').value) || 0;
+            const final = price * mult;
+            document.getElementById('f-final-price').value = (Math.round(final * 10000) / 10000);
+        }
+        function today() {
+            const d = new Date();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${d.getFullYear()}-${m}-${day}`;
+        }
+        function buildQs(extra) {
+            const qs = new URLSearchParams({page: curPage, per_page: PER_PAGE});
+            const kw = document.getElementById('filter-keyword').value.trim();
+            const op = document.getElementById('filter-operator').value.trim();
+            const pno = document.getElementById('filter-pno').value.trim();
+            const df = document.getElementById('filter-date-from').value;
+            const dt = document.getElementById('filter-date-to').value;
+            if (kw) qs.set('keyword', kw);
+            if (op) qs.set('operator', op);   // 作业人精确筛选
+            if (pno) qs.set('pno', pno);      // 品番精确筛选
+            if (df) qs.set('date_from', df);
+            if (dt) qs.set('date_to', dt);
+            if (extra) Object.keys(extra).forEach(k => qs.set(k, extra[k]));
+            return qs;
+        }
+
+        function load(page) {
+            curPage = page || 1;
+            fetch(API + '?' + buildQs().toString())
+                .then(r => r.json())
+                .then(res => {
+                    if (!res.success) { alert(res.message || '加载失败'); return; }
+                    renderRows(res.items);
+                    renderPager(res.page, res.pages, res.total, res.items);
+                })
+                .catch(() => {
+                    tbody.innerHTML = '<tr><td colspan="' + COLS + '" class="text-center text-danger py-4">加载失败</td></tr>';
+                    cardList.innerHTML = '<div class="rec-empty text-danger">加载失败</div>';
+                });
+        }
+
+        function renderRows(items) {
+            cache = {};
+            items.forEach(i => { cache[i.id] = i; });
+            renderCards(items); // 移动端卡片
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="' + COLS + '" class="text-center text-muted py-4">暂无数据</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map(g => {
+                let ops = '';
+                if (CAN_EDIT) ops += `<button class="btn btn-sm btn-outline-primary mr-1" data-edit="${g.id}">编辑</button>`;
+                if (CAN_DELETE) ops += `<button class="btn btn-sm btn-outline-danger" data-del="${g.id}">删除</button>`;
+                return `<tr>
+                    <td>${esc(g.inbound_date)}</td>
+                    <td>${esc(g.lot_no)}</td>
+                    <td>${esc(g.pno)}</td>
+                    <td>${esc(g.vehicle_type)}</td>
+                    <td>${g.inbound_qty}</td>
+                    <td>${priceCell(g.unit_price)}</td>
+                    <td>${esc(g.remark)}</td>
+                    <td>${esc(g.created_by_name)}</td>
+                    <td>${esc(g.updated_at) || '-'}</td>
+                    <td>${ops || '-'}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // 移动端卡片列表：突出 LOT / 品番 / 数量，操作按钮整行大触摸区
+        const cardList = document.getElementById('card-list');
+        function renderCards(items) {
+            if (!items.length) {
+                cardList.innerHTML = '<div class="rec-empty">暂无数据</div>';
+                return;
+            }
+            cardList.innerHTML = items.map(g => {
+                // 仅在有值时展示的次要信息，避免移动端空行
+                const metaParts = [];
+                if (g.vehicle_type) metaParts.push('车种 ' + esc(g.vehicle_type));
+                if (g.inbound_date) metaParts.push(esc(g.inbound_date));
+                metaParts.push('单价 ' + (CAN_UNMASK ? fmtPrice(g.unit_price) : '***'));
+                if (g.created_by_name) metaParts.push('操作人 ' + esc(g.created_by_name));
+                if (g.updated_at) metaParts.push('更新时间 ' + esc(g.updated_at));
+                let ops = '';
+                if (CAN_EDIT) ops += `<button class="btn btn-outline-primary" data-edit="${g.id}"><i class="fa fa-pencil mr-1"></i>编辑</button>`;
+                if (CAN_DELETE) ops += `<button class="btn btn-outline-danger" data-del="${g.id}"><i class="fa fa-trash mr-1"></i>删除</button>`;
+                return `<div class="rec-card">
+                    <div class="rec-top">
+                        <div>
+                            <div class="rec-lot">${esc(g.lot_no) || '(无LOT)'}</div>
+                            <div class="rec-pno">品番：${esc(g.pno) || '-'}</div>
+                        </div>
+                        <div class="text-end">
+                            <div class="rec-qty">×${g.inbound_qty}</div>
+                        </div>
+                    </div>
+                    <div class="rec-meta">${metaParts.join(' · ') || '-'}</div>
+                    ${g.remark ? '<div class="rec-meta">备注：' + esc(g.remark) + '</div>' : ''}
+                    ${ops ? '<div class="rec-ops">' + ops + '</div>' : ''}
+                </div>`;
+            }).join('');
+        }
+
+        function renderPager(page, pages, total, items) {
+            // 汇总当前结果集（本页）的入库数量，便于「按作业人筛选后看该用户作业数量」
+            const pageSum = (items || []).reduce((s, i) => s + (parseInt(i.inbound_qty, 10) || 0), 0);
+            const op = document.getElementById('filter-operator').value.trim();
+            const sumText = op ? `　当前页「${op}」作业数量合计：${pageSum}` : `　当前页数量合计：${pageSum}`;
+            document.getElementById('page-info').textContent =
+                `共 ${total} 条，第 ${page}/${pages || 1} 页` + sumText;
+            const ul = document.getElementById('pager');
+            let html = '';
+            const mk = (p, label, disabled, active) =>
+                `<li class="page-item ${disabled ? 'disabled' : ''} ${active ? 'active' : ''}">
+                    <a class="page-link" href="#" data-page="${p}">${label}</a></li>`;
+            html += mk(page - 1, '上一页', page <= 1, false);
+            for (let p = 1; p <= pages; p++) {
+                if (p === 1 || p === pages || Math.abs(p - page) <= 2) {
+                    html += mk(p, p, false, p === page);
+                } else if (Math.abs(p - page) === 3) {
+                    html += '<li class="page-item disabled"><span class="page-link">…</span></li>';
+                }
+            }
+            html += mk(page + 1, '下一页', page >= pages, false);
+            ul.innerHTML = html;
+        }
+
+        // 登录账号默认作业者（页面渲染时注入），供新增时预填、可手动修改
+        const DEFAULT_OPERATOR = {{ (default_operator or '') | tojson }};
+        const operatorEl = document.getElementById('f-operator');
+        // 作业者 -> 所属班组 映射（用于下拉候选展示部门后缀）
+        let operatorTeamMap = {};
+
+        // 加载作业者下拉候选（姓名 + 所属部门）
+        function loadOperators() {
+            return fetch(API + '/operators')
+                .then(r => r.json())
+                .then(res => {
+                    if (!res.success) return;
+                    operatorTeamMap = {};
+                    const opts = ['<option value="">请选择作业者</option>'];
+                    res.items.forEach(it => {
+                        operatorTeamMap[it.name] = it.team || '';
+                        opts.push(`<option value="${esc(it.name)}">${esc(it.name)}${it.team ? '（' + esc(it.team) + '）' : ''}</option>`);
+                    });
+                    operatorEl.innerHTML = opts.join('');
+                    // 同步填充筛选区「作业人」下拉，与录入下拉候选一致
+                    const filterOp = document.getElementById('filter-operator');
+                    if (filterOp) {
+                        filterOp.innerHTML = '<option value="">全部作业人</option>'
+                            + res.items.map(it => `<option value="${esc(it.name)}">${esc(it.name)}</option>`).join('');
+                    }
+                })
+                .catch(() => {});
+        }
+
+        // 设置作业者；若候选里没有该值（如历史记录），临时补一个选项避免丢失
+        function setOperator(name) {
+            name = (name || '').trim();
+            if (name && !operatorTeamMap.hasOwnProperty(name)) {
+                const opt = document.createElement('option');
+                opt.value = name; opt.textContent = name;
+                operatorEl.appendChild(opt);
+            }
+            operatorEl.value = name;
+        }
+
+        function openModal(g) {
+            document.getElementById('modal-title').textContent = g ? '编辑' : '新增';
+            // 切换记录时清空上次的记忆，避免用错 LOT 的上限
+            lotQtyLimit = null; lotQtyLimitSource = '';
+            document.getElementById('f-id').value = g ? g.id : '';
+            document.getElementById('f-date').value = g ? g.inbound_date : today();
+            document.getElementById('f-lot').value = g ? g.lot_no : '';
+            document.getElementById('f-pno').value = g ? g.pno : '';
+            document.getElementById('f-vehicle').value = g ? g.vehicle_type : '';
+            document.getElementById('f-qty').value = g ? g.inbound_qty : 0;
+            // 作业者：编辑时用记录值；新增时默认绑定当前登录账号
+            setOperator(g ? (g.operator || '') : DEFAULT_OPERATOR);
+            document.getElementById('f-unit-price').value = g ? (CAN_UNMASK ? (g.unit_price || 0) : '') : (CAN_UNMASK ? 0 : '');
+            // 无权限时单价/倍数输入框占位打码，避免误认为可编辑
+            document.getElementById('f-unit-price').placeholder = CAN_UNMASK ? '' : '***';
+            document.getElementById('f-multiplier').placeholder = CAN_UNMASK ? '' : '***';
+            // 倍数：编辑时视为 1（记录中的单价已是最终值），新增时默认 1，待反查后按规则带出
+            document.getElementById('f-multiplier').value = 1;
+            document.getElementById('multiplier-hint').textContent = '';
+            refreshFinalPrice();
+            document.getElementById('f-remark').value = g ? g.remark : '';
+            modal.show();
+            if (!g) setTimeout(() => document.getElementById('f-lot').focus(), 300);
+        }
+
+        // 输入 LOT 后回车/失焦，自动带出品番、车种、作业者、单价
+        function lookupLot() {
+            const lot = document.getElementById('f-lot').value.trim();
+            if (!lot) { lotQtyLimit = null; lotQtyLimitSource = ''; return; }
+            // 带入库日期与作业者，便于后端匹配生效单价与倍数规则
+            const qs = new URLSearchParams({lot_no: lot});
+            const d = document.getElementById('f-date').value;
+            if (d) qs.set('date', d);
+            const op = operatorEl.value.trim();
+            if (op) qs.set('operator', op);
+            fetch(API + '/lot_lookup?' + qs.toString())
+                .then(r => r.json())
+                .then(res => {
+                    if (!res.success || !res.found) {
+                        alert((res && res.message) || '未找到 LOT 资料');
+                        return;
+                    }
+                    const d = res.data;
+                    // 记录该 LOT 的可入库上限，用于提交前预校验
+                    lotQtyLimit = (d.qty_limit === null || d.qty_limit === undefined) ? null : parseInt(d.qty_limit, 10);
+                    lotQtyLimitSource = d.qty_limit_source || '';
+                    document.getElementById('f-pno').value = d.pno || '';
+                    document.getElementById('f-vehicle').value = d.vehicle_type || '';
+                    if ((parseInt(document.getElementById('f-qty').value, 10) || 0) === 0) {
+                        document.getElementById('f-qty').value = d.qty || 0;
+                    }
+                    // 默认作业者：仅当当前为空时自动填充，避免覆盖手工修改
+                    if (!operatorEl.value && d.operator) {
+                        setOperator(d.operator);
+                    }
+                    // 单价：仅当有权限且当前为 0/空时自动填充（单价由系统计算，用户不可改）
+                    const priceEl = document.getElementById('f-unit-price');
+                    if (CAN_UNMASK && (parseFloat(priceEl.value) || 0) === 0
+                        && d.unit_price !== '' && d.unit_price !== null) {
+                        priceEl.value = d.unit_price;
+                    }
+                    // 倍数：命中规则时自动带出并提示；否则重置为 1
+                    const multEl = document.getElementById('f-multiplier');
+                    const hintEl = document.getElementById('multiplier-hint');
+                    if (d.multiplier_matched) {
+                        multEl.value = d.multiplier;
+                        hintEl.textContent = '（已匹配规则）';
+                    } else {
+                        multEl.value = 1;
+                        hintEl.textContent = '';
+                    }
+                    refreshFinalPrice();
+                })
+                .catch(() => alert('LOT 查询失败'));
+        }
+
+        function save() {
+            const id = document.getElementById('f-id').value;
+            // 单价与倍数均为系统计算/带出值，不随表单提交（由服务端按品番生效单价 × 倍数重算）
+            const payload = {
+                inbound_date: document.getElementById('f-date').value,
+                lot_no: document.getElementById('f-lot').value.trim(),
+                pno: document.getElementById('f-pno').value.trim(),
+                vehicle_type: document.getElementById('f-vehicle').value.trim(),
+                inbound_qty: parseInt(document.getElementById('f-qty').value, 10) || 0,
+                operator: document.getElementById('f-operator').value.trim(),
+                remark: document.getElementById('f-remark').value.trim()
+            };
+            if (!payload.inbound_date || !payload.pno) { alert('入库日期与品番为必填项'); return; }
+            // 提交前预校验：入库数量不得超过计划登录数量（未登录计划则按入荷数量）
+            if (lotQtyLimit !== null && payload.inbound_qty > lotQtyLimit) {
+                alert(`入库数量（${payload.inbound_qty}）超出「${lotQtyLimitSource || '可入库上限'}」（${lotQtyLimit}）`);
+                return;
+            }
+            fetch(id ? (API + '/' + id) : API, {
+                method: id ? 'PUT' : 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).then(r => r.json()).then(res => {
+                if (res.success) { modal.hide(); load(id ? curPage : 1); }
+                else alert(res.message || '保存失败');
+            }).catch(() => alert('保存失败'));
+        }
+
+        function del(id) {
+            if (!confirm('确认删除该记录？')) return;
+            fetch(API + '/' + id, {method: 'DELETE'})
+                .then(r => r.json())
+                .then(res => { if (res.success) load(curPage); else alert(res.message || '删除失败'); })
+                .catch(() => alert('删除失败'));
+        }
+
+        // ---------------- Excel 批量导入 ----------------
+        // 服务端按中文表头识别列（列顺序无关），必填 品番 / LOT / 入库数量；
+        // 单价由服务端按品番生效单价 × 倍数重算，导入文件无需填写单价。
+        function uploadExcel(file) {
+            if (!file) return;
+            const fd = new FormData();
+            fd.append('file', file);
+            const btn = document.getElementById('btn-upload');
+            btn.disabled = true;
+            fetch(API + '/upload', {
+                method: 'POST',
+                body: fd,
+                headers: {'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content}
+            })
+                .then(r => r.json())
+                .then(res => {
+                    btn.disabled = false;
+                    if (!res.success) { alert(res.message || '上传失败'); return; }
+                    let msg = `导入完成：成功 ${res.imported} 行，失败 ${res.failed} 行。`;
+                    if (res.errors && res.errors.length) {
+                        msg += '\n\n失败明细（前 ' + res.errors.length + ' 条）：\n'
+                             + res.errors.map(e => `第 ${e.row} 行：${e.message}`).join('\n');
+                    }
+                    alert(msg);
+                    load(1);
+                })
+                .catch(() => { btn.disabled = false; alert('上传失败'); });
+        }
+
+        document.getElementById('btn-search').addEventListener('click', () => load(1));
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            document.getElementById('filter-keyword').value = '';
+            document.getElementById('filter-operator').value = '';
+            document.getElementById('filter-pno').value = '';
+            document.getElementById('filter-date-from').value = '';
+            document.getElementById('filter-date-to').value = '';
+            load(1);
+        });
+        document.getElementById('filter-keyword').addEventListener('keydown', e => { if (e.key === 'Enter') load(1); });
+        document.getElementById('filter-pno').addEventListener('keydown', e => { if (e.key === 'Enter') load(1); });
+        document.getElementById('filter-operator').addEventListener('change', () => load(1));
+        const btnAdd = document.getElementById('btn-add');
+        if (btnAdd) btnAdd.addEventListener('click', () => openModal(null));
+        // Excel 上传 / 模板下载
+        const btnUpload = document.getElementById('btn-upload');
+        const fileUpload = document.getElementById('file-upload');
+        if (btnUpload) btnUpload.addEventListener('click', () => fileUpload.click());
+        if (fileUpload) fileUpload.addEventListener('change', e => {
+            if (e.target.files.length) { uploadExcel(e.target.files[0]); e.target.value = ''; }
+        });
+        const btnTemplate = document.getElementById('btn-template');
+        if (btnTemplate) btnTemplate.addEventListener('click', () => {
+            window.location.href = API + '/template';
+        });
+        // 移动端悬浮新增按钮
+        const mobileFab = document.getElementById('mobileFab');
+        if (mobileFab) mobileFab.addEventListener('click', () => openModal(null));
+        document.getElementById('btn-save').addEventListener('click', save);
+        document.getElementById('f-lot').addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); lookupLot(); }
+        });
+        document.getElementById('f-lot').addEventListener('change', lookupLot);
+        // 单价或倍数变化时实时刷新调整后单价
+        document.getElementById('f-unit-price').addEventListener('input', refreshFinalPrice);
+        document.getElementById('f-multiplier').addEventListener('input', refreshFinalPrice);
+        // 作业者变化时重新反查（倍数规则按作业者匹配）
+        operatorEl.addEventListener('change', () => {
+            if (document.getElementById('f-lot').value.trim()) lookupLot();
+        });
+        const btnExport = document.getElementById('btn-export');
+        if (btnExport) btnExport.addEventListener('click', () => {
+            window.location.href = API + '/export?' + buildQs().toString();
+        });
+
+        // 桌面表格与移动卡片共用同一套编辑/删除事件委托
+        function bindRecordActions(container) {
+            container.addEventListener('click', e => {
+                const btn = e.target.closest('[data-edit],[data-del]');
+                if (!btn) return;
+                const editId = btn.getAttribute('data-edit');
+                const delId = btn.getAttribute('data-del');
+                if (editId) {
+                    if (cache[editId]) openModal(cache[editId]);
+                } else if (delId) {
+                    del(delId);
+                }
+            });
+        }
+        bindRecordActions(tbody);
+        bindRecordActions(cardList);
+
+        document.getElementById('pager').addEventListener('click', e => {
+            e.preventDefault();
+            const p = e.target.getAttribute('data-page');
+            if (p && !e.target.closest('.disabled')) load(parseInt(p, 10));
+        });
+
+        // 日期筛选默认取当天
+        document.getElementById('filter-date-from').value = today();
+        document.getElementById('filter-date-to').value = today();
+        // 先加载作业者下拉候选，再加载列表
+        loadOperators().finally(() => load(1));
+    })();
+    </script>
+</body>
+</html>

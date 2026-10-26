@@ -1,0 +1,2264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>成品管理</title>
+    <!-- 引入Bootstrap CSS -->
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <!-- 引入Font Awesome -->
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    
+    <!-- 资源预加载优化（仅预加载首屏必需的 bootstrap；FileSaver 页面未实际使用，已移除） -->
+    <link rel="preload" href="../static/js/bootstrap.bundle.min.js" as="script">
+</head>
+<body>
+    <div class="container-fluid mt-4">
+        <!-- 导航栏 -->
+        {% include '_navbar.html' %}
+
+        <!-- 闪现消息 -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 主内容区域 -->
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="card-title mb-0">成品管理</h5>
+                            <div class="d-flex gap-2 align-items-center">
+                                {% set permissions = session.get('user_permissions', {}) %}
+                                {% if session.get('is_admin') or permissions.get('can_products_add') %}
+                                <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addProductModal">
+                                    <i class="fa fa-plus me-1"></i> 添加成品
+                                </button>
+                                {% endif %}
+                                {% if session.get('is_admin') or permissions.get('can_products_batch_add') %}
+                                <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#batchAddModal">
+                                    <i class="fa fa-plus-square me-1"></i> 批量添加
+                                </button>
+                                {% endif %}
+                                {% if session.get('is_admin') or permissions.get('can_products_import') %}
+                                <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#excelImportModal">
+                                    <i class="fa fa-file-excel-o me-1"></i> Excel导入
+                                </button>
+                                {% endif %}
+                                {% if session.get('is_admin') or permissions.get('can_products_download') %}
+                                <button type="button" class="btn btn-warning" onclick="downloadProducts()">
+                                    <i class="fa fa-download me-1"></i> 下载数据
+                                </button>
+                                {% endif %}
+                                <button type="button" class="btn btn-outline-danger" id="eoCheckBtn" onclick="checkEoChanges(true)" title="核对成品实际EO与补线打端子LOT登录页登记的EO是否一致">
+                                    <i class="fa fa-exclamation-triangle me-1"></i> EO核对
+                                </button>
+
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- 搜索筛选区域 -->
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <form id="filterForm" class="row g-3" onsubmit="return false;">
+                                    <div class="col-md-3">
+                                        <label for="filterVehicleName" class="form-label">车种</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="filterVehicleName" name="vehicle_name" placeholder="搜索车种" value="{{ vehicle_name or '' }}">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearSingleField('filterVehicleName')" title="清空车种">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="filterPartNumber" class="form-label">品番</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="filterPartNumber" name="part_number" placeholder="搜索品番" value="{{ part_number or '' }}">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearSingleField('filterPartNumber')" title="清空品番">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="filterLotNumber" class="form-label">LOT</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="filterLotNumber" name="lot_number" placeholder="搜索LOT" value="{{ lot_number or '' }}">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearSingleField('filterLotNumber')" title="清空LOT">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="filterEo" class="form-label">EO</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="filterEo" name="eo" placeholder="搜索EO" value="{{ eo or '' }}">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearSingleField('filterEo')" title="清空EO">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="filterEoStatus" class="form-label">EO状态</label>
+                                        <div class="input-group">
+                                            <select class="form-select" id="filterEoStatus" name="eo_status">
+                                                <option value="">全部状态</option>
+                                                <option value="normal" {% if eo_status == 'normal' %}selected{% endif %}>正常</option>
+                                                <option value="eo_override" {% if eo_status == 'eo_override' %}selected{% endif %}>EO覆盖</option>
+                                                <option value="eo_attention" {% if eo_status == 'eo_attention' %}selected{% endif %}>EO注意</option>
+                                            </select>
+                                            <button class="btn btn-outline-secondary" type="button" onclick="clearSingleField('filterEoStatus')" title="清空EO状态">
+                                                <i class="fa fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3 d-flex align-items-end">
+                                        <div class="d-flex gap-2">
+                                            <button type="button" class="btn btn-primary" onclick="applyFilter()">
+                                                <i class="fa fa-search me-1"></i> 搜索
+                                            </button>
+                                            <button type="button" class="btn btn-secondary" onclick="clearFilter()">
+                                                <i class="fa fa-times me-1"></i> 清空
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- 批量操作工具栏 -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div class="d-flex align-items-center">
+                                <button type="button" class="btn btn-outline-secondary btn-sm me-2" id="selectAllBtn" style="display: none;">
+                                    <i class="fa fa-check-square me-1"></i>全选
+                                </button>
+                                <button type="button" class="btn btn-outline-warning btn-sm me-2" id="cancelBatchDeleteBtn" style="display: none;" onclick="exitBatchDeleteMode()">
+                                    <i class="fa fa-times me-1"></i>取消
+                                </button>
+                                {% set can_products_batch_delete = session.get('is_admin') or permissions.get('can_products_batch_delete') %}
+                                <button type="button" class="btn btn-outline-danger btn-sm me-2" id="batchDeleteBtn" {% if not can_products_batch_delete %}style="display: none;"{% endif %}>
+                                    <i class="fa fa-trash me-1"></i>批量删除
+                                </button>
+                            </div>
+                            <div class="text-muted small">
+                                已选择 <span id="selectedCountDisplay">0</span> 项
+                            </div>
+                        </div>
+
+                        <!-- 成品列表 -->
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="productsTable">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 50px; display: none;" class="checkbox-column">
+                                            <input type="checkbox" class="form-check-input" id="selectAllCheckbox">
+                                        </th>
+                                        <th>序号</th>
+                                        <th>车种</th>
+                                        <th>品番</th>
+                                        <th>LOT</th>
+                                        <th>数量</th>
+                                        <th>参考EO</th>
+                                        <th>实际EO</th>
+                                        <th>EO状态</th>
+                                        <th>数据来源</th>
+                                        <th>备注</th>
+                                        <th>操作人</th>
+                                        <th>创建时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% if products %}
+                                        {% for product in products %}
+                                            <tr data-product-id="{{ product.id }}">
+                                                <td class="checkbox-column" style="display: none;">
+                                                    <input type="checkbox" class="form-check-input product-checkbox" value="{{ product.id }}">
+                                                </td>
+                                                <td>{{ (current_page - 1) * per_page + loop.index }}</td>
+                                                <td>{{ product.vehicle_name }}</td>
+                                                <td>{{ product.part_number }}</td>
+                                                <td>{{ product.lot_number }}</td>
+                                                <td>{{ product.quantity }}</td>
+                                                <td class="reference-eo-cell" data-part-number="{{ product.part_number }}">
+                                                    <span class="text-muted">加载中...</span>
+                                                </td>
+                                                <td>
+                                                    {% if product.eo_override and product.usage_eo %}
+                                                        <span class="text-warning" title="EO被强制覆盖：输入EO(UsageList EO)">
+                                                            {{ product.eo or '-' }}({{ product.usage_eo }})
+                                                        </span>
+                                                    {% elif product.eo_override and not product.usage_eo %}
+                                                        <span class="text-warning" title="EO被强制覆盖：输入EO(无)">
+                                                            {{ product.eo or '-' }}(无)
+                                                        </span>
+                                                    {% elif product.needs_eo_attention and product.usage_eo %}
+                                                        <span class="text-info" title="需要EO注意：UsageList中有EO但未输入">
+                                                            需要EO({{ product.usage_eo }})
+                                                        </span>
+                                                    {% elif product.needs_eo_attention and not product.usage_eo %}
+                                                        <span class="text-info" title="需要EO注意：UsageList无对应EO">
+                                                            {{ product.eo or '-' }}(无)
+                                                        </span>
+                                                    {% else %}
+                                                        {{ product.eo or '-' }}
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if product.eo_override %}
+                                                        <span class="badge bg-warning" title="EO被强制覆盖"><i class="fa fa-exclamation-triangle"></i> EO覆盖</span>
+                                                    {% elif product.needs_eo_attention %}
+                                                        <span class="badge bg-info" title="需要EO注意"><i class="fa fa-info-circle"></i> EO注意</span>
+                                                    {% else %}
+                                                        <span class="badge bg-success" title="EO正常"><i class="fa fa-check"></i> 正常</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if product.source == 'manual' %}
+                                                        <span class="badge bg-primary">手动添加</span>
+                                                    {% elif product.source == 'batch' %}
+                                                        <span class="badge bg-warning">批量添加</span>
+                                                    {% elif product.source == 'excel' %}
+                                                        <span class="badge bg-success">Excel导入</span>
+                                                    {% else %}
+                                                        <span class="badge bg-secondary">-</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>{{ product.remark or '-' }}</td>
+                                                <td>{{ product.modifier.username if product.modifier else (product.creator.username if product.creator else '未知') }}</td>
+                                            <td>{{ product.create_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                                <td>
+                                                    {% if session.get('is_admin') or permissions.get('can_products_edit') %}
+                                                    <button class="btn btn-sm btn-primary" onclick="editProduct({{ product.id }})">
+                                                        <i class="fa fa-edit"></i> 编辑
+                                                    </button>
+                                                    {% endif %}
+                                                    {% if session.get('is_admin') or permissions.get('can_products_delete') %}
+                                                    <button class="btn btn-sm btn-danger" onclick="deleteProduct({{ product.id }})">
+                                                        <i class="fa fa-trash"></i> 删除
+                                                    </button>
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    {% else %}
+                                        <tr>
+                                            <td colspan="12" class="text-center">暂无成品数据</td>
+                                        </tr>
+                                    {% endif %}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- 分页控件 -->
+                        <nav aria-label="分页导航" class="mt-3">
+                            <!-- 第一行：所有分页控件水平排列 -->
+                            <div class="d-flex justify-content-center align-items-center mb-3" style="height: 38px;">
+                                <!-- 每页数量选择 -->
+                                <div class="d-flex align-items-center me-4">
+                                    <label class="me-2 mb-0">每页显示:</label>
+                                    <select class="form-select form-select-sm" id="perPageSelect" style="width: 80px;" onchange="changePerPage(this.value)">
+                                        <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+                                        <option value="20" {% if per_page == 20 %}selected{% endif %}>20</option>
+                                        <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                                        <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+                                    </select>
+                                </div>
+
+                                <!-- 页码导航 -->
+                                {% if pagination %}
+                                <div class="d-flex align-items-center me-4">
+                                    <ul class="pagination pagination-sm mb-0" style="margin: 0; line-height: 1;">
+                                        <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                                            <a class="page-link" href="{{ url_for('main.products', page=pagination.prev_num, per_page=per_page, vehicle_name=vehicle_name, part_number=part_number, lot_number=lot_number, eo=eo, eo_status=eo_status) }}"
+                                               aria-label="上一页" style="padding: 0.375rem 0.75rem;">
+                                                <span aria-hidden="true">&laquo;</span>
+                                            </a>
+                                        </li>
+                                        {% for page_num in pagination.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+                                            {% if page_num %}
+                                                <li class="page-item {% if pagination.page == page_num %}active{% endif %}">
+                                                    <a class="page-link" href="{{ url_for('main.products', page=page_num, per_page=per_page, vehicle_name=vehicle_name, part_number=part_number, lot_number=lot_number, eo=eo, eo_status=eo_status) }}" style="padding: 0.375rem 0.75rem;">{{ page_num }}</a>
+                                                </li>
+                                            {% else %}
+                                                <li class="page-item disabled"><span class="page-link" style="padding: 0.375rem 0.75rem;">...</span></li>
+                                            {% endif %}
+                                        {% endfor %}
+                                        <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                                            <a class="page-link" href="{{ url_for('main.products', page=pagination.next_num, per_page=per_page, vehicle_name=vehicle_name, part_number=part_number, lot_number=lot_number, eo=eo, eo_status=eo_status) }}"
+                                               aria-label="下一页" style="padding: 0.375rem 0.75rem;">
+                                                <span aria-hidden="true">&raquo;</span>
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                                {% endif %}
+
+                                <!-- 页码跳转 -->
+                                <div class="d-flex align-items-center">
+                                    <label class="me-2 mb-0">跳转至:</label>
+                                    <input type="number" class="form-control form-control-sm" id="jumpToPage"
+                                           min="1" max="{{ pagination.pages if pagination else 1 }}" value="{{ current_page }}" style="width: 60px;">
+                                    <button class="btn btn-sm btn-primary" onclick="jumpToPage()">前往</button>
+                                </div>
+                            </div>
+                            
+                            <!-- 第二行：记录信息 -->
+                            {% if pagination %}
+                            <div class="text-muted text-center small mt-2">
+                                共 {{ pagination.total }} 条记录，当前第 {{ pagination.page }} 页 / 共 {{ pagination.pages }} 页
+                            </div>
+                            {% endif %}
+                        </nav>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加成品模态框 -->
+    <div class="modal fade" id="addProductModal" tabindex="-1" aria-labelledby="addProductModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addProductModalLabel">添加成品</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="addProductForm">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="vehicleName" class="form-label">车种 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="vehicleName" name="vehicle_name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="partNumber" class="form-label">品番 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="partNumber" name="part_number" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="lotNumber" class="form-label">LOT <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="lotNumber" name="lot_number" required>
+                            <div class="form-text text-danger" id="lotNumberError" style="display: none;">LOT号已存在，请使用其他LOT号</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="eo" class="form-label">EO</label>
+                            <input type="text" class="form-control" id="eo" name="eo" placeholder="可留空，系统与UsageList对照">
+                        </div>
+                        <div class="mb-3">
+                            <label for="quantity" class="form-label">数量 <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="quantity" name="quantity" min="0" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="remark" class="form-label">备注</label>
+                            <textarea class="form-control" id="remark" name="remark" rows="3" placeholder="可留空，用于记录上传备注信息"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">添加成品</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量添加模态框 -->
+    <div class="modal fade" id="batchAddModal" tabindex="-1" aria-labelledby="batchAddModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="batchAddModalLabel">批量添加成品</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="batchAddForm">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">批量数据 <span class="text-danger">*</span></label>
+                            <textarea class="form-control" id="batchData" name="batch_data" rows="10" placeholder="请输入批量数据，每行一条，格式：车种,EO,品番,LOT,数量&#10;示例：&#10;轿车,EO001,A123,001,100&#10;SUV,EO002,B456,002,200"></textarea>
+                            <div class="form-text">格式：车种,EO,品番,LOT,数量（用逗号分隔，每行一条数据；）</div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">批量添加</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Excel导入模态框 -->
+    <div class="modal fade" id="excelImportModal" tabindex="-1" aria-labelledby="excelImportModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="excelImportModalLabel">Excel导入成品数据</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="excelImportForm" enctype="multipart/form-data">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="excelFile" class="form-label">选择Excel文件 <span class="text-danger">*</span></label>
+                            <input type="file" class="form-control" id="excelFile" name="file" accept=".xlsx,.xls" required>
+                            <div class="form-text">支持.xlsx和.xls格式，请确保Excel文件包含：车种、品番、LOT、EO、数量等列</div>
+                        </div>
+                        <!-- <div class="mb-3">
+                            <a href="#" onclick="downloadExcelTemplate()" class="text-decoration-none">
+                                <i class="fa fa-download me-1"></i>下载Excel模板
+                            </a>
+                        </div> -->
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" id="excelImportSubmitBtn" class="btn btn-primary">导入数据</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 冲突解决模态框 -->
+    <div class="modal fade" id="conflictResolutionModal" tabindex="-1" aria-labelledby="conflictResolutionModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl" style="max-width: 1200px;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="conflictResolutionModalLabel">Excel导入冲突解决</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="conflictModalBody" style="padding: 15px;">
+                    <!-- 动态内容将在这里显示 -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary me-auto" id="downloadConflictBtn" onclick="downloadConflictErrors()" title="将弹窗中的错误/冲突信息导出为 CSV 文件">
+                        <i class="fa fa-download me-1"></i>下载错误信息
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" id="confirmImportBtn" class="btn btn-primary" onclick="confirmImportSelected()">确认导入选择的数据（或不导入重复数据）</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <style>
+        /* 冲突解决表格样式 */
+        .conflict-table {
+            margin-bottom: 0;
+        }
+        
+        .conflict-table thead th {
+            position: sticky;
+            top: 0;
+            background: #f8f9fa;
+            z-index: 10;
+            border-bottom: 2px solid #dee2e6;
+        }
+        
+        .conflict-table tbody tr:last-child td {
+            padding-bottom: 20px;
+        }
+        
+        /* 列宽优化 */
+        .conflict-table th:nth-child(1), .conflict-table td:nth-child(1) { width: 60px; } /* 选择 */
+        .conflict-table th:nth-child(2), .conflict-table td:nth-child(2) { width: 80px; } /* 行号 */
+        .conflict-table th:nth-child(3), .conflict-table td:nth-child(3) { width: 120px; } /* 车种 */
+        .conflict-table th:nth-child(4), .conflict-table td:nth-child(4) { width: 150px; } /* 品番 */
+        .conflict-table th:nth-child(5), .conflict-table td:nth-child(5) { width: 80px; } /* EO */
+        .conflict-table th:nth-child(6), .conflict-table td:nth-child(6) { width: 120px; } /* LOT */
+        .conflict-table th:nth-child(7), .conflict-table td:nth-child(7) { width: 80px; } /* 数量 */
+        .conflict-table th:nth-child(8), .conflict-table td:nth-child(8) { width: 120px; } /* EO选择 */
+        .conflict-table th:nth-child(9), .conflict-table td:nth-child(9) { width: auto; min-width: 200px; } /* 说明 */
+    </style>
+
+    <!-- 编辑成品模态框 -->
+    <div class="modal fade" id="editProductModal" tabindex="-1" aria-labelledby="editProductModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editProductModalLabel">编辑成品</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="editProductForm">
+                    <input type="hidden" id="editProductId" name="id">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="editVehicleName" class="form-label">车种 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editVehicleName" name="vehicle_name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editPartNumber" class="form-label">品番 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editPartNumber" name="part_number" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editLotNumber" class="form-label">LOT <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editLotNumber" name="lot_number" required>
+                            <div class="form-text text-danger" id="editLotNumberError" style="display: none;">LOT号已存在，请使用其他LOT号</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editEo" class="form-label">EO</label>
+                            <input type="text" class="form-control" id="editEo" name="eo" placeholder="可留空，系统与UsageList对照">
+                        </div>
+                        <div class="mb-3">
+                            <label for="editQuantity" class="form-label">数量 <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="editQuantity" name="quantity" min="0" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editRemark" class="form-label">备注</label>
+                            <textarea class="form-control" id="editRemark" name="remark" rows="3" placeholder="可留空，用于记录上传备注信息"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">保存修改</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 引入Bootstrap JS -->
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- 性能优化脚本 -->
+    <script>
+        // 性能监控
+        window.addEventListener('load', function() {
+            // 记录页面加载时间
+            const loadTime = performance.timing.loadEventEnd - performance.timing.navigationStart;
+            // console.log(`页面加载时间: ${loadTime}ms`);
+            
+            // 记录资源加载时间
+            const resources = performance.getEntriesByType('resource');
+            const jsResources = resources.filter(r => r.name.includes('.js'));
+            // jsResources.forEach(resource => {
+            //     console.log(`JS资源 ${resource.name.split('/').pop()}: ${resource.duration.toFixed(2)}ms`);
+            // });
+            
+            // 如果加载时间过长，显示优化提示
+            if (loadTime > 3000) {
+                console.warn('页面加载时间较长，建议优化资源加载');
+            }
+        });
+        
+        // 资源加载优化
+        function optimizeResourceLoading() {
+            // 已无需要延迟预加载的非关键资源（FileSaver 未被本页使用）
+        }
+        
+        // 页面加载完成后优化资源
+        document.addEventListener('DOMContentLoaded', optimizeResourceLoading);
+    </script>
+    
+    <script>
+        // 成品管理功能
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化批量删除模式标志
+            window.isBatchDeleteMode = false;
+            
+            // 初始化批量删除按钮模式
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            batchDeleteBtn.setAttribute('data-mode', 'enter');
+            
+            // 批量删除按钮事件
+            batchDeleteBtn.addEventListener('click', function() {
+                const mode = this.getAttribute('data-mode');
+                if (mode === 'execute') {
+                    executeBatchDelete();
+                } else {
+                    enterBatchDeleteMode();
+                }
+            });
+
+            // 全选按钮事件
+            document.getElementById('selectAllBtn').addEventListener('click', function() {
+                const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+                const isChecked = !selectAllCheckbox.checked;
+                
+                if (isChecked) {
+                    // 选择所有数据（包括所有页面）
+                    selectAllData();
+                } else {
+                    // 取消选择所有数据
+                    clearAllSelection();
+                }
+            });
+
+            // 全选复选框事件
+            document.getElementById('selectAllCheckbox').addEventListener('change', function() {
+                const isChecked = this.checked;
+                const checkboxes = document.querySelectorAll('.product-checkbox');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = isChecked;
+                });
+                updateSelectedCount();
+                updateBatchDeleteButton();
+            });
+
+            // 单个复选框事件
+            document.addEventListener('change', function(e) {
+                if (e.target.classList.contains('product-checkbox')) {
+                    const checkbox = e.target;
+                    const isChecked = checkbox.checked;
+                    const productId = checkbox.value;
+                    
+                    // 如果存在全局选择状态
+                    if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                        if (isChecked) {
+                            // 如果复选框被选中，确保该ID在全局选择中
+                            if (!window.globalSelectionIds.includes(productId)) {
+                                window.globalSelectionIds.push(productId);
+                            }
+                        } else {
+                            // 如果复选框被取消，从全局选择中移除该ID
+                            const index = window.globalSelectionIds.indexOf(productId);
+                            if (index > -1) {
+                                window.globalSelectionIds.splice(index, 1);
+                            }
+                        }
+                        
+                        // 如果全局选择为空，清除全局选择状态
+                        if (window.globalSelectionIds.length === 0) {
+                            window.globalSelectionIds = [];
+                        }
+                    }
+                    
+                    updateSelectedCount();
+                    updateBatchDeleteButton();
+                    updateSelectAllCheckbox();
+                }
+            });
+
+            // 添加成品表单提交
+            document.getElementById('addProductForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                addProduct();
+            });
+
+            // 批量添加表单提交
+            document.getElementById('batchAddForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                batchAddProducts();
+            });
+
+            // Excel导入表单提交
+            document.getElementById('excelImportForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                importExcel();
+            });
+
+            // 编辑成品表单提交
+            document.getElementById('editProductForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                updateProduct();
+            });
+
+            // 搜索表单提交
+            document.getElementById('filterForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                applyFilter();
+            });
+        });
+
+        // 进入批量删除模式
+        function enterBatchDeleteMode() {
+            // 显示复选框列
+            const checkboxColumns = document.querySelectorAll('.checkbox-column');
+            checkboxColumns.forEach(col => {
+                col.style.display = 'table-cell';
+            });
+            
+            // 显示全选按钮和取消按钮
+            document.getElementById('selectAllBtn').style.display = 'inline-block';
+            document.getElementById('cancelBatchDeleteBtn').style.display = 'inline-block';
+            
+            // 修改批量删除按钮为执行删除按钮
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            batchDeleteBtn.innerHTML = '<i class="fa fa-trash me-1"></i>执行删除';
+            batchDeleteBtn.className = 'btn btn-danger btn-sm';
+            batchDeleteBtn.setAttribute('data-mode', 'execute');
+            batchDeleteBtn.disabled = true; // 初始禁用，直到选择项目
+            
+            // 重置复选框选择状态
+            resetCheckboxSelection();
+            window.isBatchDeleteMode = true;
+        }
+
+        // 合并处理弹窗：若后端未提供函数实现，这里补充定义
+        if (typeof showUnifiedConflictModal === 'undefined') {
+            window.showUnifiedConflictModal = function(data) {
+                window.conflictData = data;
+                const modalBody = document.getElementById('conflictModalBody');
+                // 组装数据
+                const items = Array.isArray(data.combined_conflicts) ? data.combined_conflicts : [];
+                const summary = data.summary || {};
+
+                // 顶部统计
+                let html = '';
+                html += '<style>#conflictModalBody .explain{max-width:560px;white-space:normal;overflow:auto;}#conflictModalBody .table-active td{background:#f6fbff !important;}#conflictModalBody .group-select{min-width:260px}#conflictModalBody .conflict-fixed-header{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #e9ecef;box-shadow:0 2px 4px rgba(0,0,0,.03);padding-bottom:.5rem;margin-bottom:0;}#conflictModalBody .conflict-fixed-header .alert{margin-bottom:.5rem;}#conflictModalBody .table-responsive{overflow:visible;}</style>';
+                html += '<div class="conflict-fixed-header">';
+                html += `<div class=\"alert alert-info py-2 mb-2\">总行数: ${summary.total_excel_rows || items.length}，有效: ${summary.valid_count || 0}，重复: ${(summary.duplicate_count||0)}，EO冲突: ${summary.conflict_count || 0}，数据库冲突: ${summary.db_conflict_count || 0}</div>`;
+                html += '<div class="small text-muted">逐行选择要导入的数据；如EO与UsageList不一致，可在"EO选择"中指定来源。</div>';
+                html += '</div>';
+
+                // 表格（不再按品番分组）— 头部固定 + 身体滚动（两张表对齐）
+                html += '<div class="table-responsive">';
+                html += '<div id="conflictHeaderWrap">';
+                html += '<table id="conflictMainTable" class="table table-sm table-bordered align-middle" style="margin-bottom:0;">';
+                html += '<colgroup>'
+                      + '<col style="width:58px">'  // 选择
+                      + '<col style="width:60px">'  // 行号
+                      + '<col style="width:16%">'   // 车种
+                      + '<col style="width:16%">'   // 品番
+                      + '<col style="width:4%">'    // EO
+                      + '<col style="width:12%">'   // LOT
+                      + '<col style="width:6%">'    // 数量
+                      + '<col style="width:14%">'   // EO选择
+                      + '<col>'                       // 说明（自适应剩余）
+                      + '</colgroup>';
+                html += '<thead><tr><th>选择</th><th>行号</th><th>车种</th><th>品番</th><th>EO</th><th>LOT</th><th>数量</th><th>EO选择</th><th class="explain">说明</th></tr></thead></table>';
+                html += '</div>';
+                html += '<div id="conflictBodyScroll" style="max-height:70vh; overflow:auto;">';
+                html += '<table class="table table-sm table-bordered align-middle">';
+                html += '<colgroup>'
+                      + '<col style="width:58px">'
+                      + '<col style="width:60px">'
+                      + '<col style="width:16%">'
+                      + '<col style="width:16%">'
+                      + '<col style="width:4%">'
+                      + '<col style="width:12%">'
+                      + '<col style="width:6%">'
+                      + '<col style="width:14%">'
+                      + '<col>'
+                      + '</colgroup><tbody>';
+                items.forEach((row, i) => {
+                    const safe = v => (v===undefined||v===null)?'':String(v);
+                    let usage = safe(row.usage_eo || row.usageEO || row.usage || row.EoKsc || row.eo_ksc || '');
+                    let excel = safe(row.eo || row.EO || row.Eo || '');
+                    const msg = safe(row.message);
+                    if (msg && /EO/.test(msg)) {
+                        const m = msg.match(/EO\(([^)]+)\)[^E]*EO\(([^)]+)\)/);
+                        if (m && m.length >= 3) {
+                            const v1 = safe(m[1]);
+                            const v2 = safe(m[2]);
+                            if (!excel) excel = v1;
+                            if (!usage) usage = v2;
+                        }
+                    }
+                    const eoDisplay = (excel || usage || '');
+                    const normalize = s => (s || '').toString().replace(/\s+/g,'').toUpperCase();
+                    const nExcel = normalize(excel);
+                    const nUsage = normalize(usage);
+                    const needChoice = (nUsage && nExcel && nUsage !== nExcel) || (nUsage && !nExcel) || (/EO\s*冲突/.test(msg));
+                    const eoCell = needChoice
+                      ? `<select class=\"form-select form-select-sm eo-choice\" data-idx=\"${i}\">`
+                          + `<option value=\"excel\" ${ (nUsage && (!nExcel || nExcel !== nUsage)) ? '' : 'selected' }>${excel?`Excel(${excel})`:'Excel(空)'}</option>`
+                          + `<option value=\"usage\" ${ (nUsage && (!nExcel || nExcel !== nUsage)) ? 'selected' : '' }>UsageList(${usage||'-'})</option>`
+                        + `</select>`
+                      : (eoDisplay
+                          ? `<span class=\"text-muted\">${excel?`Excel(${excel})`:`UsageList(${usage})`}</span>`
+                          : '<span class=\"text-muted\">-</span>');
+                    const explainBadge = needChoice ? '<span class="badge bg-warning text-dark ms-1">EO不一致</span>' : '';
+                    html += `<tr class=\"data-row\" data-idx=\"${i}\">`
+                      + `<td><input class=\"form-check-input row-select\" type=\"checkbox\" data-idx=\"${i}\" checked></td>`
+                      + `<td>${safe(row.row)}</td>`
+                      + `<td>${safe(row.vehicle_name)}</td>`
+                      + `<td>${safe(row.part_number)}</td>`
+                      + `<td>${eoDisplay}</td>`
+                      + `<td>${safe(row.lot_number)}</td>`
+                      + `<td>${safe(row.quantity)}</td>`
+                      + `<td>${eoCell}</td>`
+                      + `<td class=\"explain\">${msg}${explainBadge}</td>`
+                      + '</tr>';
+                });
+                html += '</tbody></table></div></div>';
+                modalBody.innerHTML = html;
+
+                // 计算固定头部高度，设置表头偏移，避免被遮挡（等一帧确保布局完成）
+                const computeOffset = () => {
+                    try {
+                        const fixed = modalBody.querySelector('.conflict-fixed-header');
+                        const fixedHeight = fixed ? fixed.getBoundingClientRect().height : 0;
+                        modalBody.style.setProperty('--conflict-fixed-offset', (fixedHeight || 0) + 'px');
+                        // 计算滚动条宽度，给表头容器补齐右侧内边距，避免表头与内容列错位
+                        const sc = modalBody.querySelector('#conflictBodyScroll');
+                        const headerWrap = modalBody.querySelector('#conflictHeaderWrap');
+                        if (sc && headerWrap) {
+                            const scrollBarW = sc.offsetWidth - sc.clientWidth;
+                            headerWrap.style.paddingRight = (scrollBarW > 0 ? scrollBarW : 0) + 'px';
+                        }
+                    } catch (e) { /* no-op */ }
+                };
+                if (window.requestAnimationFrame) {
+                    requestAnimationFrame(() => { computeOffset(); });
+                } else {
+                    setTimeout(computeOffset, 0);
+                }
+                // 窗口大小变化时重新计算
+                window.addEventListener('resize', computeOffset, { once: false });
+
+                // 清理任何可能存在的克隆表头（始终使用原始表头）
+                const oldClone = modalBody.querySelector('#conflictClonedHeader');
+                if (oldClone) oldClone.remove();
+                const oldSpacer = modalBody.querySelector('#conflictHeaderSpacer');
+                if (oldSpacer) oldSpacer.remove();
+                const realThead = modalBody.querySelector('#conflictMainTable thead');
+                if (realThead) realThead.style.visibility = '';
+
+                const modal = new bootstrap.Modal(document.getElementById('conflictResolutionModal'));
+                modal.show();
+            }
+        }
+
+        // 退出批量删除模式
+        function exitBatchDeleteMode() {
+            // 隐藏复选框列
+            const checkboxColumns = document.querySelectorAll('.checkbox-column');
+            checkboxColumns.forEach(col => {
+                col.style.display = 'none';
+            });
+            
+            // 隐藏全选按钮和取消按钮
+            document.getElementById('selectAllBtn').style.display = 'none';
+            document.getElementById('cancelBatchDeleteBtn').style.display = 'none';
+            
+            // 恢复批量删除按钮
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            batchDeleteBtn.innerHTML = '<i class="fa fa-trash me-1"></i>批量删除';
+            batchDeleteBtn.className = 'btn btn-outline-danger btn-sm';
+            batchDeleteBtn.setAttribute('data-mode', 'enter');
+            batchDeleteBtn.disabled = false; // 重新启用按钮
+            
+            // 重置复选框选择状态
+            resetCheckboxSelection();
+            window.isBatchDeleteMode = false;
+        }
+
+        // 重置复选框选择状态
+        function resetCheckboxSelection() {
+            const checkboxes = document.querySelectorAll('.product-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            document.getElementById('selectAllCheckbox').checked = false;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            // 清除全局选择状态
+            window.globalSelectionIds = [];
+            updateSelectedCount();
+        }
+
+        // 选择所有数据（包括所有页面）
+        function selectAllData() {
+            // 获取当前页面的所有产品ID
+            const currentPageIds = Array.from(document.querySelectorAll('.product-checkbox')).map(checkbox => checkbox.value);
+            
+            // 获取所有页面的产品ID
+            getAllProductIds().then(allIds => {
+                // 设置全局选择状态
+                window.globalSelectionIds = [...allIds]; // 使用展开运算符创建新数组
+                
+                // 设置当前页面的复选框为选中状态
+                const checkboxes = document.querySelectorAll('.product-checkbox');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = true;
+                });
+                
+                // 设置全选复选框状态
+                document.getElementById('selectAllCheckbox').checked = true;
+                document.getElementById('selectAllCheckbox').indeterminate = false;
+                
+                // 更新状态
+                updateSelectedCount();
+                updateBatchDeleteButton();
+                
+                // 显示选择提示
+                showSelectionInfo(allIds.length);
+            }).catch(error => {
+                console.error('获取所有产品ID失败:', error);
+                // 如果获取失败，至少选择当前页
+                selectCurrentPageOnly();
+            });
+        }
+
+        // 取消选择所有数据
+        function clearAllSelection() {
+            // 如果有全局选择，显示确认对话框
+            if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                if (!confirm(`确定要取消选择所有页面的 ${window.globalSelectionIds.length} 条数据吗？`)) {
+                    return;
+                }
+            }
+            
+            // 清除全局选择状态
+            window.globalSelectionIds = [];
+            
+            // 取消选择当前页面的复选框
+            const checkboxes = document.querySelectorAll('.product-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            
+            // 设置全选复选框状态
+            document.getElementById('selectAllCheckbox').checked = false;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            
+            // 更新状态
+            updateSelectedCount();
+            updateBatchDeleteButton();
+            
+            // 隐藏选择提示
+            hideSelectionInfo();
+        }
+
+        // 仅选择当前页数据（备用方案）
+        function selectCurrentPageOnly() {
+            const checkboxes = document.querySelectorAll('.product-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = true;
+            });
+            
+            document.getElementById('selectAllCheckbox').checked = true;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            
+            updateSelectedCount();
+            updateBatchDeleteButton();
+        }
+
+        // 获取所有页面的产品ID
+        async function getAllProductIds() {
+            try {
+                // 性能优化：改用轻量 ID 接口，仅返回主键列表，
+                // 避免 per_page=10000 拉取全量产品字段并逐条序列化。
+                const response = await fetch('/api/finished_products/ids');
+                const data = await response.json();
+                
+                if (data.success) {
+                    return data.data.map(id => id.toString());
+                } else {
+                    throw new Error(data.error || '获取产品列表失败');
+                }
+            } catch (error) {
+                console.error('获取所有产品ID失败:', error);
+                throw error;
+            }
+        }
+
+        // 显示选择信息
+        function showSelectionInfo(totalCount) {
+            let infoElement = document.getElementById('selectionInfo');
+            if (!infoElement) {
+                infoElement = document.createElement('div');
+                infoElement.id = 'selectionInfo';
+                infoElement.className = 'alert alert-info alert-dismissible fade show mt-2';
+                
+                // 插入到批量操作工具栏下方
+                const toolbar = document.querySelector('.d-flex.justify-content-between.align-items-center.mb-3');
+                toolbar.parentNode.insertBefore(infoElement, toolbar.nextSibling);
+            }
+            
+            // 使用统一的更新函数
+            updateSelectionInfo(totalCount);
+        }
+
+        // 隐藏选择信息
+        function hideSelectionInfo() {
+            const infoElement = document.getElementById('selectionInfo');
+            if (infoElement) {
+                infoElement.style.display = 'none';
+            }
+        }
+
+        // 更新选择提示信息
+        function updateSelectionInfo(count) {
+            const infoElement = document.getElementById('selectionInfo');
+            if (infoElement) {
+                if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                    // 如果有全局选择，显示实际选择的数量
+                    const totalPagesCount = window.globalSelectionIds.length;
+                    const currentPageCheckedCount = document.querySelectorAll('.product-checkbox:checked').length;
+                    
+                    if (currentPageCheckedCount === 0) {
+                        // 如果当前页面没有选中任何项，但存在全局选择，说明用户取消了当前页面的所有选择
+                        infoElement.innerHTML = `
+                            <i class="fa fa-info-circle me-2"></i>
+                            已选择 <strong>${totalPagesCount}</strong> 条数据（当前页面已取消选择）
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        `;
+                    } else {
+                        // 当前页面有选中项，显示实际选择的数量
+                        infoElement.innerHTML = `
+                            <i class="fa fa-info-circle me-2"></i>
+                            已选择 <strong>${totalPagesCount}</strong> 条数据
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        `;
+                    }
+                    infoElement.style.display = 'block';
+                } else if (count > 0) {
+                    // 如果只有当前页面选择，显示"已选择当前页面"
+                    infoElement.innerHTML = `
+                        <i class="fa fa-info-circle me-2"></i>
+                        已选择当前页面的 <strong>${count}</strong> 条数据
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    `;
+                    infoElement.style.display = 'block';
+                } else {
+                    // 如果没有选择，隐藏提示
+                    infoElement.style.display = 'none';
+                }
+            }
+        }
+
+        // 更新选中数量
+        function updateSelectedCount() {
+            let count = 0;
+            
+            // 如果有全局选择，使用全局选择的数量
+            if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                count = window.globalSelectionIds.length;
+            } else {
+                // 否则使用当前页面选中的数量
+                const selectedCheckboxes = document.querySelectorAll('.product-checkbox:checked');
+                count = selectedCheckboxes.length;
+            }
+            
+            // 更新显示的数量
+            document.getElementById('selectedCountDisplay').textContent = count;
+            
+            // 更新执行删除按钮的文本
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            if (batchDeleteBtn.innerHTML.includes('执行删除')) {
+                batchDeleteBtn.innerHTML = `<i class="fa fa-trash me-1"></i>执行删除 (${count})`;
+            }
+            
+            // 更新批量删除按钮状态
+            updateBatchDeleteButton();
+            
+            // 更新选择提示信息
+            updateSelectionInfo(count);
+        }
+
+        // 更新批量删除按钮状态
+        function updateBatchDeleteButton() {
+            let selectedCount = 0;
+            
+            // 如果有全局选择，使用全局选择的数量
+            if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                selectedCount = window.globalSelectionIds.length;
+            } else {
+                // 否则使用当前页面选中的数量
+                selectedCount = document.querySelectorAll('.product-checkbox:checked').length;
+            }
+            
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            
+            if (batchDeleteBtn.innerHTML.includes('执行删除')) {
+                batchDeleteBtn.disabled = selectedCount === 0;
+            }
+        }
+
+        // 更新全选复选框状态
+        function updateSelectAllCheckbox() {
+            const totalCheckboxes = document.querySelectorAll('.product-checkbox');
+            const checkedCheckboxes = document.querySelectorAll('.product-checkbox:checked');
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            
+            // 如果有全局选择，全选复选框应该是选中状态
+            if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = true;
+                return;
+            }
+            
+            // 否则按当前页面状态更新
+            if (checkedCheckboxes.length === 0) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = false;
+            } else if (checkedCheckboxes.length === totalCheckboxes.length) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = true;
+            } else {
+                selectAllCheckbox.indeterminate = true;
+                selectAllCheckbox.checked = false;
+            }
+        }
+
+        // 添加成品
+        function addProduct() {
+            const formData = new FormData(document.getElementById('addProductForm'));
+            
+            fetch('/api/finished_products', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('成品添加成功！');
+                    location.reload();
+                } else {
+                    if (data.error.includes('LOT')) {
+                        document.getElementById('lotNumberError').style.display = 'block';
+                    } else {
+                        alert('添加失败：' + data.error);
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('添加失败');
+            });
+        }
+
+        // 批量添加成品
+        function batchAddProducts() {
+            const batchData = document.getElementById('batchData').value.trim();
+            if (!batchData) {
+                alert('请输入批量数据');
+                return;
+            }
+
+            fetch('/api/finished_products/batch_add', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({ batch_data: batchData })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    let message = `批量添加完成！\n成功添加 ${data.success_count} 条，失败 ${data.failed_count} 条`;
+                    
+                    // 如果有失败的数据，显示详细错误信息
+                    if (data.failed_count > 0 && data.errors && data.errors.length > 0) {
+                        message += '\n\n失败原因：\n';
+                        data.errors.forEach((error, index) => {
+                            message += `${index + 1}. ${error}\n`;
+                        });
+                    }
+                    
+                    // 如果有格式帮助信息，也显示出来
+                    if (data.format_help) {
+                        message += '\n\n格式帮助：\n' + data.format_help;
+                    }
+                    
+                    alert(message);
+                    
+                    // 只有在有成功数据时才刷新页面
+                    if (data.success_count > 0) {
+                        location.reload();
+                    }
+                } else {
+                    let errorMessage = '批量添加失败：' + data.error;
+                    
+                    // 如果有格式帮助信息，也显示出来
+                    if (data.format_help) {
+                        errorMessage += '\n\n格式帮助：\n' + data.format_help;
+                    }
+                    
+                    alert(errorMessage);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('批量添加失败');
+            });
+        }
+
+        // Excel导入
+        function importExcel() {
+            const form = document.getElementById('excelImportForm');
+            const formData = new FormData(form);
+            const submitBtn = document.getElementById('excelImportSubmitBtn') || (form ? form.querySelector('.modal-footer button[type="submit"]') : null);
+            let originalHtml = '';
+            if (submitBtn) {
+                originalHtml = submitBtn.innerHTML;
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>正在解析...';
+            }
+            
+            fetch('/api/finished_products/import_excel', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`Excel导入成功！成功导入 ${data.success_count} 条数据`);
+                    location.reload();
+                } else {
+                    // 优先使用后端提供的合并列表
+                    if (data.combined_conflicts && data.combined_conflicts.length > 0) {
+                        showUnifiedConflictModal(data);
+                    } else if (data.part_number_conflicts || data.excel_duplicates || data.db_conflicts) {
+                        // 客户端合并：将分散的数据整理为单一 combined_conflicts
+                        const combined = [];
+                        const safeArr = v => Array.isArray(v) ? v : [];
+                        // 品番/EO 冲突（来自 part_number_conflicts）
+                        safeArr(data.part_number_conflicts).forEach(c => {
+                            combined.push({
+                                conflict_category: (c.conflict_type && c.conflict_type === 'part_not_exists') ? 'part_not_exists' : 'eo_conflict',
+                                row: c.row,
+                                vehicle_name: c.vehicle_name,
+                                part_number: c.part_number,
+                                lot_number: c.lot_number,
+                                eo: c.eo || '',
+                                usage_eo: c.usage_eo || '',
+                                quantity: c.quantity,
+                                remark: c.remark || '',
+                                message: c.message || ''
+                            });
+                        });
+                        // Excel 内部重复（excel_duplicates，含(品番,EO)重复）
+                        const dupGroups = safeArr(data.excel_duplicates).concat(safeArr(data.excel_duplicates_with_part_conflicts));
+                        dupGroups.forEach(g => {
+                            safeArr(g.rows).forEach(r => {
+                                combined.push({
+                                    conflict_category: 'excel_duplicate',
+                                    row: r.index,
+                                    vehicle_name: r.vehicle_name,
+                                    part_number: r.part_number,
+                                    lot_number: r.lot_number,
+                                    eo: r.eo || '',
+                                    usage_eo: r.usage_eo || '',
+                                    quantity: r.quantity,
+                                    remark: r.remark || '',
+                                    message: g.message || ''
+                                });
+                            });
+                        });
+                        // 数据库 LOT 冲突
+                        safeArr(data.db_conflicts).forEach(d => {
+                            const r = d.excel_data || {};
+                            combined.push({
+                                conflict_category: 'db_conflict',
+                                row: r.index,
+                                vehicle_name: r.vehicle_name,
+                                part_number: r.part_number,
+                                lot_number: r.lot_number,
+                                eo: r.eo || '',
+                                usage_eo: r.usage_eo || '',
+                                quantity: r.quantity,
+                                remark: r.remark || '',
+                                message: d.message || ''
+                            });
+                        });
+                        showUnifiedConflictModal({ ...data, combined_conflicts: combined, summary: data.summary || {} });
+                    } else {
+                        alert('Excel导入失败：' + data.error);
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Excel导入失败');
+            })
+            .finally(() => {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = originalHtml || '导入数据';
+                }
+            });
+        }
+
+        // 显示冲突解决模态框
+        function showConflictResolutionModal(data) {
+            // 添加调试信息
+            console.log('Conflict resolution data:', data);
+            
+            // 保存冲突数据到全局变量
+            window.conflictData = data;
+            
+            // 清空之前的内容
+            const modalBody = document.getElementById('conflictModalBody');
+            modalBody.innerHTML = '';
+            
+            // 使用最简单的布局
+            let modalContent = '';
+            
+            // 显示统计信息
+            if (data.summary) {
+                modalContent += '<div class="alert alert-info mb-3">';
+                modalContent += `<strong>统计信息：</strong> `;
+                modalContent += `总行数: ${data.summary.total_excel_rows || '未知'} | `;
+                modalContent += `有效: ${data.summary.valid_count || '未知'} | `;
+                modalContent += `重复: ${data.summary.duplicate_count || '0'} | `;
+                modalContent += `EO冲突: ${data.summary.conflict_count || '0'} | `;
+                modalContent += `数据库冲突: ${data.summary.db_conflict_count || '0'}`;
+                modalContent += '</div>';
+            }
+            
+            modalContent += '<p class="mb-3"><small>逐行选择要导入的数据;如EO与UsageList不一致,可在"EO选择"中指定来源。</small></p>';
+            
+            // 表格容器 - 只有这里滚动
+            modalContent += '<div class="table-responsive" style="max-height: 60vh; overflow-y: auto; margin-bottom: 20px;">';
+            modalContent += '<table class="table table-striped table-hover conflict-table">';
+            modalContent += '<thead style="position: sticky; top: 0; background: white; z-index: 10;">';
+            modalContent += '<tr>';
+            modalContent += '<th><input type="checkbox" id="selectAllConflicts" onchange="toggleAllConflicts(this)"></th>';
+            modalContent += '<th>行号</th>';
+            modalContent += '<th>车种</th>';
+            modalContent += '<th>品番</th>';
+            modalContent += '<th>EO</th>';
+            modalContent += '<th>LOT</th>';
+            modalContent += '<th>数量</th>';
+            modalContent += '<th>EO选择</th>';
+            modalContent += '<th>说明</th>';
+            modalContent += '</tr>';
+            modalContent += '</thead>';
+            modalContent += '<tbody>';
+            
+
+            
+            // 处理所有冲突数据（品番冲突、重复数据等）
+            let allConflicts = [];
+            
+            // 添加品番冲突数据
+            if (data.part_number_conflicts) {
+                data.part_number_conflicts.forEach(conflict => {
+                    allConflicts.push({
+                        type: 'part_conflict',
+                        ...conflict,
+                        eo_choice: 'usage'
+                    });
+                });
+            }
+            
+            // 添加Excel重复数据
+            if (data.excel_duplicates) {
+                data.excel_duplicates.forEach(dup => {
+                    dup.rows.forEach(row => {
+                        allConflicts.push({
+                            type: 'duplicate',
+                            ...row
+                        });
+                    });
+                });
+            }
+            
+            // 显示所有冲突数据
+            allConflicts.forEach((conflict, index) => {
+                modalContent += '<tr>';
+                modalContent += `<td><input type="checkbox" class="form-check-input conflict-checkbox" value="${index}" checked></td>`;
+                modalContent += `<td>${conflict.row || conflict.index}</td>`;
+                modalContent += `<td>${conflict.vehicle_name || ''}</td>`;
+                modalContent += `<td>${conflict.part_number || ''}</td>`;
+                modalContent += `<td>${conflict.eo || ''}</td>`;
+                modalContent += `<td>${conflict.lot_number || ''}</td>`;
+                modalContent += `<td>${conflict.quantity || ''}</td>`;
+                
+                // EO选择下拉框
+                modalContent += '<td>';
+                modalContent += '<select class="form-select form-select-sm eo-choice" data-idx="' + index + '">';
+                const excelVal = (conflict.eo || '').toString();
+                const usageVal = (conflict.usage_eo || '').toString();
+                const nExcel = excelVal.replace(/\s+/g,'').toUpperCase();
+                const nUsage = usageVal.replace(/\s+/g,'').toUpperCase();
+                const preferUsage = nUsage && (!nExcel || nExcel !== nUsage);
+                modalContent += '<option value="excel" ' + (preferUsage ? '' : 'selected') + '>Excel(' + excelVal + ')</option>';
+                if (usageVal) {
+                    modalContent += '<option value="usage" ' + (preferUsage ? 'selected' : '') + '>UsageList(' + usageVal + ')</option>';
+                }
+                modalContent += '</select>';
+                modalContent += '</td>';
+                
+                // 说明列
+                let explanation = '';
+                if (conflict.type === 'part_conflict') {
+                    if (conflict.conflict_type === 'eo_mismatch') {
+                        explanation = 'EO不一致';
+                    } else if (conflict.conflict_type === 'eo_missing') {
+                        explanation = '缺少EO';
+                    } else {
+                        explanation = '品番不存在';
+                    }
+                } else if (conflict.type === 'duplicate') {
+                    explanation = 'LOT重复';
+                }
+                
+                modalContent += `<td><span class="badge bg-warning">${explanation}</span></td>`;
+                modalContent += '</tr>';
+            });
+            
+            modalContent += '</tbody></table>';
+            modalContent += '</div>'; // 结束table-responsive
+            
+            modalBody.innerHTML = modalContent;
+            
+            // 显示模态框
+            const modal = new bootstrap.Modal(document.getElementById('conflictResolutionModal'));
+            modal.show();
+        }
+        
+        // 全选/取消全选冲突数据
+        function toggleAllConflicts(checkbox) {
+            const conflictCheckboxes = document.querySelectorAll('.conflict-checkbox');
+            conflictCheckboxes.forEach(cb => {
+                cb.checked = checkbox.checked;
+            });
+        }
+
+
+
+        // 清除所有选择
+        function clearAllSelections() {
+            const radios = document.querySelectorAll('#conflictModalBody input[type="radio"]');
+            radios.forEach(radio => radio.checked = false);
+        }
+
+        // 下载弹窗中显示的错误/冲突信息（CSV，UTF-8 BOM 兼容 Excel）
+        function downloadConflictErrors() {
+            const data = window.conflictData || {};
+            const items = Array.isArray(data.combined_conflicts) ? data.combined_conflicts : [];
+
+            if (!items.length) {
+                // 回退：导出弹窗表格中可见的行
+                const rows = Array.from(document.querySelectorAll('#conflictModalBody tbody tr.data-row'));
+                if (!rows.length) { alert('当前弹窗没有可下载的错误信息'); return; }
+            }
+
+            const esc = v => {
+                const s = (v === undefined || v === null) ? '' : String(v);
+                return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+            };
+
+            const header = ['行号', '车种', '品番', 'EO', 'UsageList', 'LOT', '数量', '错误/冲突说明'];
+            const lines = [header.map(esc).join(',')];
+
+            if (items.length) {
+                items.forEach(r => {
+                    lines.push([
+                        r.row, r.vehicle_name, r.part_number,
+                        r.eo || r.EO || '', r.usage_eo || r.usageEO || r.usage || '',
+                        r.lot_number, r.quantity, r.message || ''
+                    ].map(esc).join(','));
+                });
+            } else {
+                // 从可见表格行提取纯文本
+                document.querySelectorAll('#conflictModalBody tbody tr.data-row').forEach(tr => {
+                    const tds = tr.querySelectorAll('td');
+                    lines.push([tds[0], tds[1], tds[2], tds[3], '', tds[5], tds[6], tds[8]]
+                        .map(td => td ? td.textContent.trim() : '').map(esc).join(','));
+                });
+            }
+
+            // 添加 UTF-8 BOM，确保 Excel（含 Win7/10）正确识别中文
+            const csv = '\uFEFF' + lines.join('\r\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+            a.href = url;
+            a.download = '导入错误信息_' + ts + '.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+        }
+
+        // 确认导入选择的数据（支持分组下拉和旧的单选方式）
+        function confirmImportSelected() {
+            const confirmBtn = document.getElementById('confirmImportBtn');
+            let originalHtml = '';
+            const startLoading = () => {
+                if (confirmBtn) {
+                    originalHtml = confirmBtn.innerHTML;
+                    confirmBtn.disabled = true;
+                    confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>正在导入...';
+                }
+            };
+            const stopLoading = () => {
+                if (confirmBtn) {
+                    confirmBtn.disabled = false;
+                    confirmBtn.innerHTML = originalHtml || '确认导入选择的数据（或不导入重复数据）';
+                }
+            };
+            const groupedSelects = document.querySelectorAll('#conflictModalBody .group-select');
+            const checkboxRows = document.querySelectorAll('#conflictModalBody input.row-select:checked');
+            if (checkboxRows.length > 0 && window.conflictData && Array.isArray(window.conflictData.combined_conflicts)) {
+                const rows = window.conflictData.combined_conflicts;
+                const combinedSelected = [];
+                checkboxRows.forEach(chk => {
+                    const idx = parseInt(chk.getAttribute('data-idx'));
+                    const r = rows[idx] || {};
+                    const eoSelect = document.querySelector(`#conflictModalBody select.eo-choice[data-idx="${idx}"]`);
+                    let finalEo = r.eo || '';
+                    if (eoSelect) {
+                        if (eoSelect.value === 'usage') finalEo = (r.usage_eo || '').trim();
+                    }
+                    combinedSelected.push({
+                        vehicle_name: r.vehicle_name || '未指定',
+                        part_number: r.part_number,
+                        lot_number: r.lot_number,
+                        eo: finalEo,
+                        quantity: parseInt(r.quantity || 0),
+                        remark: r.remark || ''
+                    });
+                });
+                startLoading();
+                fetch('/api/finished_products/resolve_conflicts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ combined_selected: combinedSelected, base_valid_data: (window.conflictData && Array.isArray(window.conflictData.valid_data)) ? window.conflictData.valid_data : [] })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('conflictResolutionModal'));
+                        modal.hide();
+                        location.reload();
+                    } else {
+                        alert('导入失败：' + (data.error || '未知错误'));
+                        stopLoading();
+                    }
+                })
+                .catch(err => { console.error(err); alert('导入失败'); stopLoading(); });
+                return;
+            }
+            if (groupedSelects.length > 0 && window.conflictData && Array.isArray(window.conflictData.combined_conflicts)) {
+                const rows = window.conflictData.combined_conflicts;
+                const combinedSelected = [];
+                groupedSelects.forEach(sel => {
+                    const val = sel.value;
+                    if (!val) return; // 不导入该品番
+                    const idx = parseInt(val);
+                    const r = rows[idx] || {};
+                    const eoSelect = document.querySelector(`#conflictModalBody select.eo-choice[data-idx="${idx}"]`);
+                    let finalEo = r.eo || '';
+                    if (eoSelect) {
+                        if (eoSelect.value === 'usage') finalEo = (r.usage_eo || '').trim();
+                    }
+                    combinedSelected.push({
+                        vehicle_name: r.vehicle_name || '未指定',
+                        part_number: r.part_number,
+                        lot_number: r.lot_number,
+                        eo: finalEo,
+                        quantity: parseInt(r.quantity || 0),
+                        remark: r.remark || ''
+                    });
+                });
+                // 提交
+                startLoading();
+                fetch('/api/finished_products/resolve_conflicts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ combined_selected: combinedSelected, base_valid_data: (window.conflictData && Array.isArray(window.conflictData.valid_data)) ? window.conflictData.valid_data : [] })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('conflictResolutionModal'));
+                        modal.hide();
+                        location.reload();
+                    } else {
+                        alert('导入失败：' + (data.error || '未知错误'));
+                        stopLoading();
+                    }
+                })
+                .catch(err => { console.error(err); alert('导入失败'); stopLoading(); });
+                return;
+            }
+
+            // 兼容旧逻辑（单选）
+            const selectedRadios = document.querySelectorAll('#conflictModalBody input[type="radio"]:checked');
+            if (selectedRadios.length === 0) {
+                const alreadyImported = window.conflictData?.summary?.already_imported_count || 0;
+                const duplicateCount = window.conflictData?.summary?.duplicate_data_count || 0;
+                if (confirm(`您没有选择任何重复数据。\n\n这意味着：\n• 已自动导入的${alreadyImported}条无重复数据将保留\n• ${duplicateCount}条重复数据将不会被导入\n\n是否确认继续？`)) {
+                    resolveConflictsWithEmptySelection();
+                }
+                return;
+            }
+            const selectedData = [];
+            selectedRadios.forEach(radio => {
+                const row = radio.closest('tr');
+                const cells = row.querySelectorAll('td');
+                selectedData.push({
+                    vehicle_name: cells[2].textContent,
+                    part_number: cells[3].textContent,
+                    lot_number: cells[4].textContent,
+                    quantity: parseInt(cells[5].textContent),
+                    remark: cells[6].textContent
+                });
+            });
+            startLoading();
+            fetch('/api/finished_products/resolve_conflicts', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ selected_data: selectedData, base_valid_data: (window.conflictData && Array.isArray(window.conflictData.valid_data)) ? window.conflictData.valid_data : [] })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('conflictResolutionModal'));
+                    modal.hide();
+                    location.reload();
+                } else {
+                    alert('导入失败：' + data.error);
+                    stopLoading();
+                }
+            })
+            .catch(error => { console.error('Error:', error); alert('导入失败'); stopLoading(); });
+        }
+        
+        // 不选择任何重复数据时的处理函数
+        function resolveConflictsWithEmptySelection() {
+            // 调用冲突解决API，传递空数组表示不导入任何重复数据
+            fetch('/api/finished_products/resolve_conflicts', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({ selected_data: [] })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 添加调试信息
+                    console.log('Conflict resolution response (no selection):', data);
+                    console.log('Global conflict data:', window.conflictData);
+                    
+                    // 用户不选择重复数据时，直接关闭模态框并刷新页面，不显示成功消息
+                    console.log('用户不选择重复数据，直接关闭模态框并刷新页面');
+                    
+                    // 关闭模态框
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('conflictResolutionModal'));
+                    modal.hide();
+                    
+                    // 刷新页面
+                    location.reload();
+                } else {
+                    alert('导入失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('导入失败');
+            });
+        }
+        
+
+
+
+
+        // 下载数据
+        function downloadProducts() {
+            window.location.href = '/api/finished_products/download';
+        }
+
+        // 下载Excel模板
+        function downloadExcelTemplate() {
+            window.location.href = '/api/finished_products/download_template';
+        }
+
+        // 编辑成品
+        function editProduct(id) {
+            fetch(`/api/finished_products/${id}`, {
+                method: 'GET',
+                headers: {
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const product = data.product;
+                    document.getElementById('editProductId').value = product.id;
+                    document.getElementById('editVehicleName').value = product.vehicle_name;
+                    document.getElementById('editPartNumber').value = product.part_number;
+                    document.getElementById('editLotNumber').value = product.lot_number;
+                    document.getElementById('editQuantity').value = product.quantity;
+                    document.getElementById('editEo').value = product.eo || '';
+                    document.getElementById('editRemark').value = product.remark || '';
+                    
+                    const modal = new bootstrap.Modal(document.getElementById('editProductModal'));
+                    modal.show();
+                } else {
+                    alert('获取成品信息失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('获取成品信息失败');
+            });
+        }
+
+        // 更新成品
+        function updateProduct() {
+            const formData = new FormData(document.getElementById('editProductForm'));
+            const productId = document.getElementById('editProductId').value;
+            
+            // 将FormData转换为JSON对象
+            const updateData = {};
+            formData.forEach((value, key) => {
+                updateData[key] = value;
+            });
+            
+            fetch(`/api/finished_products/${productId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify(updateData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('成品更新成功！');
+                    location.reload();
+                } else {
+                    if (data.error && data.error.includes('LOT')) {
+                        document.getElementById('editLotNumberError').style.display = 'block';
+                    } else {
+                        alert('更新失败：' + (data.error || '未知错误'));
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('更新失败');
+            });
+        }
+
+        // 删除成品
+        function deleteProduct(id) {
+            if (confirm('确定要删除这个成品吗？')) {
+                fetch(`/api/finished_products/${id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('删除成功！');
+                        location.reload();
+                    } else {
+                        alert('删除失败：' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('删除失败');
+                });
+            }
+        }
+
+        // 批量删除
+        function executeBatchDelete() {
+            const selectedIds = getSelectedProductIds();
+            if (selectedIds.length === 0) {
+                alert('请选择要删除的成品');
+                return;
+            }
+
+            if (confirm(`确定要删除选中的 ${selectedIds.length} 个成品吗？此操作不可恢复！`)) {
+                batchDeleteProducts(selectedIds);
+            }
+        }
+
+        // 获取选中的成品ID
+        function getSelectedProductIds() {
+            if (!window.isBatchDeleteMode) {
+                return [];
+            }
+            
+            // 如果有全局选择，返回全局选择的产品ID
+            if (window.globalSelectionIds && window.globalSelectionIds.length > 0) {
+                return window.globalSelectionIds;
+            }
+            
+            // 否则返回当前页面选中的产品ID
+            const selectedCheckboxes = document.querySelectorAll('.product-checkbox:checked');
+            return Array.from(selectedCheckboxes).map(checkbox => checkbox.value);
+        }
+
+        // 批量删除成品
+        function batchDeleteProducts(productIds) {
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            const originalText = batchDeleteBtn.innerHTML;
+            batchDeleteBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>删除中...';
+            batchDeleteBtn.disabled = true;
+
+            fetch('/api/finished_products/batch_delete', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({ product_ids: productIds })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 从message中提取删除数量，如果没有则使用传入的productIds长度
+                    let deletedCount = productIds.length;
+                    if (data.message && data.message.includes('成功删除')) {
+                        // 尝试从message中提取数字
+                        const match = data.message.match(/成功删除\s*(\d+)\s*条/);
+                        if (match) {
+                            deletedCount = parseInt(match[1]);
+                        }
+                    }
+                    alert(`成功删除 ${deletedCount} 个成品`);
+                    location.reload();
+                } else {
+                    alert('批量删除失败：' + data.error);
+                    batchDeleteBtn.innerHTML = originalText;
+                    batchDeleteBtn.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('批量删除失败');
+                batchDeleteBtn.innerHTML = originalText;
+                batchDeleteBtn.disabled = false;
+            });
+        }
+
+        // 应用筛选
+        function applyFilter() {
+            const formData = new FormData(document.getElementById('filterForm'));
+            const filterParams = {};
+            
+            for (let [key, value] of formData.entries()) {
+                if (value.trim()) {
+                    filterParams[key] = value.trim();
+                }
+            }
+            
+            const queryString = new URLSearchParams(filterParams).toString();
+            window.location.href = `/products?${queryString}`;
+        }
+
+        // 清空单个搜索字段
+        function clearSingleField(fieldId) {
+            const field = document.getElementById(fieldId);
+            if (field) {
+                if (field.tagName === 'SELECT') {
+                    field.selectedIndex = 0; // 选择第一个选项（通常是"全部"）
+                } else {
+                    field.value = '';
+                }
+                // 自动触发搜索，更新结果
+                applyFilter();
+            }
+        }
+
+        // 清空筛选
+        function clearFilter() {
+            document.getElementById('filterForm').reset();
+            window.location.href = '/products';
+        }
+
+        // 分页相关函数
+        function changePerPage(perPage) {
+            const url = new URL(window.location);
+            url.searchParams.set('per_page', perPage);
+            url.searchParams.set('page', 1); // 重置到第一页
+            window.location.href = url.toString();
+        }
+
+        function jumpToPage() {
+            const jumpInput = document.getElementById('jumpToPage');
+            const targetPage = parseInt(jumpInput.value);
+            
+            if (isNaN(targetPage) || targetPage < 1) {
+                alert('请输入有效的页码');
+                return;
+            }
+            
+            const url = new URL(window.location);
+            url.searchParams.set('page', targetPage);
+            window.location.href = url.toString();
+        }
+
+        // 显示品番冲突处理模态框
+        function showPartNumberConflictModal(data) {
+            // 检查是否已加载品番冲突处理模态框
+            if (typeof window.showPartNumberConflictModalEnhanced === 'function') {
+                // 如果增强版本存在，使用增强版本
+                window.showPartNumberConflictModalEnhanced(data);
+            } else {
+                // 否则使用备用方案
+                handlePartNumberConflictsFallback(data);
+            }
+        }
+
+        // 品番冲突处理备用方案
+        function handlePartNumberConflictsFallback(data) {
+            const { part_number_conflicts, excel_duplicates, valid_data, summary } = data;
+            
+            let message = '发现品番冲突，请处理：\n\n';
+            
+            if (part_number_conflicts && part_number_conflicts.length > 0) {
+                message += `品番冲突：${part_number_conflicts.length}个\n`;
+                part_number_conflicts.forEach(conflict => {
+                    message += `• 第${conflict.row}行: ${conflict.part_number} (${conflict.vehicle_name || '未指定'})\n`;
+                });
+                message += '\n';
+            }
+            
+            if (excel_duplicates && excel_duplicates.length > 0) {
+                message += `Excel重复：${excel_duplicates.length}个\n`;
+            }
+            
+            if (valid_data && valid_data.length > 0) {
+                message += `有效数据：${valid_data.length}条\n`;
+            }
+            
+            message += '\n请刷新页面并重新导入，或联系管理员处理。';
+            
+            alert(message);
+        }
+
+        // 懒加载参考EO数据 - 只在用户滚动到可见区域时加载
+        let referenceEoLoaded = false;
+        let loadingInProgress = false;
+        
+        async function loadReferenceEos() {
+            if (referenceEoLoaded || loadingInProgress) return;
+            
+            const partNumbers = Array.from(document.querySelectorAll('.reference-eo-cell'))
+                .map(cell => cell.getAttribute('data-part-number'))
+                .filter(pn => pn);
+            
+            // console.log('开始加载参考EO，品番列表:', partNumbers);
+            
+            if (partNumbers.length === 0) {
+                // console.log('没有找到品番，跳过加载');
+                return;
+            }
+            
+            loadingInProgress = true;
+            
+            try {
+                const response = await fetch('/api/finished_products/reference_eos', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    body: JSON.stringify({ part_numbers: partNumbers })
+                });
+                
+                const data = await response.json();
+                console.log('API响应:', data);
+                console.log('API返回的data内容:', data.data);
+                
+                if (data.success) {
+                    console.log('API成功，开始更新UI');
+                    // 更新每个参考EO单元格
+                    document.querySelectorAll('.reference-eo-cell').forEach(cell => {
+                        const partNumber = cell.getAttribute('data-part-number');
+                        const eoSet = data.data[partNumber];
+                        const frozenSet = (data.frozen && data.frozen[partNumber]) || [];
+
+                        console.log(`品番 ${partNumber} 的EO数据:`, eoSet);
+
+                        if (eoSet && eoSet.length > 0) {
+                            // 冻结归档 EO 以黄色徽章+锁图标标注；活跃 EO 正常展示
+                            const html = eoSet.map(eo => {
+                                if (frozenSet.indexOf(eo) >= 0) {
+                                    return `<span class="badge bg-warning text-dark" title="该EO版本资料已冻结归档（只读，不可用于导入/删除等操作）"><i class="fa fa-lock me-1"></i>${eo}</span>`;
+                                }
+                                return `<span title="UsageList参考EO集合">${eo}</span>`;
+                            }).join('<span class="text-muted mx-1">|</span>');
+                            cell.innerHTML = html;
+                        } else {
+                            cell.innerHTML = '<span class="text-muted" title="UsageList无对应EO">-</span>';
+                        }
+                    });
+                    referenceEoLoaded = true;
+                    // console.log('参考EO加载完成');
+                } else {
+                    console.error('参考EO API返回错误:', data.error);
+                    // 显示错误
+                    document.querySelectorAll('.reference-eo-cell').forEach(cell => {
+                        cell.innerHTML = '<span class="text-danger" title="加载失败">-</span>';
+                    });
+                }
+            } catch (error) {
+                console.error('加载参考EO失败:', error);
+                document.querySelectorAll('.reference-eo-cell').forEach(cell => {
+                    cell.innerHTML = '<span class="text-danger" title="加载失败">-</span>';
+                });
+            } finally {
+                loadingInProgress = false;
+            }
+        }
+        
+        // 检查元素是否在视口中
+        function isElementInViewport(element) {
+            const rect = element.getBoundingClientRect();
+            return (
+                rect.top >= 0 &&
+                rect.left >= 0 &&
+                rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+                rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+            );
+        }
+        
+        // 滚动时检查是否需要加载参考EO
+        function handleScroll() {
+            if (referenceEoLoaded || loadingInProgress) return;
+            
+            const referenceEoCells = document.querySelectorAll('.reference-eo-cell');
+            const visibleCells = Array.from(referenceEoCells).filter(isElementInViewport);
+            
+            if (visibleCells.length > 0) {
+                loadReferenceEos();
+            }
+        }
+        
+        // 页面加载完成后设置懒加载
+        document.addEventListener('DOMContentLoaded', function() {
+            // 立即检查是否有可见的参考EO单元格
+            setTimeout(() => {
+                handleScroll();
+                
+                // 如果页面加载时没有可见的参考EO单元格，设置滚动监听
+                if (!referenceEoLoaded && !loadingInProgress) {
+                    window.addEventListener('scroll', handleScroll, { passive: true });
+                    
+                    // 3秒后强制加载，避免用户一直不滚动
+                    setTimeout(() => {
+                        if (!referenceEoLoaded && !loadingInProgress) {
+                            loadReferenceEos();
+                        }
+                    }, 3000);
+                }
+            }, 100);
+            
+            // 添加调试按钮（已注释）
+            // const debugBtn = document.createElement('button');
+            // debugBtn.textContent = '手动加载参考EO';
+            // debugBtn.className = 'btn btn-sm btn-warning';
+            // debugBtn.style.margin = '10px';
+            // debugBtn.onclick = function() {
+            //     console.log('手动触发参考EO加载');
+            //     loadReferenceEos();
+            // };
+            // document.body.appendChild(debugBtn);
+        });
+
+        // ============================================================
+        // EO变更核对：成品实际EO/LOT 对比 补线打端子LOT登录页EO
+        // ============================================================
+        // 会话级标记：本次会话已自动弹出过，避免翻页重复打扰
+        var EO_ALERT_STORAGE_KEY = 'products_eo_change_alert_shown_v1';
+        // 日期级标记：用户选择“今日不再提醒”后，当天不再自动弹出
+        var EO_ALERT_DATE_KEY = 'products_eo_change_alert_mute_date';
+
+        function getTodayKey() {
+            var d = new Date();
+            var m = ('0' + (d.getMonth() + 1)).slice(-2);
+            var day = ('0' + d.getDate()).slice(-2);
+            return d.getFullYear() + '-' + m + '-' + day;
+        }
+
+        function isMutedToday() {
+            try { return localStorage.getItem(EO_ALERT_DATE_KEY) === getTodayKey(); } catch (e) { return false; }
+        }
+
+        // 今日不再提醒：当天不再自动弹出（手动点击EO核对仍会显示）
+        function muteEoAlertToday() {
+            try { localStorage.setItem(EO_ALERT_DATE_KEY, getTodayKey()); } catch (e) {}
+            var modalEl = document.getElementById('eoChangeAlertModal');
+            if (modalEl) { bootstrap.Modal.getOrCreateInstance(modalEl).hide(); }
+        }
+
+        // 直接关闭：仅关闭本次提醒，下次进入仍会提醒
+        function closeEoAlertOnce() {
+            var modalEl = document.getElementById('eoChangeAlertModal');
+            if (modalEl) { bootstrap.Modal.getOrCreateInstance(modalEl).hide(); }
+        }
+
+        function escapeHtml(text) {
+            return String(text === null || text === undefined ? '' : text)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function renderEoChangeModal(data) {
+            document.getElementById('eoChangeTotal').textContent = data.total;
+
+            var vehicleBox = document.getElementById('eoChangeVehicles');
+            vehicleBox.innerHTML = (data.vehicles || []).map(function(v) {
+                return '<span class="badge bg-danger me-2 mb-1" style="font-size: 0.85rem;">'
+                    + '<i class="fa fa-car me-1"></i>' + escapeHtml(v.vehicle)
+                    + ' <span class="badge bg-light text-danger ms-1">' + v.count + '</span></span>';
+            }).join('');
+
+            var tbody = document.getElementById('eoChangeTableBody');
+            tbody.innerHTML = (data.items || []).map(function(item, idx) {
+                return '<tr>'
+                    + '<td class="text-center text-muted">' + (idx + 1) + '</td>'
+                    + '<td>' + escapeHtml(item.vehicle_name) + '</td>'
+                    + '<td>' + escapeHtml(item.part_number) + '</td>'
+                    + '<td>' + escapeHtml(item.lot_number) + '</td>'
+                    + '<td class="text-center"><span class="badge bg-primary">' + escapeHtml(item.product_eo) + '</span></td>'
+                    + '<td class="text-center"><span class="badge bg-success">' + escapeHtml(item.lot_eo) + '</span></td>'
+                    + '</tr>';
+            }).join('');
+        }
+
+        // 是否已渲染并弹出过结果，避免轮询期间重复弹窗
+        var eoAlertShownInPage = false;
+
+        function showEoChangeResult(data, force) {
+            // force=true（用户手动点击）时忽略去重标志，确保每次点击都有反馈
+            if (eoAlertShownInPage && !force) return;
+            if (!data || data.total <= 0) return;
+            eoAlertShownInPage = true;
+            renderEoChangeModal(data);
+            var modalEl = document.getElementById('eoChangeAlertModal');
+            bootstrap.Modal.getOrCreateInstance(modalEl).show();
+            try { sessionStorage.setItem(EO_ALERT_STORAGE_KEY, '1'); } catch (e) {}
+        }
+
+        /**
+         * EO变更核对（异步）：服务端后台计算，前端轮询取结果。
+         * 页面加载与切换不被比对过程阻塞；结果就绪后再弹窗提醒。
+         * manual=true 表示用户手动点击，忽略服务端缓存强制重算。
+         */
+        function checkEoChanges(manual) {
+            var btn = document.getElementById('eoCheckBtn');
+            if (btn) { btn.disabled = true; }
+
+            var manualNotified = false;
+
+            function poll(attempt) {
+                // 仅首次请求携带 force=1 触发强制重算；后续轮询不带 force，以便读取后台算好的缓存结果。
+                // （若每次轮询都带 force，缓存结果永远不被采用，会一直 pending 直到超时）
+                var forceParam = (manual && attempt === 0) ? '?force=1' : '';
+                var url = '/api/finished_products/eo_change_check' + forceParam;
+                return fetch(url, { method: 'GET' })
+                    .then(function(response) { return response.json(); })
+                    .then(function(data) {
+                        if (!data.success) {
+                            if (manual) { alert('EO核对失败：' + (data.error || '未知错误')); }
+                            return;
+                        }
+                        // 后台仍在计算：继续轮询，不阻塞页面
+                        if (data.status === 'pending') {
+                            if (attempt >= 20) {
+                                if (manual) { alert('EO核对仍在进行，请稍后重试'); }
+                                return;
+                            }
+                            return new Promise(function(resolve) {
+                                setTimeout(resolve, 800);
+                            }).then(function() { return poll(attempt + 1); });
+                        }
+                        // 结果就绪
+                        if (data.total > 0) {
+                            showEoChangeResult(data, manual);
+                        } else if (manual) {
+                            alert('核对完成：所有已登记LOT的成品实际EO与LOT登录页EO一致，无EO变更。');
+                        }
+                    });
+            }
+
+            return poll(0)
+                .catch(function(error) {
+                    console.error('EO变更核对失败:', error);
+                    if (manual && !manualNotified) { manualNotified = true; alert('EO核对失败，请稍后重试'); }
+                })
+                .finally(function() {
+                    if (btn) { btn.disabled = false; }
+                });
+        }
+
+        // 进入成品页时异步核对一次：不阻塞页面渲染，用户选择“今日不再提醒”后当天不再自动弹出
+        document.addEventListener('DOMContentLoaded', function() {
+            if (isMutedToday()) return;
+            var alreadyShown = false;
+            try { alreadyShown = sessionStorage.getItem(EO_ALERT_STORAGE_KEY) === '1'; } catch (e) {}
+            if (alreadyShown) return;
+            setTimeout(function() { checkEoChanges(false); }, 300);
+        });
+    </script>
+
+    <!-- EO变更提醒浮窗：成品实际EO vs 补线打端子LOT登录页EO -->
+    <div class="modal fade" id="eoChangeAlertModal" tabindex="-1" aria-labelledby="eoChangeAlertModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="eoChangeAlertModalLabel">
+                        <i class="fa fa-exclamation-triangle me-2"></i>EO变更提醒
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning mb-3">
+                        <i class="fa fa-info-circle me-1"></i>
+                        以下成品记录的<strong>实际EO</strong>与「补线打端子 - LOT登录」页面中同一LOT登记的<strong>京信EO</strong>不一致，可能已发生EO变更，请及时确认：
+                    </div>
+                    <div class="mb-2">
+                        共 <strong class="text-danger" id="eoChangeTotal">0</strong> 条记录EO不一致，涉及车种：
+                        <div id="eoChangeVehicles" class="mt-2"></div>
+                    </div>
+                    <div class="table-responsive" style="max-height: 340px; overflow-y: auto;">
+                        <table class="table table-sm table-bordered table-hover align-middle mb-0">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th style="width: 42px;">序号</th>
+                                    <th>车种</th>
+                                    <th>品番</th>
+                                    <th>LOT</th>
+                                    <th class="text-center">成品实际EO</th>
+                                    <th class="text-center">LOT登录EO</th>
+                                </tr>
+                            </thead>
+                            <tbody id="eoChangeTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <a class="btn btn-outline-secondary me-auto" href="{{ url_for('main.wire_lot_login') }}">
+                        <i class="fa fa-sign-in me-1"></i>前往LOT登录页
+                    </a>
+                    <button type="button" class="btn btn-outline-secondary" onclick="closeEoAlertOnce()">
+                        <i class="fa fa-times me-1"></i>直接关闭
+                    </button>
+                    <button type="button" class="btn btn-danger" onclick="muteEoAlertToday()">
+                        <i class="fa fa-bell-slash me-1"></i>今日不再提醒
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 引入品番冲突处理模态框 -->
+    {% include 'part_number_conflict_modal.html' %}
+</body>
+</html>

@@ -1,0 +1,1397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>扫描录入 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        html, body {
+            overflow-x: hidden;
+        }
+        .card {
+            margin-bottom: 20px;
+        }
+        .scan-input {
+            font-size: 1.15rem;
+            letter-spacing: 1px;
+            height: 48px;
+        }
+        .scan-tip {
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+        .mode-badge {
+            font-size: 0.8rem;
+        }
+        .qty-input {
+            width: 64px;
+            text-align: center;
+            -moz-appearance: textfield;
+        }
+        /* 待保存行数量为0时红色警示（数量不允许为0） */
+        .qty-input.qty-zero-warn {
+            border-color: #dc3545;
+            background-color: #fdecea;
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .qty-input::-webkit-outer-spin-button,
+        .qty-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        /* ---------- 表格（垂直连贯排列） ---------- */
+        #recordWrap {
+            max-height: 560px;
+            overflow: auto;
+        }
+        #recordTable {
+            font-size: 0.78rem;
+            margin-bottom: 0;
+        }
+        #recordTable th {
+            background-color: #f8f9fa;
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        #recordTable td {
+            vertical-align: middle;
+            white-space: nowrap;
+        }
+        #recordTable tr.row-pending td {
+            background-color: #fff8e1;
+        }
+        #recordTable tr.row-lot-first td {
+            border-top: 2px solid #0d6efd;
+        }
+        #scanResult {
+            display: none;
+        }
+        /* 实时识别预览 */
+        #scanPreview {
+            display: none;
+            font-size: 0.9rem;
+            padding: 6px 12px;
+            border-radius: 6px;
+        }
+        #scanPreview.preview-circuit {
+            background: #e7f6ec;
+            color: #146c43;
+        }
+        #scanPreview.preview-machine {
+            background: #e8f0fe;
+            color: #1a56db;
+        }
+        #scanPreview.preview-unknown {
+            background: #fdecea;
+            color: #b02a37;
+        }
+
+        /* ---------- 移动端（<768px）适配 ---------- */
+        @media (max-width: 767.98px) {
+            .container-fluid {
+                padding-left: 10px;
+                padding-right: 10px;
+            }
+            .card {
+                margin-bottom: 12px;
+            }
+            .card-body {
+                padding: 0.75rem;
+            }
+            /* 扫码输入框 ≥48px */
+            .scan-input {
+                height: 52px;
+                font-size: 1.05rem;
+                letter-spacing: 0.5px;
+            }
+            /* 按钮 ≥44×44px */
+            .btn-lg {
+                min-height: 48px;
+                font-size: 1rem;
+            }
+            .qty-input {
+                width: 60px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+            .del-btn {
+                min-width: 44px;
+                min-height: 44px;
+            }
+            .scan-tip {
+                font-size: 0.78rem;
+            }
+            /* 表格横向可滚动 */
+            #recordTable {
+                min-width: 1300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    {% set permissions = session.get('user_permissions', {}) %}
+
+    <div class="container-fluid mt-4">
+        <!-- 消息提示 -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 扫描录入区：扫码枪扫描 | 手动填写 左右对半 -->
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+                <h5 class="card-title mb-0 small"><i class="fa fa-barcode me-2"></i>扫描录入</h5>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-light text-dark small d-none d-md-inline">扫码枪连续扫描 → 手动填写数量 → 统一保存</span>
+                </div>
+            </div>
+            <div class="card-body py-2">
+                <div id="scanPreview" class="small mb-1"></div>
+                <div id="scanResult" class="alert mt-1 mb-2 py-1 small"></div>
+                <div class="row g-2">
+                    <!-- 左半：扫码枪扫描 -->
+                    <div class="col-lg-6">
+                        <div class="p-2 border rounded bg-light h-100">
+                            <div class="mb-2"><i class="fa fa-barcode text-primary me-1"></i><b class="small">扫码枪扫描</b></div>
+                            {% if session.get('is_admin') or permissions.get('can_wire_scan_entry_scan') %}
+                            <input type="text" class="form-control scan-input mb-2" id="circuitInput"
+                                   placeholder="① 回路号：LOT+两位数+回路号" autocomplete="off">
+                            <input type="text" class="form-control scan-input" id="machineInput" disabled
+                                   placeholder="② 号机：LOT+号机$编号" autocomplete="off">
+                            {% else %}
+                            <div class="alert alert-light border text-muted small py-2 mb-2">
+                                <i class="fa fa-lock me-1"></i>您没有扫描录入权限
+                            </div>
+                            <input type="text" class="form-control scan-input mb-2" id="circuitInput" disabled
+                                   placeholder="① 回路号：LOT+两位数+回路号" autocomplete="off">
+                            <input type="text" class="form-control scan-input" id="machineInput" disabled
+                                   placeholder="② 号机：LOT+号机$编号" autocomplete="off">
+                            {% endif %}
+                            <div class="form-text scan-tip mt-1 d-flex justify-content-between align-items-center">
+                                <span>扫码完成自动回车切换；也可手动按回车</span>
+                                <div class="d-flex gap-1">
+                                    {% if session.get('is_admin') or permissions.get('can_wire_scan_entry_scan') %}
+                                    <button class="btn btn-outline-primary btn-sm" id="photoBtn" type="button"
+                                            title="拍摄/上传线束标签照片，离线识别二维码与文字，自动把压高修正为标签实测 CCH 值">
+                                        <i class="fa fa-camera me-1"></i>拍照识别
+                                    </button>
+                                    {% endif %}
+                                    <button class="btn btn-outline-danger btn-sm" id="clearPendingBtn" type="button"
+                                            title="清空所有未保存的扫描数据（含本地缓存）">
+                                        <i class="fa fa-trash me-1"></i>一键清除
+                                    </button>
+                                </div>
+                            </div>
+                            <input type="file" id="photoInput" accept="image/*" capture="environment" class="d-none">
+                        </div>
+                    </div>
+                    <!-- 右半：手动填写 -->
+                    <div class="col-lg-6">
+                        <div class="p-2 border rounded bg-light h-100">
+                            <div class="mb-2"><i class="fa fa-pencil text-primary me-1"></i><b class="small">手动填写</b></div>
+                            <div class="row g-2">
+                                <div class="col-12 col-md-4">
+                                    <input type="text" class="form-control" id="manualLot" placeholder="LOT" autocomplete="off">
+                                </div>
+                                <div class="col-12 col-md-4">
+                                    <input type="text" class="form-control" id="manualCircuit" placeholder="回路号" autocomplete="off">
+                                </div>
+                                <div class="col-12 col-md-4">
+                                    <input type="text" class="form-control" id="manualMachine" placeholder="号机" autocomplete="off">
+                                </div>
+                                <div class="col-12">
+                                    <button class="btn btn-primary w-100" id="manualAddBtn" type="button"><i class="fa fa-plus me-1"></i>手动添加</button>
+                                </div>
+                            </div>
+                            <div class="form-text scan-tip mt-1">回车切换：LOT → 回路号 → 号机 → 添加</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-text scan-tip mt-2">
+                    使用说明：扫码枪可连续扫描（① 回路号 → ② 号机），资料在扫码后立即拉取显示；
+                    完成后在表格中手动填写数量（仅限数字、无加减按钮），最后点击「保存数据」统一保存至数据库与数据下载页（长久保存）。
+                </div>
+            </div>
+        </div>
+
+        <!-- 录入数据表 -->
+        <div class="card">
+            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+                <h5 class="card-title mb-0">
+                    <i class="fa fa-list me-2"></i>录入数据表
+                    <span class="badge bg-light text-dark ms-2" id="recordCount">0</span>
+                    <span class="badge bg-light text-dark ms-2" id="qtyTotal">补线合计 0</span>
+                    <span class="badge bg-warning text-dark ms-2 d-none" id="pendingBadge">待保存 0 条</span>
+                </h5>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <div class="d-none align-items-center gap-2" id="saveProgressWrap">
+                        <div class="progress" style="width:140px;height:6px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+                                 id="saveProgressBar" style="width:0%"></div>
+                        </div>
+                        <span class="small text-white" id="saveProgressText">0/0</span>
+                    </div>
+                    {% if session.get('is_admin') or permissions.get('can_wire_scan_entry_save') %}
+                    <button class="btn btn-light btn-sm" id="saveAllBtn" type="button" disabled
+                            title="将当前清单中的全部数据保存入库（数据下载页面可查看/下载，长期保存）">
+                        <i class="fa fa-save me-1"></i>保存数据
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-6 mb-2 mb-md-0">
+                        <input type="text" class="form-control" id="recordSearch" placeholder="搜索LOT / 回路号 / 号机 / 品番...">
+                    </div>
+                    <div class="col-md-6 text-md-end">
+                        <span class="text-muted me-2 small">清单仅显示待保存数据，保存后自动清空；历史数据请在<b>数据下载</b>页查看（长期保存）</span>
+                    </div>
+                </div>
+                <div class="table-responsive" id="recordWrap">
+                    <table class="table table-hover table-bordered table-sm" id="recordTable">
+                        <thead>
+                            <tr>
+                                <th>NO</th>
+                                <th>日期</th>
+                                <th class="d-none">组别</th>
+                                <th class="d-none">车种别</th>
+                                <th class="d-none">序号</th>
+                                <th>品番</th>
+                                <th>EO</th>
+                                <th>LOT/NO</th>
+                                <th>回路号</th>
+                                <th>线质</th>
+                                <th>规格/颜色</th>
+                                <th>长度</th>
+                                <th>数量</th>
+                                <th>配线区分</th>
+                                <th>端子名1/2</th>
+                                <th>号机名</th>
+                                <th>压高</th>
+                                <th>QC检查者</th>
+                                <th>取线者</th>
+                                <th>取线时间</th>
+                                <th>备注</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recordTbody">
+                            <tr id="emptyRow">
+                                <td colspan="21" class="text-center py-4">
+                                    <i class="fa fa-clipboard-check fa-2x text-success d-block mb-2"></i>
+                                    <span class="text-success fw-bold">清单已清空</span>
+                                    <span class="text-muted d-block mt-1">所有数据已保存至「数据下载」页（长期保存），可开始新的扫描</span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 拍照识别结果弹窗：展示识别字段，可等同扫码带入清单 -->
+    <div class="modal fade" id="photoModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h6 class="modal-title"><i class="fa fa-camera me-1"></i>标签拍照识别（离线）</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body" id="photoModalBody"></div>
+                <div class="modal-footer py-2" id="photoModalFooter"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+        (function() {
+            const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+            const tbody = document.getElementById('recordTbody');
+            const emptyRow = document.getElementById('emptyRow');
+            const recordCount = document.getElementById('recordCount');
+            const qtyTotal = document.getElementById('qtyTotal');
+            const pendingBadge = document.getElementById('pendingBadge');
+            const searchInput = document.getElementById('recordSearch');
+            const saveAllBtn = document.getElementById('saveAllBtn');
+            const saveProgressWrap = document.getElementById('saveProgressWrap');
+            const saveProgressBar = document.getElementById('saveProgressBar');
+            const saveProgressText = document.getElementById('saveProgressText');
+            const scanResult = document.getElementById('scanResult');
+            const circuitInput = document.getElementById('circuitInput');
+            const machineInput = document.getElementById('machineInput');
+            const manualLot = document.getElementById('manualLot');
+            const manualCircuit = document.getElementById('manualCircuit');
+            const manualMachine = document.getElementById('manualMachine');
+            const manualAddBtn = document.getElementById('manualAddBtn');
+            const scanPreview = document.getElementById('scanPreview');
+            const LOT_LEN = 8; // LOT 固定长度（与后端 WIRE_LOT_LEN 一致）
+            const SCAN_AUTO_ENTER_MS = 400; // 扫码枪扫描输入静止后自动回车延迟
+
+            let records = [];     // 已保存记录（后端加载）
+            let pending = [];     // 待保存记录（扫描后临时收集，未入库）
+            let currentCircuit = null; // 已扫描回路号（等待号机配对）
+            let tmpSeq = 0;
+            let lotInfo = {};     // lot_no -> {part_no 品番, jx_eo 京信EO, vehicle_type 车种别}
+            let sublistMap = {};  // 品番|EO|回路号 -> SubList 线束明细（已精确匹配电路）
+            let sublistByLot = {}; // LOT|回路号 -> 线束明细（稳定键，LOT登录资料删除后仍可命中）
+            let circuitTimer = null; // 回路号自动回车定时器
+            let machineTimer = null; // 号机自动回车定时器
+
+            // ---------- 待保存数据本地缓存（localStorage，2小时滑动过期） ----------
+            // 扫描后未保存的数据持续缓存在浏览器本地，页面刷新/意外关闭后可恢复；
+            // 每次变更刷新时间戳（滑动过期），持续2小时无变更自动清除；支持一键清除。
+            const PENDING_CACHE_KEY = 'wire_scan_pending_cache';
+            const PENDING_CACHE_TTL = 2 * 60 * 60 * 1000; // 2小时（毫秒）
+
+            // 写入节流：render() 每次都会调用，而全量 JSON.stringify + localStorage 同步写入
+            // 在待保存条数较多时会明显阻塞主线程（localStorage 为同步 IO）。
+            // 这里合并到 300ms 内的最后一次写入，页面卸载前强制 flush 一次保证不丢数据。
+            let _cacheTimer = null;
+            function _writePendingCache() {
+                try {
+                    if (!pending.length) {
+                        localStorage.removeItem(PENDING_CACHE_KEY);
+                    } else {
+                        localStorage.setItem(PENDING_CACHE_KEY, JSON.stringify({
+                            items: pending, ts: Date.now()
+                        }));
+                    }
+                } catch (e) { /* 本地存储不可用时静默降级，不影响正常扫描 */ }
+            }
+
+            function savePendingCache() {
+                if (_cacheTimer) return; // 已有待执行的写入，合并即可
+                _cacheTimer = setTimeout(function() {
+                    _cacheTimer = null;
+                    _writePendingCache();
+                }, 300);
+            }
+
+            function flushPendingCache() {
+                if (_cacheTimer) { clearTimeout(_cacheTimer); _cacheTimer = null; }
+                _writePendingCache();
+            }
+            // 关页/刷新前立即落盘，避免节流窗口内丢失
+            window.addEventListener('beforeunload', flushPendingCache);
+            document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'hidden') flushPendingCache();
+            });
+
+            function loadPendingCache() {
+                try {
+                    const raw = localStorage.getItem(PENDING_CACHE_KEY);
+                    if (!raw) return;
+                    const data = JSON.parse(raw);
+                    if (!data || !Array.isArray(data.items) || !data.items.length) {
+                        localStorage.removeItem(PENDING_CACHE_KEY);
+                        return;
+                    }
+                    if (Date.now() - (data.ts || 0) >= PENDING_CACHE_TTL) {
+                        // 缓存超过2小时未变更：自动清除
+                        localStorage.removeItem(PENDING_CACHE_KEY);
+                        showResult(false, '未保存的扫描数据已超过2小时，缓存已自动清除');
+                        return;
+                    }
+                    pending = data.items;
+                    // 对齐 tmpSeq，避免恢复后新增数据 tmpId 冲突
+                    pending.forEach(p => {
+                        const m = String(p.tmpId || '').match(/^p(\d+)$/);
+                        if (m) tmpSeq = Math.max(tmpSeq, parseInt(m[1], 10));
+                    });
+                    render(searchInput.value);
+                    const remainMin = Math.max(1, Math.round((PENDING_CACHE_TTL - (Date.now() - (data.ts || 0))) / 60000));
+                    showResult(true, `已恢复上次未保存的 <b>${pending.length}</b> 条扫描数据（本地缓存2小时有效，剩余约 ${remainMin} 分钟，可点「一键清除」放弃）`);
+                } catch (e) {
+                    try { localStorage.removeItem(PENDING_CACHE_KEY); } catch (_) {}
+                }
+            }
+
+            function clearPendingCache() {
+                try { localStorage.removeItem(PENDING_CACHE_KEY); } catch (_) {}
+            }
+
+            // 每60秒巡检一次：缓存超过2小时未变更则清空清单
+            setInterval(function() {
+                if (!pending.length) return;
+                try {
+                    const raw = localStorage.getItem(PENDING_CACHE_KEY);
+                    if (!raw) return;
+                    const data = JSON.parse(raw);
+                    if (Date.now() - (data.ts || 0) >= PENDING_CACHE_TTL) {
+                        pending = [];
+                        clearPendingCache();
+                        render(searchInput.value);
+                        showResult(false, '未保存的扫描数据已超过2小时，已自动清除');
+                    }
+                } catch (e) {}
+            }, 60000);
+
+            // ---------- 数据加载 ----------
+            async function loadData() {
+                try {
+                    const resp = await fetch('/wire/scan_entry/data', {
+                        headers: { 'X-CSRFToken': CSRF }
+                    });
+                    const data = await resp.json();
+                    records = data.success ? (data.records || []) : [];
+                    lotInfo = data.lot_info || {};
+                    sublistMap = data.sublist || {};
+                    sublistByLot = data.sublist_by_lot || {};
+                } catch (e) {
+                    records = [];
+                    lotInfo = {};
+                    sublistMap = {};
+                    sublistByLot = {};
+                }
+                // 服务端已带回最新资料，作废前端的去重/负缓存，避免沿用旧结论
+                _detailNegative.clear();
+                _sameDrawingDone.clear();
+                render(searchInput.value);
+            }
+
+            function esc(s) {
+                return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+                    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                }[c]));
+            }
+
+            // 日期时间完整显示：YYYY-MM-DD HH:MM:SS（待保存行显示当前录入时刻）
+            function fmtDate(s) {
+                if (!String(s || '').trim()) {
+                    const n = new Date();
+                    const p = x => String(x).padStart(2, '0');
+                    return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())} ${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}`;
+                }
+                return s;
+            }
+
+            // 生成本地（UTC+8）wall-clock 时间戳：'YYYY-MM-DDTHH:MM:SS.mmm'
+            // 说明：后端统一使用「无时区的 UTC+8 时间」，若用 toISOString() 会得到 UTC 时间，
+            // 解析后比本地少 8 小时，导致下载页时间偏移。这里手动拼本地时间，避免时区偏移。
+            function localStamp() {
+                const n = new Date();
+                const p = x => String(x).padStart(2, '0');
+                const ms = String(n.getMilliseconds()).padStart(3, '0');
+                return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`
+                    + `T${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}.${ms}`;
+            }
+
+            // 号机名：去掉 $ 后编号，仅保留号机主体（如 M-35$139 -> M-35）
+            function machineName(machineNo) {
+                const s = String(machineNo || '');
+                if (!s) return '';
+                return s.split('$')[0];
+            }
+
+            function cell(v) {
+                return `<td>${esc(v) || ''}</td>`;
+            }
+
+            function cellDtl(v) {
+                return `<td>${esc(v)}</td>`;
+            }
+
+            // ---------- 扫描内容解析 ----------
+            // 回路号：LOT(8位) + 两位数字 + 回路号，如 Q817A03Q01RS122 / Q817A03Q23RS122
+            function parseCircuitContent(content) {
+                if (content.length < LOT_LEN + 3) return null;
+                // 第9-10位为任意两位数字（不再限定01）
+                if (!/^\d{2}$/.test(content.slice(LOT_LEN, LOT_LEN + 2))) return null;
+                const circuit_no = content.slice(LOT_LEN + 2);
+                if (!circuit_no) return null;
+                return { lot_no: content.slice(0, LOT_LEN), circuit_no: circuit_no };
+            }
+            // 号机：LOT(8位) + 号机$编号，如 Q817A03QM-35$139
+            function parseMachineContent(content) {
+                if (content.length <= LOT_LEN) return null;
+                const machine_no = content.slice(LOT_LEN);
+                if (!machine_no.includes('$')) return null;
+                return { lot_no: content.slice(0, LOT_LEN), machine_no: machine_no };
+            }
+
+            function showResult(ok, msg) {
+                scanResult.className = 'alert mt-3 mb-0 py-2 small ' + (ok ? 'alert-success' : 'alert-danger');
+                scanResult.innerHTML = msg;
+                scanResult.style.display = 'block';
+                setTimeout(() => { scanResult.style.display = 'none'; }, 5000);
+            }
+
+            function showPreview(html) {
+                scanPreview.className = 'preview-circuit';
+                scanPreview.innerHTML = html;
+                scanPreview.style.display = 'block';
+            }
+
+            function hidePreview() {
+                scanPreview.style.display = 'none';
+            }
+
+            // ---------- 表格渲染：仅渲染待保存清单（保存后自动清空，历史数据在下载页） ----------
+            function render(filter) {
+                const kw = (filter || '').trim().toLowerCase();
+                const pendingRows = pending.map(p => ({
+                    id: null, tmpId: p.tmpId, _pending: true,
+                    lot_no: p.lot_no, circuit_no: p.circuit_no,
+                    machine_no: p.machine_no, wire_qty: p.wire_qty, created_at: null
+                }));
+                let rows = pendingRows.filter(r => {
+                    if (!kw) return true;
+                    return [r.lot_no, r.circuit_no, r.machine_no, (lotInfo[r.lot_no] || {}).part_no]
+                        .some(v => (v || '').toLowerCase().includes(kw));
+                });
+                tbody.innerHTML = '';
+                if (!rows.length) {
+                    tbody.appendChild(emptyRow);
+                } else {
+                    const groups = [];
+                    rows.forEach(r => {
+                        const last = groups[groups.length - 1];
+                        if (last && last.lot === r.lot_no) {
+                            last.items.push(r);
+                        } else {
+                            groups.push({ lot: r.lot_no, items: [r] });
+                        }
+                    });
+                    let no = 0; // 全局 NO
+                    groups.forEach(g => {
+                        // LOT 关联：品番 + 京信EO + 车种别（来自 LOT 登录表）
+                        const li = lotInfo[g.lot] || {};
+                        const partNo = li.part_no || '';
+                        const eoVal = li.jx_eo || '';
+                        const vehicle = li.vehicle_type || '';
+                        const circuitRow = g.items.find(r => !r.machine_no);
+                        const machineItems = g.items.filter(r => r.machine_no);
+                        // 资料键：优先取「该组中有子表资料」的电路行（避免首电路行无资料时显示空白，
+                        // 如 LOT 首行为 RS531 无资料、而 EB531 有资料的情况）
+                        const candidateCircuits = [];
+                        if (circuitRow && circuitRow.circuit_no) candidateCircuits.push(circuitRow.circuit_no);
+                        machineItems.forEach(m => { if (m.circuit_no) candidateCircuits.push(m.circuit_no); });
+                        // 取数优先用「LOT|回路」稳定键（不依赖品番/EO，LOT登录资料删除后仍命中），
+                        // 未命中再回退旧的 品番|EO|回路 键
+                        let dtlRows = [];
+                        let dtlKey = null;
+                        for (const cn of candidateCircuits) {
+                            const lotKey = `${g.lot.trim()}|${String(cn).trim().toUpperCase()}`;
+                            if ((sublistByLot[lotKey] || []).length) { dtlRows = sublistByLot[lotKey]; dtlKey = lotKey; break; }
+                        }
+                        if (!dtlRows.length) {
+                            for (const cn of candidateCircuits) {
+                                const k = partNo && eoVal && cn
+                                    ? `${partNo.trim().toUpperCase()}|${eoVal.trim().toUpperCase()}|${cn.trim().toUpperCase()}` : null;
+                                if (k && (sublistMap[k] || []).length) { dtlRows = sublistMap[k]; dtlKey = k; break; }
+                            }
+                        }
+                        // 兜底：全部无资料则退回首电路行（保持与旧行为一致的键）
+                        if (!dtlKey && candidateCircuits.length) {
+                            const cn = candidateCircuits[0];
+                            dtlKey = partNo && eoVal && cn
+                                ? `${partNo.trim().toUpperCase()}|${eoVal.trim().toUpperCase()}|${cn.trim().toUpperCase()}` : null;
+                        }
+                        let displayItems;
+                        if (machineItems.length) {
+                            displayItems = machineItems.map(r => ({
+                                ...r,
+                                circuit_no: r.circuit_no || (circuitRow ? circuitRow.circuit_no : null)
+                            }));
+                        } else {
+                            displayItems = g.items;
+                        }
+                        let firstOfLot = true;
+                        displayItems.forEach(r => {
+                            const detailList = dtlRows.length ? dtlRows : [null];
+                            detailList.forEach(dtl => {
+                                no++;
+                                tbody.appendChild(rowItem(g, r, li, partNo, eoVal, vehicle,
+                                                          dtl, no, firstOfLot));
+                                firstOfLot = false;
+                            });
+                        });
+                    });
+                }
+                recordCount.textContent = `${rows.length} 条`;
+                qtyTotal.textContent = `补线合计 ${calcTotal()}`;
+                // 待保存标记
+                pendingBadge.textContent = `待保存 ${pending.length} 条`;
+                pendingBadge.classList.toggle('d-none', !pending.length);
+                saveAllBtn.disabled = !pending.length;
+                // 待保存清单同步到本地缓存（刷新/关页后可恢复）
+                savePendingCache();
+            }
+
+            // 单行（NO|日期|组别|车种别|序号|品番|LOT/NO|回路号|线质|规格/颜色|长度|数量|配线区分|端子名1/2|号机名|压高|QC检查者|取线者|取线时间|备注|操作）
+            function rowItem(g, r, li, partNo, eoVal, vehicle, dtl, no, firstOfLot) {
+                const isCircuitRow = !r.machine_no; // 回路占位行（该LOT尚无号机）
+                const isPending = !!r._pending;
+                const qid = isPending ? r.tmpId : r.id;
+                const seq = firstOfLot ? 1 : '';
+                const dateStr = fmtDate(r.created_at);
+                // 明细字段：空内容显示空白，不保留"-"；Remark1 与内容合并展示
+                const wireType = dtl ? (dtl.wire || '') : '';
+                const specColor = dtl ? `${dtl.sq || ''}/${dtl.color || ''}` : '';
+                const length = dtl ? (dtl.length_cut2 || '') : '';
+                const terminal = dtl
+                    ? `<div>${esc(dtl.tml1 || '')}</div><div>${esc(dtl.tml2 || '')}</div>`
+                    : '';
+                // 压高优先取「用户登录维护的压高」（扫描后按匹配键拉取），
+                // 仅在未匹配到用户压高且不处于待保存态时回退显示快照原压高占位。
+                // 用户压高未匹配到时：不显示压高（不匹配即不显示）。
+                const crimp = dtl && (dtl.userStrip1 || dtl.userStrip2)
+                    ? `<div>${esc(dtl.userStrip1 || '')}</div><div>${esc(dtl.userStrip2 || '')}</div>`
+                    : '';
+                // 配线区分：Remark1 以 "TW-" 开头时取 TW；否则取 Rel2（如 S、E*）；都空则为空白
+                function wireDivType(d) {
+                    if (!d) return '';
+                    const rk = String(d.remark1 || '').trim();
+                    if (/^TW-?/i.test(rk)) return 'TW';
+                    return String(d.rel2 || '') || String(d.rel1 || '');
+                }
+                const divType = wireDivType(dtl);
+                const remark = dtl ? (dtl.remark1 || '') : '';
+                // 冻结归档资料标注：行底纹标黄，备注列追加锁徽章（资料只读，仅作拉取参照）
+                const isFrozen = !!(dtl && dtl.frozen);
+                const frozenBadge = isFrozen
+                    ? ' <span class="badge bg-warning text-dark" title="该线束资料为已冻结归档版本（只读），可正常拉取参照"><i class="fa fa-lock"></i> 冻结</span>'
+                    : '';
+                // 数量仅允许手动输入，禁用加减按钮（统一保存入口负责入库）
+                const qtyInput = isCircuitRow
+                    ? ''
+                    : `<input type="number" class="form-control form-control-sm qty-input qty-edit${isPending && (parseInt(r.wire_qty, 10) || 0) <= 0 ? ' qty-zero-warn' : ''}" data-tmp="${isPending ? qid : ''}" data-id="${isPending ? '' : qid}" value="${esc(r.wire_qty)}" min="1" step="1">`;
+                const canDelete = {{ 'true' if session.get('is_admin') or permissions.get('can_wire_scan_entry_delete') else 'false' }};
+                const canEdit = {{ 'true' if session.get('is_admin') or permissions.get('can_wire_scan_entry_edit') else 'false' }};
+                const delBtn = canDelete
+                    ? (isPending
+                        ? `<button class="btn btn-outline-danger btn-sm del-btn" data-tmp="${qid}" type="button"><i class="fa fa-trash"></i></button>`
+                        : `<button class="btn btn-outline-danger btn-sm del-btn" data-id="${qid}" data-lot="${esc(g.lot)}" data-m="${esc(r.machine_no || '回路登记')}" type="button"><i class="fa fa-trash"></i></button>`)
+                    : '';
+                if (!isPending && !canEdit) {
+                    // 无编辑权限的已保存行：将数量输入框替换为纯文本显示
+                    qtyInput = `<span class="text-muted">-</span>`;
+                }
+                const statusBadge = isPending
+                    ? ' <span class="badge bg-warning text-dark ms-1">未保存</span>'
+                    : '';
+                const tr = document.createElement('tr');
+                tr.className = (isPending ? 'row-pending ' : '') + (isFrozen ? 'table-warning ' : '') + (firstOfLot ? 'row-lot-first' : '');
+                tr.innerHTML = `
+                    ${cell(no)}
+                    ${cell(dateStr)}
+                    <td class="d-none">${esc('')}</td>
+                    <td class="d-none">${esc(vehicle)}</td>
+                    <td class="d-none">${esc(seq)}</td>
+                    ${cell(partNo)}
+                    ${cell(eoVal)}
+                    ${cellDtl(g.lot)}
+                    ${cell(r.circuit_no)}
+                    ${cell(wireType)}
+                    ${cell(specColor)}
+                    ${cell(length)}
+                    <td class="text-center">${qtyInput}${statusBadge}</td>
+                    ${divType ? `<td>${divType}</td>` : cell('')}
+                    ${terminal ? `<td>${terminal}</td>` : cell('')}
+                    ${cell(machineName(r.machine_no))}
+                    ${crimp ? `<td>${crimp}</td>` : cell('')}
+                    ${cell('')}
+                    ${cell('')}
+                    ${cell('')}
+                    ${cell('')}
+                    <td>${esc(remark)}${frozenBadge}</td>
+                    <td class="text-center">${delBtn}</td>`;
+                return tr;
+            }
+
+            function calcTotal() {
+                return pending.filter(r => r.machine_no).reduce((s, r) => s + (r.wire_qty || 0), 0);
+            }
+
+            // 局部更新待保存行的数量（避免整表重渲染导致输入框失焦）
+            function updatePendingQty(tmpId, qty) {
+                const item = pending.find(p => p.tmpId == tmpId);
+                if (!item) return;
+                item.wire_qty = Math.max(0, parseInt(qty, 10) || 0);
+                const inputs = document.querySelectorAll(`.qty-edit[data-tmp="${tmpId}"]`);
+                inputs.forEach(inp => inp.value = item.wire_qty);
+                qtyTotal.textContent = `补线合计 ${calcTotal()}`;
+                // 数量变更同步本地缓存
+                savePendingCache();
+            }
+
+            // 扫码后立即拉取该回路的 SubList 资料（活跃优先+冻结兜底），
+            // 拉到的资料直接合并进 sublistMap 并在表格即时显示，不再等数量填写完成
+            //
+            // 去重：回路号阶段与号机阶段会对同一 (lot, circuit) 各请求一次，
+            // same_drawing 也会请求；这里用 in-flight Promise 合并并发重复请求，
+            // 并对无资料(&not_found/no_login)结果做短期负缓存，避免重复往返。
+            const _detailInflight = new Map();
+            const _detailNegative = new Map(); // key -> 时间戳，命中后 60s 内不再请求
+            const DETAIL_NEG_TTL = 60 * 1000;
+
+            async function fetchCircuitDetail(lotNo, circuitNo) {
+                const reqKey = `${lotNo}|${circuitNo}`;
+                const negTs = _detailNegative.get(reqKey);
+                if (negTs && Date.now() - negTs < DETAIL_NEG_TTL) return;
+                if (_detailInflight.has(reqKey)) return _detailInflight.get(reqKey);
+                const task = (async function() {
+                    try {
+                        const resp = await fetch(`/wire/scan_entry/circuit_detail?lot=${encodeURIComponent(lotNo)}&circuit=${encodeURIComponent(circuitNo)}`, {
+                            headers: { 'X-CSRFToken': CSRF }
+                        });
+                        const data = await resp.json();
+                        if (!data.success) return;
+                        if (data.reason === 'no_login') {
+                            // LOT 未登录品番/EO：先不拉资料，保存后回读 data 接口会补齐
+                            _detailNegative.set(reqKey, Date.now());
+                            return;
+                        }
+                        if (data.part_no || data.jx_eo) {
+                            lotInfo[lotNo] = {
+                                part_no: lotInfo[lotNo] && lotInfo[lotNo].part_no || data.part_no,
+                                jx_eo: lotInfo[lotNo] && lotInfo[lotNo].jx_eo || data.jx_eo,
+                                vehicle_type: (lotInfo[lotNo] || {}).vehicle_type || ''
+                            };
+                        }
+                        if (data.not_found) {
+                            _detailNegative.set(reqKey, Date.now());
+                            return; // 该回路无资料，保持空白显示
+                        }
+                        const key = `${String(data.part_no).trim().toUpperCase()}|${String(data.jx_eo).trim().toUpperCase()}|${String(circuitNo).trim().toUpperCase()}`;
+                        sublistMap[key] = data.detail || [];
+                        // 稳定键：LOT|回路（不依赖品番/EO，登录资料删除后仍可用）
+                        sublistByLot[`${String(lotNo).trim()}|${String(circuitNo).trim().toUpperCase()}`] = data.detail || [];
+                        render(searchInput.value);
+                    } catch (e) {
+                        // 静默失败，不影响扫码主流程
+                    } finally {
+                        _detailInflight.delete(reqKey);
+                    }
+                })();
+                _detailInflight.set(reqKey, task);
+                return task;
+            }
+
+            // 扫描后按匹配键拉取「用户登录维护的压高」：回路号+号机+颜色+规格+端子 全一致才命中
+            const _crimpInflight = new Map();
+            function fetchUserCrimp(lotNo, circuitNo, machineNo) {
+                const reqKey = `${lotNo}|${circuitNo}|${machineNo}`;
+                if (_crimpInflight.has(reqKey)) return _crimpInflight.get(reqKey);
+                const detailArr = sublistByLot[`${String(lotNo).trim()}|${String(circuitNo).trim().toUpperCase()}`] || [];
+                if (!detailArr.length || !machineNo) return Promise.resolve();
+                const reqDetail = detailArr.map(d => ({
+                    circuit: d.circuit, color: d.color, sq: d.sq, tml1: d.tml1, tml2: d.tml2
+                }));
+                const task = (async function() {
+                    try {
+                        const resp = await fetch('/wire/crimp_login/match', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                            body: JSON.stringify({ lot_no: lotNo, circuit_no: circuitNo, machine_no: machineNo, detail: reqDetail })
+                        });
+                        const data = await resp.json();
+                        if (data.success && data.crimp) {
+                            let touched = false;
+                            Object.keys(data.crimp).forEach(idx => {
+                                const i = parseInt(idx, 10);
+                                if (detailArr[i]) {
+                                    detailArr[i].userStrip1 = data.crimp[idx].strip1;
+                                    detailArr[i].userStrip2 = data.crimp[idx].strip2;
+                                    touched = true;
+                                }
+                            });
+                            if (touched) render(searchInput.value);
+                        }
+                    } catch (e) { /* 静默失败，不影响主流程 */ }
+                    finally { _crimpInflight.delete(reqKey); }
+                })();
+                _crimpInflight.set(reqKey, task);
+                return task;
+            }
+
+            // 扫描后检测同 LOT 同图纸编号（SetCode 主体）的其他回路，自动带入待保存数据并提醒
+            const _sameDrawingInflight = new Map();
+            const _sameDrawingDone = new Set(); // 已检测过的 (lot, circuit)，避免重复请求
+
+            async function checkSameDrawing(lotNo, circuitNo) {
+                const reqKey = `${lotNo}|${circuitNo}`;
+                if (_sameDrawingDone.has(reqKey)) return;
+                if (_sameDrawingInflight.has(reqKey)) return _sameDrawingInflight.get(reqKey);
+                const task = (async function() {
+                    try {
+                        const resp = await fetch(`/wire/scan_entry/same_drawing?lot=${encodeURIComponent(lotNo)}&circuit=${encodeURIComponent(circuitNo)}`, {
+                            headers: { 'X-CSRFToken': CSRF }
+                        });
+                        const data = await resp.json();
+                        _sameDrawingDone.add(reqKey);
+                        if (!data.success || !(data.circuits || []).length) return;
+                        const list = data.circuits;
+                        let added = 0;
+                        list.forEach(c => {
+                            // 去重：已保存 / 已待保存 的同回路跳过
+                            if (records.some(r => r.lot_no === lotNo && r.circuit_no === c.circuit)) return;
+                            if (pending.some(p => p.lot_no === lotNo && p.circuit_no === c.circuit)) return;
+                            pending.push({ tmpId: 'p' + (++tmpSeq), lot_no: lotNo, circuit_no: c.circuit, machine_no: '', wire_qty: 0 });
+                            added++;
+                            // 兄弟回路资料立即合并：优先用 LOT|回路 稳定键（不依赖品番/EO），
+                            // 再兼容旧的 品番|EO|回路 键，确保 LOT登录资料删除后仍能显示
+                            const detailObj = {
+                                circuit: c.circuit, wire: c.wire, color: c.color, sq: c.sq,
+                                length_cut2: c.length_cut2, tml1: c.tml1, tml2: c.tml2,
+                                rel1: c.rel1, rel2: c.rel2, seal1: c.seal1, seal2: c.seal2,
+                                strip1: c.strip1, strip2: c.strip2, remark1: c.remark1,
+                                frozen: !!c.frozen
+                            };
+                            const lotKey = `${String(lotNo).trim()}|${String(c.circuit).trim().toUpperCase()}`;
+                            if (!(sublistByLot[lotKey] || []).length) sublistByLot[lotKey] = [detailObj];
+                            const li2 = lotInfo[lotNo];
+                            if (li2 && li2.part_no && li2.jx_eo) {
+                                const k = `${li2.part_no.trim().toUpperCase()}|${li2.jx_eo.trim().toUpperCase()}|${String(c.circuit).trim().toUpperCase()}`;
+                                if (!(sublistMap[k] || []).length) sublistMap[k] = [detailObj];
+                            }
+                        });
+                        if (!added) return;
+                        render(searchInput.value);
+                        showResult(true, `检测到同一图纸编号 <b>${esc(data.drawing)}</b> 下的其他回路 ${list.length} 条：<b>${list.map(c => esc(c.circuit)).join('、')}</b>，已自动带入待保存数据，可填写补线数量或继续扫号机（不需要的行可删除）`);
+                    } catch (e) {
+                        // 静默失败，不影响主流程
+                    } finally {
+                        _sameDrawingInflight.delete(reqKey);
+                    }
+                })();
+                _sameDrawingInflight.set(reqKey, task);
+                return task;
+            }
+
+            // ---------- 标签拍照识别：离线识别二维码+文字，修正压高为标签实测 CCH ----------
+            const photoBtn = document.getElementById('photoBtn');
+            const photoInput = document.getElementById('photoInput');
+            const photoModalEl = document.getElementById('photoModal');
+            const photoModalBody = document.getElementById('photoModalBody');
+            const photoModalFooter = document.getElementById('photoModalFooter');
+            let photoModal = null;
+
+            if (photoBtn) photoBtn.addEventListener('click', () => photoInput.click());
+            photoInput.addEventListener('change', uploadLabelPhoto);
+
+            // 与后端 _wire_norm_tml 同规则：端子号宽松归一化（前导零不敏感）
+            function normTmlJs(s) {
+                return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/0+(\d)/g, '$1');
+            }
+
+            async function uploadLabelPhoto() {
+                const f = photoInput.files && photoInput.files[0];
+                photoInput.value = ''; // 允许重复选同一文件
+                if (!f) return;
+                if (!photoModal) photoModal = new bootstrap.Modal(photoModalEl);
+                photoModalBody.innerHTML = '<div class="text-center py-4"><i class="fa fa-spinner fa-spin fa-2x text-primary"></i><div class="mt-2 text-muted small">正在离线识别标签（二维码 + 文字），首次识别需加载模型，请稍候…</div></div>';
+                photoModalFooter.innerHTML = '';
+                photoModal.show();
+                const fd = new FormData();
+                fd.append('photo', f);
+                try {
+                    const resp = await fetch('/wire/scan_entry/label_photo', {
+                        method: 'POST', headers: { 'X-CSRFToken': CSRF }, body: fd
+                    });
+                    const data = await resp.json();
+                    if (!data.success) {
+                        photoModalBody.innerHTML = `<div class="alert alert-danger small mb-0">${esc(data.error || '识别失败')}</div>`;
+                        return;
+                    }
+                    renderPhotoResult(data);
+                } catch (e) {
+                    photoModalBody.innerHTML = `<div class="alert alert-danger small mb-0">识别请求失败：${esc(e.message || e)}</div>`;
+                }
+            }
+
+            // 识别结果渲染 + 后续动作（回写提示 / 等同扫码带入 / 本地明细压高同步）
+            function renderPhotoResult(data) {
+                const sd = data.scan_detail || {};
+                const join = (...xs) => xs.filter(Boolean).join(' / ');
+                const rowsDef = [
+                    ['品番', sd.part_no || data.part_no], ['EO', sd.jx_eo || data.jx_eo],
+                    ['LOT', sd.lot_no], ['回路号', sd.circuit],
+                    ['号机', sd.machine_no], ['图纸管理编号', sd.drawing_mgmt_no],
+                    ['线质/规格/颜色', join(sd.wire, sd.sq, sd.color)],
+                    ['长度', sd.length_cut2],
+                    ['端子1', sd.tml1],
+                    ['端子2', sd.tml2],
+                ];
+                let html = '<table class="table table-sm table-bordered small mb-2"><tbody>';
+                rowsDef.forEach(([k, v]) => {
+                    html += `<tr><th class="text-nowrap bg-light" style="width:120px">${k}</th><td>${v ? esc(v) : '<span class="text-muted">未识别</span>'}</td></tr>`;
+                });
+                html += '</tbody></table>';
+                // 压高不再由拍照识别回写：扫描后由「压高登陆」用户维护数据按匹配键拉取。
+                // 仅保留识别引擎异常提示（缺依赖 / 模型加载失败），其余压高相关提示已清除。
+                if (Array.isArray(data.errors) && data.errors.length) {
+                    const errTxt = data.errors
+                        .map(e => esc(`${e.stage || ''}: ${e.message || ''}`)).join('<br>');
+                    html += `<div class="alert alert-danger small py-1 mb-0 mt-1"><i class="fa fa-exclamation-circle me-1"></i>识别引擎异常：<br>${errTxt}</div>`;
+                }
+                photoModalBody.innerHTML = html;
+
+                // 底部动作：识别出回路码时提供「等同扫码带入」（回路码+号机码直接走既有扫码流程）
+                photoModalFooter.innerHTML = '';
+                const circuitCode = (data.codes || []).find(t => sd.lot_no && t.indexOf(sd.lot_no) === 0 && t.length > 10 && !/M-\d+\$/i.test(t));
+                const machineCode = (data.codes || []).find(t => /M-\d+\$/i.test(t));
+                if (circuitCode) {
+                    const btn = document.createElement('button');
+                    btn.className = 'btn btn-primary btn-sm';
+                    btn.innerHTML = '<i class="fa fa-barcode me-1"></i>等同扫码带入清单';
+                    btn.title = '把识别到的回路码' + (machineCode ? '与号机码' : '') + '按扫码枪相同流程带入';
+                    btn.addEventListener('click', () => {
+                        photoModal.hide();
+                        circuitInput.value = circuitCode;
+                        handleCircuitScan();
+                        if (machineCode && currentCircuit) {
+                            machineInput.value = machineCode;
+                            handleMachineScan();
+                        }
+                    });
+                    photoModalFooter.appendChild(btn);
+                }
+                const closeBtn = document.createElement('button');
+                closeBtn.className = 'btn btn-secondary btn-sm';
+                closeBtn.textContent = '关闭';
+                closeBtn.setAttribute('data-bs-dismiss', 'modal');
+                photoModalFooter.appendChild(closeBtn);
+            }
+
+            // ---------- ① 回路号扫描（自动回车 / 手动回车均提交并切到号机框） ----------
+            function handleCircuitScan() {
+                clearTimeout(circuitTimer);
+                const content = circuitInput.value.trim();
+                if (!content) { circuitInput.focus(); return; }
+                const p = parseCircuitContent(content);
+                if (!p) {
+                    showResult(false, '无法识别回路号：应为 <code>LOT(8位)+两位数+回路号</code>（如 Q817A03Q01RS122），请修改后重试');
+                    circuitInput.select();
+                    return;
+                }
+                currentCircuit = p;
+                showResult(true, `回路号识别成功：LOT <b>${esc(p.lot_no)}</b>，回路号 <b>${esc(p.circuit_no)}</b>，请在②号机框扫描号机`);
+                showPreview(`<i class="fa fa-road me-1"></i>① 回路号已扫：LOT=<b>${esc(p.lot_no)}</b>，回路号=<b>${esc(p.circuit_no)}</b>，请继续②号机扫描`);
+                circuitInput.value = '';
+                machineInput.disabled = false;
+                machineInput.placeholder = `号机（LOT=${esc(p.lot_no)}）：${esc(p.lot_no)}号机\$编号`;
+                machineInput.focus();
+                // 立即拉取该回路资料（不等数量填写），同图纸兄弟回路自动带入并提醒
+                fetchCircuitDetail(p.lot_no, p.circuit_no);
+                checkSameDrawing(p.lot_no, p.circuit_no);
+            }
+
+            circuitInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleCircuitScan();
+                }
+            });
+            // 扫码枪扫完静止后自动触发回车
+            circuitInput.addEventListener('input', function() {
+                clearTimeout(circuitTimer);
+                circuitTimer = setTimeout(handleCircuitScan, SCAN_AUTO_ENTER_MS);
+            });
+
+            // ---------- ② 号机扫描（配对成功后自动添加数据行） ----------
+            function handleMachineScan() {
+                clearTimeout(machineTimer);
+                const content = machineInput.value.trim();
+                if (!content) { machineInput.focus(); return; }
+                const p = parseMachineContent(content);
+                if (!p) {
+                    showResult(false, '无法识别号机：应为 <code>LOT(8位)+号机$编号</code>（如 Q817A03QM-35$139），请修改后重试');
+                    machineInput.select();
+                    return;
+                }
+                if (!currentCircuit) {
+                    showResult(false, '请先在①回路号框扫描回路号');
+                    circuitInput.focus();
+                    return;
+                }
+                if (p.lot_no !== currentCircuit.lot_no) {
+                    showResult(false, `LOT不一致：回路号 LOT=<b>${esc(currentCircuit.lot_no)}</b>，号机 LOT=<b>${esc(p.lot_no)}</b>。请确认是否为同一 LOT`);
+                    machineInput.select();
+                    return;
+                }
+                // 号机允许重复录入，不做查重限制
+                pending.push({
+                    tmpId: 'p' + (++tmpSeq),
+                    lot_no: p.lot_no,
+                    circuit_no: currentCircuit.circuit_no,
+                    machine_no: p.machine_no,
+                    wire_qty: 0,
+                    scan_at: localStamp()  // 扫描瞬间时间（UTC+8），保存时按此刻排序落库
+                });
+                // 号机配对成功后再次确认资料已拉取（若回路号阶段 LOT 尚未登录，此处补齐）
+                const detailTask = fetchCircuitDetail(p.lot_no, currentCircuit.circuit_no);
+                // 资料拉取完成后，按匹配键拉取「用户登录维护的压高」；无匹配不显示
+                Promise.resolve(detailTask).then(() =>
+                    fetchUserCrimp(p.lot_no, currentCircuit.circuit_no, p.machine_no));
+                showResult(true, `已添加数据行：LOT <b>${esc(p.lot_no)}</b>，号机 <b>${esc(p.machine_no)}</b>，请填写补线数量`);
+                hidePreview();
+                currentCircuit = null;
+                machineInput.value = '';
+                machineInput.disabled = true;
+                machineInput.placeholder = '号机：先扫回路号后启用';
+                render(searchInput.value);
+                // 焦点切到刚添加的数据行数量框，便于直接填数量
+                const addedInput = document.querySelector(`.qty-edit[data-tmp="${pending[pending.length - 1].tmpId}"]`);
+                if (addedInput) {
+                    addedInput.focus();
+                    addedInput.select();
+                }
+                // 确保焦点返回到回路号输入框，便于扫描下一个
+                circuitInput.focus();
+            }
+
+            machineInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleMachineScan();
+                }
+            });
+            // 扫码枪扫完静止后自动触发回车
+            machineInput.addEventListener('input', function() {
+                clearTimeout(machineTimer);
+                machineTimer = setTimeout(handleMachineScan, SCAN_AUTO_ENTER_MS);
+            });
+
+            // ---------- 手动填写：LOT / 回路号 / 号机 三输入框 ----------
+            // 校验与查重后加入待保存队列（与扫码流程共用 pending）
+            function handleManualAdd() {
+                const lotNo = manualLot.value.trim();
+                const circuitNo = manualCircuit.value.trim();
+                const machineNo = manualMachine.value.trim();
+                if (!lotNo) { showResult(false, '请填写 LOT'); manualLot.focus(); return; }
+                if (!circuitNo) { showResult(false, '请填写 回路号'); manualCircuit.focus(); return; }
+                if (!machineNo) { showResult(false, '请填写 号机'); manualMachine.focus(); return; }
+                // 查重复：已保存 或 待保存
+                const dup = records.find(r => r.lot_no === lotNo && r.machine_no === machineNo);
+                const dupPending = pending.find(x => x.lot_no === lotNo && x.machine_no === machineNo);
+                if (dup || dupPending) {
+                    showResult(false, `该LOT下号机 <b>${esc(machineNo)}</b> 已录入${dupPending ? '（待保存）' : ''}`);
+                    manualMachine.select();
+                    return;
+                }
+                pending.push({
+                    tmpId: 'p' + (++tmpSeq),
+                    lot_no: lotNo,
+                    circuit_no: circuitNo,
+                    machine_no: machineNo,
+                    wire_qty: 0,
+                    scan_at: localStamp()  // 手动添加时刻（UTC+8），保存时按此刻排序落库
+                });
+                showResult(true, `已手动添加：LOT <b>${esc(lotNo)}</b>，回路号 <b>${esc(circuitNo)}</b>，号机 <b>${esc(machineNo)}</b>，请填写补线数量`);
+                manualLot.value = '';
+                manualCircuit.value = '';
+                manualMachine.value = '';
+                render(searchInput.value);
+                // 焦点切到刚添加的数量框直接填数量
+                const addedInput = document.querySelector(`.qty-edit[data-tmp="${pending[pending.length - 1].tmpId}"]`);
+                if (addedInput) {
+                    addedInput.focus();
+                    addedInput.select();
+                } else {
+                    manualLot.focus();
+                }
+                // 立即拉取该回路资料（不等数量填写），同图纸兄弟回路自动带入并提醒
+                const detailTask2 = fetchCircuitDetail(lotNo, circuitNo);
+                // 资料拉取完成后，按匹配键拉取「用户登录维护的压高」；无匹配不显示
+                Promise.resolve(detailTask2).then(() => fetchUserCrimp(lotNo, circuitNo, machineNo));
+                checkSameDrawing(lotNo, circuitNo);
+            }
+
+            manualAddBtn.addEventListener('click', handleManualAdd);
+            // 回车逐项切换：LOT → 回路号 → 号机 → 添加
+            manualLot.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); manualCircuit.focus(); }
+            });
+            manualCircuit.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); manualMachine.focus(); }
+            });
+            manualMachine.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); handleManualAdd(); }
+            });
+
+            // ---------- 保存数据（统一保存入库 → 数据下载页可查询） ----------
+            // 分批提交保存（每批 BATCH_SIZE 条），进度条实时反馈迁移进度。
+            // 每批一次 HTTP 往返 + 一次事务提交，批次过小会显著放大网络与提交开销
+            // （原 10 条/批，500 条需 50 次请求），这里放大到 200 条/批。
+            const BATCH_SIZE = 200;
+            function setProgress(done, total) {
+                if (total <= 0) { saveProgressWrap.classList.add('d-none'); return; }
+                saveProgressWrap.classList.remove('d-none');
+                saveProgressWrap.classList.add('d-flex');
+                const pct = Math.min(100, Math.round(done / total * 100));
+                saveProgressBar.style.width = pct + '%';
+                saveProgressText.textContent = `${done}/${total}`;
+            }
+            async function batchSaveAll(items) {
+                let saved = 0;
+                const total = items.length;
+                setProgress(0, total);
+                for (let i = 0; i < total; i += BATCH_SIZE) {
+                    const chunk = items.slice(i, i + BATCH_SIZE);
+                    let resp;
+                    try {
+                        resp = await fetch('/wire/scan_entry/batch_save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                            body: JSON.stringify({ items: chunk })
+                        });
+                    } catch (netErr) {
+                        // 网络中断：把失败范围标记出来，避免已成功批次被重复保存
+                        const e = new Error('网络连接异常，保存中断，请检查网络后重试');
+                        e.savedCount = saved;
+                        e.failedFrom = i;
+                        throw e;
+                    }
+                    const data = await resp.json().catch(() => ({}));
+                    if (!resp.ok || !data.success) {
+                        const e = new Error(data.error || `第 ${i + 1} 条起保存失败`);
+                        e.savedCount = saved;   // 此前批次已落库条数
+                        e.failedFrom = i;       // 当前批次起始下标（失败重试范围）
+                        throw e;
+                    }
+                    saved += (data.saved || 0);
+                    setProgress(Math.min(i + chunk.length, total), total);
+                }
+                return saved;
+            }
+
+            saveAllBtn.addEventListener('click', async function() {
+                if (!pending.length || saveAllBtn.disabled) return;
+                // 只保存有号机的实际数据行，无号机占位行（同图纸兄弟回路自动带入）不入库
+                const saveItems = pending.filter(p => p.machine_no);
+                if (!saveItems.length) {
+                    showResult(false, '没有可保存的数据（请先扫描号机配对）');
+                    return;
+                }
+                // 数量为0的记录不允许保存
+                const zeroItems = saveItems.filter(p => (parseInt(p.wire_qty, 10) || 0) <= 0);
+                if (zeroItems.length) {
+                    showResult(false, `有 <b>${zeroItems.length}</b> 条记录补线数量为0，请填写数量后再保存（清单中数量为0的行已标红）`);
+                    render(searchInput.value);
+                    return;
+                }
+                saveAllBtn.disabled = true;
+                const originalText = saveAllBtn.innerHTML;
+                saveAllBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>保存中...';
+                try {
+                    const saved = await batchSaveAll(saveItems);
+                    const savedLots = Array.from(new Set(saveItems.map(p => p.lot_no)));
+                    pending = [];
+                    render(searchInput.value); // 清单立即清空（显示「清单已清空」空态）
+                    await loadData();          // 刷新资料缓存
+                    // 资料拉取自查：明确提示每个 LOT 缺少的登录信息（品番 / 京信EO），引导去对应页面补录
+                    const bothMissing = [];   // 品番、京信EO 均未登记
+                    const noPart = [];        // 仅缺品番
+                    const noEo = [];          // 仅缺京信EO
+                    savedLots.forEach(lot => {
+                        const li = lotInfo[lot] || {};
+                        if (!li.part_no && !li.jx_eo) bothMissing.push(lot);
+                        else if (!li.part_no) noPart.push(lot);
+                        else if (!li.jx_eo) noEo.push(lot);
+                    });
+                    const noDtlLots = savedLots.filter(lot => {
+                        const li = lotInfo[lot] || {};
+                        if (!li.part_no || !li.jx_eo) return false;
+                        // 该 LOT 任一电路行取到资料即视为有资料（首行无资料但后续行有资料时不再误报）
+                        const recsOfLot = records.filter(x => x.lot_no === lot && x.circuit_no);
+                        return !recsOfLot.some(rec => {
+                            const cn = rec.circuit_no;
+                            const k = cn
+                                ? `${li.part_no.trim().toUpperCase()}|${li.jx_eo.trim().toUpperCase()}|${cn.trim().toUpperCase()}` : null;
+                            return !!(k && (sublistMap[k] || []).length);
+                        });
+                    });
+                    let tip = `<span class="fw-bold"><i class="fa fa-check-circle me-1"></i>保存成功：共 ${saved} 条已迁移至「数据下载」页（长期保存）</span>`
+                            + `<br><span class="text-success"><i class="fa fa-clipboard-check me-1"></i>清单已清空，可开始新的扫描</span>`;
+                    if (bothMissing.length) {
+                        tip += `<br><span class="text-danger"><i class="fa fa-exclamation-triangle me-1"></i>LOT ${bothMissing.map(esc).join('、')}：<b>品番、京信EO均未登记</b>，请到 <b>LOT登录页</b> 补录后再重新扫描</span>`;
+                    }
+                    if (noPart.length) {
+                        tip += `<br><span class="text-danger"><i class="fa fa-exclamation-triangle me-1"></i>LOT ${noPart.map(esc).join('、')}：<b>缺少品番</b>，请到 <b>LOT登录页</b> 登记品番</span>`;
+                    }
+                    if (noEo.length) {
+                        tip += `<br><span class="text-danger"><i class="fa fa-exclamation-triangle me-1"></i>LOT ${noEo.map(esc).join('、')}：<b>缺少京信EO</b>，请到 <b>LOT登录页</b> 登记京信EO</span>`;
+                    }
+                    if (noDtlLots.length) {
+                        tip += `<br><span class="text-warning"><i class="fa fa-exclamation-circle me-1"></i>LOT ${noDtlLots.map(esc).join('、')}：已登录品番/EO，但资料库(sub_list)中该 品番+EO+回路号 无对应明细（可能未上传该品番资料，或回路号与资料库不一致）</span>`;
+                    }
+                    showResult(true, tip);
+                    circuitInput.focus();
+                } catch (err) {
+                    // 部分批次已成功保存的仍保留在库（每批独立提交）。
+                    // 必须把已落库的条目从待保存清单移除，否则重试会重复入库。
+                    const savedCount = err.savedCount || 0;
+                    if (savedCount > 0) {
+                        pending = saveItems.slice(savedCount);
+                        showResult(false, `${esc(err.message || '网络错误，保存失败')}<br>`
+                            + `<span class="text-success"><i class="fa fa-check-circle me-1"></i>前 ${savedCount} 条已成功入库，`
+                            + `已从清单移除；剩余 ${pending.length} 条请重试</span>`);
+                    } else {
+                        showResult(false, esc(err.message || '网络错误，保存失败'));
+                    }
+                    render(searchInput.value);
+                } finally {
+                    saveAllBtn.innerHTML = originalText;
+                    saveAllBtn.disabled = !pending.length;
+                    saveProgressWrap.classList.add('d-none');
+                    saveProgressWrap.classList.remove('d-flex');
+                }
+            });
+
+            // ---------- 补线数量：修改（局部更新，不整表重渲染） ----------
+            async function updateQty(id, wireQty) {
+                try {
+                    const resp = await fetch('/wire/scan_entry/qty', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify({ id: id, wire_qty: wireQty })
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        const rec = records.find(r => r.id == id);
+                        if (rec) rec.wire_qty = wireQty;
+                        const inputs = document.querySelectorAll(`.qty-edit[data-id="${id}"]`);
+                        inputs.forEach(inp => inp.value = wireQty);
+                        qtyTotal.textContent = `补线合计 ${calcTotal()}`;
+                        return true;
+                    }
+                    showResult(false, esc(data.error || '修改失败'));
+                } catch (err) {
+                    showResult(false, '网络错误，修改失败');
+                }
+                return false;
+            }
+
+            function applyQty(edit, v) {
+                if (edit.dataset.tmp) {
+                    updatePendingQty(edit.dataset.tmp, v);
+                } else if (edit.dataset.id) {
+                    updateQty(edit.dataset.id, v);
+                }
+            }
+
+            // 数量输入框回车：跳动到下一个数量框（统一由「保存数据」按钮入库，不在此处单条保存）
+            tbody.addEventListener('keydown', function(e) {
+                if (e.key !== 'Enter') return;
+                const edit = e.target.closest('.qty-edit');
+                if (!edit) return;
+                e.preventDefault();
+                let v = parseInt(edit.value, 10);
+                if (isNaN(v) || v <= 0) {
+                    showResult(false, '补线数量不能为0，请输入大于0的数值');
+                    edit.focus();
+                    edit.select();
+                    return;
+                }
+                applyQty(edit, v);
+                // 聚焦下一个数量输入框（按 DOM 顺序），方便连续手动录入
+                const all = Array.from(document.querySelectorAll('.qty-edit'));
+                const idx = all.indexOf(edit);
+                const next = all[idx + 1];
+                if (next) {
+                    next.focus();
+                    next.select();
+                } else {
+                    circuitInput.focus();
+                }
+            });
+
+            tbody.addEventListener('click', async function(e) {
+                const del = e.target.closest('.del-btn');
+                if (del) {
+                    if (del.dataset.tmp) {
+                        // 删除待保存数据行
+                        if (!confirm('确定删除该条待保存数据？')) return;
+                        pending = pending.filter(p => p.tmpId != del.dataset.tmp);
+                        render(searchInput.value);
+                        // 删除后焦点返回到回路号输入框，便于继续扫描
+                        circuitInput.focus();
+                        return;
+                    }
+                    if (!confirm(`确定删除该记录？\nLOT: ${del.dataset.lot}\n号机: ${del.dataset.m}`)) return;
+                    try {
+                        const resp = await fetch('/wire/scan_entry/delete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                            body: JSON.stringify({ id: del.dataset.id })
+                        });
+                        const data = await resp.json();
+                        if (data.success) {
+                            await loadData();
+                            // 删除后焦点返回到回路号输入框，便于继续扫描
+                            circuitInput.focus();
+                        } else {
+                            showResult(false, esc(data.error || '删除失败'));
+                        }
+                    } catch (err) {
+                        showResult(false, '网络错误，删除失败');
+                    }
+                }
+            });
+
+            // 数量输入框失焦：同步最新值到待保存队列（仅更新本地数据，统一由「保存数据」按钮入库）
+            tbody.addEventListener('change', function(e) {
+                const edit = e.target.closest('.qty-edit');
+                if (!edit) return;
+                const v = parseInt(edit.value, 10);
+                if (isNaN(v) || v < 0) { edit.value = 0; return; }
+                applyQty(edit, v);
+            });
+
+            // 搜索输入防抖：render() 会重建整张表（含 innerHTML 与 DOM 节点），
+            // 逐字符触发在待保存条数较多时明显卡顿；200ms 合并输入。
+            let _searchTimer = null;
+            searchInput.addEventListener('input', function() {
+                const v = this.value;
+                if (_searchTimer) clearTimeout(_searchTimer);
+                _searchTimer = setTimeout(function() {
+                    _searchTimer = null;
+                    render(v);
+                }, 200);
+            });
+
+            // 一键清除：清空待保存清单及本地缓存
+            document.getElementById('clearPendingBtn').addEventListener('click', function() {
+                if (!pending.length) {
+                    showResult(false, '当前没有未保存的扫描数据');
+                    return;
+                }
+                if (!confirm(`确定清除全部 <${pending.length}> 条未保存的扫描数据？\n清除后不可恢复，请确认已不需要保存。`)) return;
+                pending = [];
+                clearPendingCache();
+                currentCircuit = null;
+                machineInput.value = '';
+                machineInput.disabled = true;
+                machineInput.placeholder = '号机：先扫回路号后启用';
+                render(searchInput.value);
+                showResult(true, '未保存的扫描数据已全部清除，可重新开始扫描');
+                circuitInput.focus();
+            });
+
+            loadData();
+            loadPendingCache();
+            circuitInput.focus();
+        })();
+    </script>
+</body>
+</html>
