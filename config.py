@@ -5,6 +5,39 @@
 
 import os
 
+# sqlite URI 前缀（Windows/Linux 通用，与 Config.get_database_uri 的拼接方式保持一致）
+_SQLITE_PREFIX = 'sqlite:///'
+
+
+def ensure_sqlite_dir(uri):
+    """确保 SQLite 数据库文件所在目录存在。
+
+    背景：instance/ 被 .gitignore 忽略，全新克隆/下载的代码没有该目录，
+    而 SQLite 无法在不存在的目录中创建库文件，会抛出
+    OperationalError: unable to open database file。
+
+    返回 (是否成功, 数据库文件绝对路径, 错误信息)。
+    """
+    if not uri or not str(uri).lower().startswith('sqlite'):
+        return True, '', ''  # MySQL 等非 SQLite 场景无需处理
+
+    raw = str(uri)[len(_SQLITE_PREFIX):] if str(uri).startswith(_SQLITE_PREFIX) else ''
+    if not raw or raw == ':memory:':
+        return True, '', ''  # 内存库无需落盘
+
+    db_path = os.path.abspath(raw)
+    parent = os.path.dirname(db_path)
+    if not parent:
+        return True, db_path, ''
+    try:
+        if not os.path.isdir(parent):
+            os.makedirs(parent, exist_ok=True)
+    except OSError as e:
+        # 目录创建失败（权限不足/路径非法）时返回明确中文提示，便于定位
+        return False, db_path, '无法创建数据库目录 %s: %s' % (parent, e)
+    return True, db_path, ''
+
+
 class Config:
     """基础配置类"""
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'your-secret-key'

@@ -156,9 +156,21 @@ def create_app():
     csrf.init_app(app)
 
     # 使用配置文件
-    from config import config
+    from config import config, ensure_sqlite_dir
     config_name = os.environ.get('FLASK_CONFIG', 'default')
     app.config.from_object(config[config_name])
+
+    # 全新部署（git clone / 下载包）时 instance/ 目录可能不存在（已被 .gitignore 忽略），
+    # SQLite 无法在缺失目录中创建库文件，会报 "unable to open database file"。
+    # 这里在初始化数据库前提前建目录，保证首次启动即可自动建库建表。
+    try:
+        _ok, _db_path, _dir_err = ensure_sqlite_dir(app.config.get('SQLALCHEMY_DATABASE_URI'))
+        if not _ok:
+            _safe_print(f"[DB] 数据库目录准备失败: {_dir_err}")
+        elif _db_path:
+            _safe_print(f"[DB] 数据库文件: {_db_path}")
+    except Exception as _e:
+        _safe_print(f"[DB] 数据库目录检查异常(非致命): {_e}")
 
     # 初始化扩展（关键步骤）
     db.init_app(app)
