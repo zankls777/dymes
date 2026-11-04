@@ -101,6 +101,9 @@ import io
 from werkzeug.datastructures import Headers
 import csv
 from werkzeug.security import check_password_hash, generate_password_hash
+
+# 登录暴力破解防护（进程内限速 + 账号锁定 + 失败清零）
+from security import check_blocked, record_failure, record_success, get_remaining_attempts
 # 移除循环导入，在需要时动态导入
 from flask_login import current_user,login_required,logout_user,login_user
 from functools import wraps
@@ -280,13 +283,26 @@ def resolve_login_redirect(next_url, is_admin, permissions):
     # 取路径部分（去掉查询串和锚点）用于权限匹配
     path_only = path.split('?', 1)[0].split('#', 1)[0]
 
+    # 登录/登出页不应作为跳回目标：
+    # 跳回 /logout 会立即再次清空会话（表现为"登录成功却仍是未登录"），
+    # 跳回 /login 没有意义，统一回退默认落地页
+    if path_only in ('/login', '/logout'):
+        return default_url
+
     # 通过端点反查权限字段，逐一比对 URL 前缀
     for perm_field, endpoint, _name in LANDING_PAGE_ORDER:
         try:
             endpoint_path = url_for(endpoint)
         except Exception:
             continue
-        if path_only == endpoint_path or path_only.startswith(endpoint_path.rstrip('/') + '/'):
+        # 根路径 '/' 仅允许精确匹配：'/'.rstrip('/') 为空串，任意路径都 startswith('/')，
+        # 不特殊处理时 /logout 这类未登记路径会被误判成首页而原样放行（登录死循环根因）
+        if endpoint_path == '/':
+            matched = (path_only == '/')
+        else:
+            matched = (path_only == endpoint_path
+                       or path_only.startswith(endpoint_path.rstrip('/') + '/'))
+        if matched:
             # 管理员或拥有该页面权限时才允许跳回原始地址
             if is_admin or (permissions or {}).get(perm_field):
                 return path
@@ -9839,6 +9855,24 @@ def login():
                 flash('用户名和密码不能为空', 'danger')
                 return redirect(url_for('main.login', next=request.url))
 
+        # ---- 暴力破解防护：按「客户端 IP + 用户名」维度限速与锁定 ----
+        # 在命中数据库前拦截已锁定标识，避免无谓的查询开销与爆破尝试。
+        # 内网直连时 request.remote_addr 即真实客户端 IP；若前置反向代理，
+        # 需自行在代理层设置 X-Forwarded-For 并在此取之（此处保持简单，使用 remote_addr）。
+        _client_ip = request.remote_addr or 'unknown'
+        _identifier = f"{_client_ip}|{username}"
+        _blocked, _retry_after = check_blocked(_identifier)
+        if _blocked:
+            current_app.logger.warning(f"登录被锁定拦截: ip={_client_ip} user={username}")
+            if request.is_json:
+                return jsonify({
+                    'message': f'登录尝试次数过多，请 {_retry_after} 秒后重试',
+                    'retry_after': _retry_after,
+                    'locked': True,
+                }), 429
+            flash(f'登录尝试次数过多，请 {_retry_after} 秒后重试', 'danger')
+            return redirect(url_for('main.login', next=request.url))
+
         # 查询用户
         user = UserInfo.query.filter_by(username=username).first()
 
@@ -9859,6 +9893,14 @@ def login():
             # remember = request.form.get('remember', False)  # 获取是否勾选"记住我"
             # login_user(user, remember=remember)  # 使用Flask-Login的remember参数
             login_user(user)
+            # 防会话固定：认证成功后更换 session 标识（Flask 2.3+ 的 regenerate 保留数据），
+            # 失败则跳过（旧版本无此方法），不影响正常登录。
+            try:
+                session.regenerate()
+            except Exception:
+                pass
+            # 登录成功：清零该标识的失败计数与锁定状态
+            record_success(_identifier)
             # 登录成功，设置会话
             session['user_id'] = user.id
             session['is_admin'] = user.is_admin
@@ -9933,9 +9975,16 @@ def login():
             else:
                 return redirect(landing_url)
         else:
+            # 记录失败并触发限速/锁定；返回剩余尝试次数，帮助用户感知风险
+            record_failure(_identifier)
+            _remaining = get_remaining_attempts(_identifier)
             current_app.logger.warning(f"用户 {username} 登录失败：用户名或密码错误")
             if request.is_json:
-                return jsonify({'message': '用户名或密码错误'}), 401
+                if _remaining > 0:
+                    _msg = f'用户名或密码错误（还可尝试 {_remaining} 次）'
+                else:
+                    _msg = '登录尝试次数过多，请稍后重试'
+                return jsonify({'message': _msg}), 401
             else:
                 flash('用户名或密码错误', 'danger')
                 return redirect(url_for('main.login', next=request.url))
@@ -9959,11 +10008,9 @@ def logout():
     # 清除整个会话
     logout_user()
     session.clear()
-    # 或者使用 session.pop 移除所有会话变量
-    # session.pop('user_id', None)
-    # session.pop('is_admin', None)
-    # flash('已成功退出登录', 'success')
-    return redirect(url_for('main.login', next=request.url))
+    # 注意：不要把登出页自身 URL 塞进 next，否则再次登录会被跳回 /logout
+    # 再次清空会话，形成"登录→登出→登录"死循环
+    return redirect(url_for('main.login'))
 # 用户管理页面路由
 @main_bp.route('/user_management', methods=['GET', 'POST'])
 def user_management():
@@ -10098,7 +10145,11 @@ def user_management():
                 if user.id == session.get('user_id'):
                     logout_user()
                     session.clear()
-                flash('密码修改成功，请重新登录', 'success')
+                    # 会话已清空，必须直接跳转登录页；
+                    # 否则继续向下渲染 user_management 会因 session['user_id'] 缺失抛 500
+                    flash('密码修改成功，请重新登录', 'success')
+                    return redirect(url_for('main.login'))
+                flash('密码修改成功', 'success')
             else:
                 flash('用户不存在', 'error')
         elif action == 'delete_user':
@@ -10196,7 +10247,14 @@ def user_management():
             user_id = request.form.get('user_id')
             user = db.session.get(UserInfo, user_id)
             if user:
-                user.password = generate_password_hash('123456')  # 默认重置密码为123456
+                # 修复：不再写死弱口令 123456。管理员可指定 new_password；
+                # 若不指定则生成 16 位强随机口令并回显给操作者，由其安全交付给该用户。
+                import secrets as _secrets, string as _string
+                _new_pwd = (request.form.get('new_password') or '').strip()
+                if not _new_pwd:
+                    _alphabet = _string.ascii_letters + _string.digits + '!@#$%^&*-_=+'
+                    _new_pwd = ''.join(_secrets.choice(_alphabet) for _ in range(16))
+                    flash(f'已生成强随机密码：{_new_pwd}（请妥善交付给用户）', 'success')
                 # 记录修改者信息
                 current_user_id = session.get('user_id')
                 if hasattr(user, 'updated_by'):
@@ -11627,9 +11685,29 @@ def sub_list():
     cache_key_parts.append(f"per_page={per_page}")
     cache_key = ':'.join(cache_key_parts)
     
-    # 尝试从缓存获取
-    cached_result = query_cache_manager.get_list_cache(cache_key)
-    if cached_result is not None:
+    # 按钮加载：只有「显式触发查询」才查库（点加载/搜索按钮、翻页、或 URL 带搜索条件）。
+    # 直接打开页面时不再对百万行表做 COUNT + 分页查询，避免进入页面即产生全表扫描。
+    # 注意：AJAX 请求一律视为显式加载——前端局部刷新必然是在要数据，
+    # 这样即使客户端脚本尚未刷新（未携带 loaded 标记）也不会拿到空结果。
+    _explicit_load = (
+        request.method == 'POST'
+        or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.args.get('loaded') == '1'
+        or 'page' in request.args
+        or any(v for v in search_params.values() if v)
+    )
+
+    # 尝试从缓存获取（未显式加载时不做任何查询）
+    cached_result = query_cache_manager.get_list_cache(cache_key) if _explicit_load else None
+    if not _explicit_load:
+        items_data = {
+            'items': [],
+            'loaded': False,
+            'pagination': {'page': 1, 'per_page': per_page, 'total': 0, 'pages': 0,
+                           'has_prev': False, 'has_next': False,
+                           'prev_num': None, 'next_num': None},
+        }
+    elif cached_result is not None:
         current_app.logger.debug(f"SubList缓存命中: {cache_key}")
         items_data = cached_result
     else:
@@ -11640,7 +11718,7 @@ def sub_list():
             SubList.SetCode, SubList.Circuit, SubList.Wire, SubList.WireCode,
             SubList.Color, SubList.SQ, SubList.Length_Cut, SubList.Length_Cut2,
             SubList.Tml1, SubList.Tml2, SubList.Rel1, SubList.Rel2,
-            SubList.Seal1, SubList.Seal2, SubList.Remark1
+            SubList.Seal1, SubList.Seal2, SubList.Joint_Points, SubList.Remark1
         ]
 
         from sqlalchemy import func
@@ -11694,7 +11772,8 @@ def sub_list():
         # 直接从元组构建字典，避免 ORM 对象开销
         column_names = ['id', 'VehicleType', 'SubPno', 'EoKsc', 'SetCode', 'Circuit',
                        'Wire', 'WireCode', 'Color', 'SQ', 'Length_Cut', 'Length_Cut2',
-                       'Tml1', 'Tml2', 'Rel1', 'Rel2', 'Seal1', 'Seal2', 'Remark1']
+                       'Tml1', 'Tml2', 'Rel1', 'Rel2', 'Seal1', 'Seal2',
+                       'Joint_Points', 'Remark1']
         items_data = {
             'items': [dict(zip(column_names, row)) for row in items_list],
             'pagination': {
@@ -11729,7 +11808,8 @@ def sub_list():
             if items_list and isinstance(items_list[0], tuple):
                 column_names = ['id', 'VehicleType', 'SubPno', 'EoKsc', 'SetCode', 'Circuit',
                                'Wire', 'WireCode', 'Color', 'SQ', 'Length_Cut', 'Length_Cut2',
-                               'Tml1', 'Tml2', 'Rel1', 'Rel2', 'Seal1', 'Seal2', 'Remark1']
+                               'Tml1', 'Tml2', 'Rel1', 'Rel2', 'Seal1', 'Seal2',
+                               'Joint_Points', 'Remark1']
                 self.items = [type('Item', (), dict(zip(column_names, row)))() for row in items_list]
             elif items_list and isinstance(items_list[0], dict):
                 self.items = [type('Item', (), d)() for d in items_list]
@@ -11775,6 +11855,7 @@ def sub_list():
     return render_template(
         'sub_list.html',
         items=items,
+        loaded=bool(items_data.get('loaded', True)),
         search_params=template_search_params,
         per_page=per_page
     )
@@ -11817,9 +11898,28 @@ def usage_list():
     cache_key_parts.append(f"per_page={per_page}")
     cache_key = ':'.join(cache_key_parts)
     
-    # 尝试从缓存获取
-    cached_result = query_cache_manager.get_list_cache(cache_key)
-    if cached_result is not None:
+    # 按钮加载：只有「显式触发查询」才查库（点加载/搜索按钮、翻页、或 URL 带搜索条件）。
+    # 直接打开页面时不再对五十万行表做 COUNT + 分页查询。
+    # 注意：AJAX 请求一律视为显式加载，避免旧客户端脚本未带 loaded 标记时拿到空结果。
+    _explicit_load = (
+        request.method == 'POST'
+        or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.args.get('loaded') == '1'
+        or 'page' in request.args
+        or any(v for v in search_params.values() if v)
+    )
+
+    # 尝试从缓存获取（未显式加载时不做任何查询）
+    cached_result = query_cache_manager.get_list_cache(cache_key) if _explicit_load else None
+    if not _explicit_load:
+        items_data = {
+            'items': [],
+            'loaded': False,
+            'pagination': {'page': 1, 'per_page': per_page, 'total': 0, 'pages': 0,
+                           'has_prev': False, 'has_next': False,
+                           'prev_num': None, 'next_num': None},
+        }
+    elif cached_result is not None:
         current_app.logger.debug(f"UsageList缓存命中: {cache_key}")
         items_data = cached_result
     else:
@@ -11960,6 +12060,7 @@ def usage_list():
     return render_template(
         'usage_list.html',
         items=items,
+        loaded=bool(items_data.get('loaded', True)),
         search_params=template_search_params,
         per_page=per_page
     )

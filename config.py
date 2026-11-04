@@ -4,9 +4,64 @@
 """
 
 import os
+import secrets
 
 # sqlite URI 前缀（Windows/Linux 通用，与 Config.get_database_uri 的拼接方式保持一致）
 _SQLITE_PREFIX = 'sqlite:///'
+
+
+def _load_secret_key():
+    """安全加载 Flask SECRET_KEY，杜绝可猜测的回退值。
+
+    原实现为 `os.environ.get('SECRET_KEY') or 'your-secret-key'`，
+    该字符串可被直接用于离线伪造任意用户 session（Flask 客户端签名 cookie）。
+    本函数规则：
+    - 优先使用环境变量 SECRET_KEY（部署时通过 .env / 启动脚本注入强随机值）；
+    - 开发环境(dev/default)：未设置时自动生成随机密钥并持久化到项目根目录
+      `.secret_key` 文件，确保开发会话签名稳定且不可被外部猜测；
+    - 生产环境(production)：必须显式设置 SECRET_KEY，缺失则直接启动失败，
+      避免带着弱密钥上线。
+    """
+    env_key = os.environ.get('SECRET_KEY')
+    if env_key:
+        return env_key
+
+    config_name = (os.environ.get('FLASK_CONFIG') or 'development').lower()
+    if config_name == 'production':
+        raise RuntimeError(
+            "生产环境必须设置环境变量 SECRET_KEY（建议: python -c \"import secrets;"
+            "print(secrets.token_hex(32))\" 生成）。禁止带弱密钥/默认密钥上线。"
+        )
+
+    # 开发环境：持久化随机密钥到 .secret_key，单次生成长期复用
+    root = os.path.abspath(os.path.dirname(__file__))
+    key_file = os.path.join(root, '.secret_key')
+    try:
+        if os.path.exists(key_file):
+            with open(key_file, 'r', encoding='utf-8') as f:
+                existing = f.read().strip()
+            if existing:
+                return existing
+        new_key = secrets.token_hex(32)
+        with open(key_file, 'w', encoding='utf-8') as f:
+            f.write(new_key)
+        # 密钥文件应仅本用户可读写
+        try:
+            os.chmod(key_file, 0o600)
+        except OSError:
+            pass
+        return new_key
+    except Exception:
+        # 兜底：内存随机密钥（每次重启失效，仅保证开发可运行）
+        return secrets.token_hex(32)
+
+
+# 已知的弱口令集合：首次/admin 创建或启动时若命中则强制重置为强随机口令
+KNOWN_WEAK_PASSWORDS = [
+    'admin123!', 'admin123', 'admin', '123456', '12345678', 'password',
+    'admin888', 'root', 'root123', 'Admin@123', 'Admin@123!', 'letmein',
+    'qwerty', 'abc123', '111111', '000000', 'admin@123',
+]
 
 
 def ensure_sqlite_dir(uri):
@@ -40,8 +95,21 @@ def ensure_sqlite_dir(uri):
 
 class Config:
     """基础配置类"""
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'your-secret-key'
+    # SECRET_KEY 不再使用可猜测的回退值；缺失时按环境策略处理（见 _load_secret_key）
+    SECRET_KEY = _load_secret_key()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # ===== 会话 Cookie 安全加固 =====
+    # HttpOnly：禁止 JS 读取，缓解 XSS 窃取 session
+    SESSION_COOKIE_HTTPONLY = True
+    # SameSite=Lax：阻止跨站请求携带会话 cookie，缓解 CSRF
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    # Secure：仅 HTTPS 传输（内网若未上 TLS，设为 False；HTTP 部署建议前置反向代理开启 TLS）
+    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
+    # 会话有效期：12 小时无操作即失效，降低失窃会话被长期滥用的风险
+    PERMANENT_SESSION_LIFETIME = int(os.environ.get('SESSION_LIFETIME', '43200'))
+    # 登录后 session 标记为 permanent，使上述过期策略生效
+    SESSION_REFRESH_EACH_REQUEST = True
     
     # Excel导入配置
     EXCEL_AUTO_DEDUP = os.environ.get('EXCEL_AUTO_DEDUP', 'true').lower() == 'true'  # 是否自动去重

@@ -271,6 +271,29 @@ INDEX_STATEMENTS = [
     # 附带 is_frozen 构成覆盖索引，扫描索引即可完成，无需回表。
     "CREATE INDEX IF NOT EXISTS idx_sub_list_pno_eo_vehicle "
     "ON sub_list(SubPno, EoKsc, VehicleType, is_frozen) WHERE deleted=0",
+    # ------------------------------------------------------------------
+    # 高频单字段等值搜索补充 NOCASE 部分索引。
+    # 搜索逻辑用 column.collate('NOCASE') == value 做精确探测后再 LIKE 兜底，
+    # 而原有 Wire/Tml1 等索引是 BINARY 排序规则的全表索引，NOCASE 比较无法复用，
+    # 导致这些字段的等值搜索退化为百万行全表扫描。以下索引与 (deleted=0 AND
+    # is_frozen=0) 的过滤条件完全匹配，可被等值探测直接命中。
+    # ------------------------------------------------------------------
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_wire_nc_active "
+    "ON sub_list(Wire COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_wirecode_nc_active "
+    "ON sub_list(WireCode COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_tml1_nc_active "
+    "ON sub_list(Tml1 COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_tml2_nc_active "
+    "ON sub_list(Tml2 COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_length2_nc_active "
+    "ON sub_list(Length_Cut2 COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_usage_list_detail_kind_nc_active "
+    "ON usage_list(Detail_Kind COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_usage_list_partname_nc_active "
+    "ON usage_list(Part_Name COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_usage_list_usage_nc_active "
+    "ON usage_list(Usage COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
 ]
 
 

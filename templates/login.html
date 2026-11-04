@@ -356,6 +356,26 @@
             errorText.textContent = '';
         }
 
+        // 锁定倒计时：后端返回 429 + retry_after 时调用，期间禁用按钮并实时刷新剩余秒数
+        var _lockTimer = null;
+        function startLockCountdown(sec) {
+            loginBtn.disabled = true;
+            if (_lockTimer) { clearInterval(_lockTimer); }
+            var remain = parseInt(sec, 10) || 0;
+            function tick() {
+                if (remain <= 0) {
+                    if (_lockTimer) { clearInterval(_lockTimer); _lockTimer = null; }
+                    loginBtn.disabled = false;
+                    clearError();
+                    return;
+                }
+                showError('登录尝试次数过多，请 ' + remain + ' 秒后重试');
+                remain -= 1;
+            }
+            tick();
+            _lockTimer = setInterval(tick, 1000);
+        }
+
         // 密码显示 / 隐藏
         toggleBtn.addEventListener('click', function () {
             var isPwd = passwordInput.getAttribute('type') === 'password';
@@ -418,7 +438,11 @@
 
                 var errorData = {};
                 try { errorData = await response.json(); } catch (e) { /* 忽略非 JSON 响应 */ }
-                showError(errorData.message || '登录失败，请重试');
+                if (response.status === 429 && errorData.retry_after) {
+                    startLockCountdown(errorData.retry_after);
+                } else {
+                    showError(errorData.message || '登录失败，请重试');
+                }
             } catch (err) {
                 showError('登录请求失败，请检查网络连接');
             }

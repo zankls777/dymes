@@ -1,94 +1,135 @@
 @echo off
-rem ============================================================
-rem  BOM3 Data Management System - One-click Launcher (Windows)
-rem  Double-click to start the service and open the browser.
-rem  Requires: Python 3.10+ and packages from requirements.txt
-rem
-rem  IMPORTANT: keep this file pure ASCII. Chinese text in a .bat
-rem  file combined with chcp 65001 makes cmd.exe lose byte-sync,
-rem  executing comment fragments as commands (window may flash
-rem  and exit). Use English only in this script.
-rem ============================================================
-chcp 65001 >nul
+setlocal EnableExtensions
+title BOM3 Data Management System
 cd /d "%~dp0"
 
-rem ---------- [1/4] Check Python ----------
-where python >nul 2>nul
-if errorlevel 1 (
-    echo [ERROR] Python not found in PATH. Please install Python 3.10+ first.
-    pause
-    exit /b 1
+rem ============================================================
+rem  BOM3 Data Management System - One-click Launcher (Windows)
+rem
+rem  Why this file exists: on this machine the .py file association points
+rem  to "C:\Windows\py.exe", which does not exist. Double-clicking app.py
+rem  therefore makes Windows fail before Python ever starts, so the console
+rem  flashes and vanishes. This launcher does NOT depend on that association
+rem  or on the `py` launcher: it probes real interpreters in a fixed order and
+rem  verifies the full dependency set before starting. Every failure path ends
+rem  with `pause`, so the window never closes silently.
+rem
+rem  IMPORTANT: keep this file pure ASCII. Chinese text inside a .bat
+rem  combined with chcp 65001 makes cmd.exe lose byte sync and execute
+rem  comment fragments as commands.
+rem ============================================================
+echo ============================================================
+echo   BOM3 Data Management System - Launcher
+echo ============================================================
+echo.
+
+rem ---------- [1/4] Locate a usable Python interpreter ----------
+rem Candidate order:
+rem   1) project .venv             (most reproducible)
+rem   2) python on PATH            (must NOT be the Microsoft Store alias)
+rem   3) py -3.12 (python launcher, only if it really exists)
+rem   4) python.org per-user installs (Python313 .. Python310)
+rem Each candidate must import the full dependency set; the Store alias and
+rem bare interpreters are rejected here instead of failing later at startup.
+set "PROBE=import flask,flask_sqlalchemy,flask_wtf,flask_login,flask_caching,flask_migrate,sqlalchemy,waitress,openpyxl,pandas,numpy,requests,ezdxf"
+set "PYEXE="
+set "PYARG="
+
+if exist "%~dp0.venv\Scripts\python.exe" (
+    "%~dp0.venv\Scripts\python.exe" -c "%PROBE%" >nul 2>nul
+    if not errorlevel 1 set "PYEXE=%~dp0.venv\Scripts\python.exe"
 )
 
-for /f "tokens=*" %%i in ('python -c "import sys;print(sys.version_info>= (3,10))"') do set PY_OK=%%i
-if "%PY_OK%"=="False" (
-    echo [ERROR] Python 3.10 or newer is required.
-    python --version
-    pause
-    exit /b 1
+if not defined PYEXE (
+    python -c "%PROBE%" >nul 2>nul
+    if not errorlevel 1 set "PYEXE=python"
 )
-for /f "tokens=*" %%i in ('python -c "import sys;print('%%d.%%d.%%d' %% sys.version_info[:3])"') do set PY_VER=%%i
-echo [1/4] Python: OK (%PY_VER%)
 
-rem ---------- [2/4] Check dependencies ----------
-rem Verify every direct dependency from requirements.txt; any missing
-rem module breaks app.py at startup or silently degrades features.
-rem Import-name mapping: opencv -^> cv2, Pillow -^> PIL,
-rem rapidocr-onnxruntime -^> rapidocr_onnxruntime
-set MISSING=0
-for %%M in (flask flask_sqlalchemy flask_wtf flask_login flask_caching flask_migrate sqlalchemy waitress werkzeug numpy pandas dateutil pydantic requests aiofiles openpyxl xlrd ezdxf cv2 PIL) do (
-    python -c "import %%M" >nul 2>nul
-    if errorlevel 1 (
-        echo        [%%M] NOT installed
-        set MISSING=1
+if not defined PYEXE (
+    py -3.12 -c "%PROBE%" >nul 2>nul
+    if not errorlevel 1 (
+        set "PYEXE=py"
+        set "PYARG=-3.12"
     )
 )
-rem OCR stack checked separately (package name differs from import name)
-python -c "import zxingcpp" >nul 2>nul || (echo        [zxing-cpp] NOT installed & set MISSING=1)
-python -c "import rapidocr_onnxruntime" >nul 2>nul || (echo        [rapidocr-onnxruntime] NOT installed & set MISSING=1)
-python -c "import onnxruntime" >nul 2>nul || (echo        [onnxruntime] NOT installed & set MISSING=1)
-if "%MISSING%"=="1" (
-    echo [ERROR] Missing dependencies. Run: py -3.12 -m pip install -r requirements.txt
-    pause
-    exit /b 1
+
+if not defined PYEXE (
+    for %%D in ("%LOCALAPPDATA%\Programs\Python\Python313\python.exe" "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" "%ProgramFiles%\Python313\python.exe" "%ProgramFiles%\Python312\python.exe" "%ProgramFiles%\Python311\python.exe" "%ProgramFiles%\Python310\python.exe") do (
+        if not defined PYEXE if exist "%%~D" (
+            "%%~D" -c "%PROBE%" >nul 2>nul
+            if not errorlevel 1 set "PYEXE=%%~D"
+        )
+    )
+)
+
+if not defined PYEXE (
+    echo [ERROR] No usable Python interpreter found.
+    echo.
+    echo         Need Python 3.10+ with the packages from requirements.txt.
+    echo         Install from https://www.python.org/downloads/windows/
+    echo         then run: python -m pip install -r requirements.txt
+    echo.
+    echo         Do NOT use the Microsoft Store Python: its alias cannot see
+    echo         this project's packages and exits immediately when launched.
+    goto :fail
+)
+
+echo [1/4] Interpreter selected: %PYEXE% %PYARG%
+"%PYEXE%" %PYARG% -c "import sys;print('       version:', sys.version.split()[0]);print('       exe    :', sys.executable)"
+
+rem ---------- [2/4] Dependencies ----------
+rem Already verified by the probe above; this line just confirms it in the log.
+"%PYEXE%" %PYARG% -c "%PROBE%" >nul 2>nul
+if errorlevel 1 (
+    echo [ERROR] Dependencies missing for %PYEXE% %PYARG%
+    echo         Run: %PYEXE% %PYARG% -m pip install -r requirements.txt
+    goto :fail
 )
 echo [2/4] Dependencies: OK
 
-rem ---------- [3/4] Port check ----------
-rem Must match PORT in app.py (default 5004); override via APP_PORT.
-if not defined APP_PORT (set PORT=5004) else (set PORT=%APP_PORT%)
-set PORT_BUSY=0
-for /f "tokens=2" %%P in ('netstat -ano ^| findstr ":%PORT% " ^| findstr "LISTENING"') do set PORT_BUSY=1
-if "%PORT_BUSY%"=="1" (
-    echo [3/4] Port %PORT% is busy, killing the old process...
-    for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":%PORT% " ^| findstr "LISTENING"') do (
-        taskkill /F /PID %%P >nul 2>nul
-    )
-    timeout /t 2 >nul
-    echo        Old process terminated.
-) else (
+rem ---------- [3/4] Free the port (stop a stale instance) ----------
+if defined APP_PORT (set "PORT=%APP_PORT%") else (set "PORT=5004")
+netstat -ano | findstr ":%PORT%" | findstr "LISTENING" >nul 2>nul
+if errorlevel 1 (
     echo [3/4] Port %PORT%: free
+) else (
+    echo [3/4] Port %PORT% is busy, stopping the old instance...
+    for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":%PORT%" ^| findstr "LISTENING"') do taskkill /F /PID %%P >nul 2>nul
+    timeout /t 2 >nul
+    echo       Old instance stopped.
 )
 
-rem ---------- [4/4] Start service ----------
-rem Production mode by default (Waitress, single process, no reloader)
-rem to avoid create_app() running twice and double cold-start cost.
-rem For hot-reload debugging, set FLASK_CONFIG=development first.
-if not defined FLASK_CONFIG set FLASK_CONFIG=production
+rem ---------- [4/4] Start the service ----------
+rem Production mode: Waitress, single process, no reloader. The server runs
+rem in THIS window, so a crash stays visible and Ctrl+C stops it cleanly.
+if not defined FLASK_CONFIG set "FLASK_CONFIG=production"
+
 echo [4/4] Starting app.py (mode: %FLASK_CONFIG%)...
-rem cmd /k keeps the server window open so a startup crash stays visible
-rem instead of flashing and disappearing.
-start "BOM3 Server" cmd /k "python app.py"
 echo.
-echo ============================================================
-echo   BOM3 Data Management System started
+echo   URL   : http://localhost:%PORT%
+echo   Log   : logs\dayan.log
+echo   Admin : see instance\admin_initial_password.txt
 echo.
-echo   URL      : http://localhost:%PORT%
-echo   Admin    : admin / admin123!
-echo   Log file : logs/dayan.log
-echo ============================================================
+echo   Keep this window open while using the system.
+echo   Press Ctrl+C to stop the service.
 echo.
-echo Opening browser...
-timeout /t 3 >nul
-start "" http://localhost:%PORT%
+
+rem Open the browser a few seconds later, once the server is listening.
+rem (URL is unquoted on purpose: `start "url"` would treat it as a window title.)
+start "" cmd /c "timeout /t 8 >nul & start http://localhost:%PORT%"
+
+set "PYTHONUNBUFFERED=1"
+set "PYTHONIOENCODING=utf-8"
+"%PYEXE%" %PYARG% app.py
+if errorlevel 1 goto :fail
+
+echo.
+echo Service stopped.
 pause
+exit /b 0
+
+:fail
+echo.
+echo Startup failed. Read the message above, fix it, then run this file again.
+pause
+exit /b 1

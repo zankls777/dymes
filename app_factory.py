@@ -2,6 +2,8 @@
 import os
 import sys
 import time
+import threading
+import secrets
 from datetime import timedelta
 
 from flask import Flask
@@ -10,7 +12,7 @@ from logging.handlers import TimedRotatingFileHandler
 from db import db
 from flask_migrate import Migrate
 from jinja2.filters import FILTERS
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 from flask_wtf import CSRFProtect
 from flask_login import LoginManager, UserMixin
 from flask_caching import Cache
@@ -310,85 +312,21 @@ def create_app():
                 
                 app.logger.info("SQLite连接级性能优化已注册")
 
-                # 预热数据库：执行轻量查询将热点数据加载到 SQLite 缓存。
-                # M-11：改到后台线程并延后启动，避免与首个请求争抢 IO/锁。
-                import threading
-
-                def _warmup_sqlite_cache():
-                    import time as _t
-                    try:
-                        _t.sleep(1)  # 让 create_app 完成、首个请求先行响应
-                        with app.app_context():
-                            # 预热活跃数据 COUNT（匹配实际查询条件：deleted=0 AND is_frozen=0）
-                            sl_count = db.session.execute(db.text(
-                                'SELECT COUNT(*) FROM sub_list WHERE deleted = 0 AND is_frozen = 0'
-                            )).scalar()
-                            ul_count = db.session.execute(db.text(
-                                'SELECT COUNT(*) FROM usage_list WHERE deleted = 0 AND is_frozen = 0'
-                            )).scalar()
-
-                            # 预热第一页数据（LIMIT 10），将热点数据页加载到 SQLite 页缓存
-                            db.session.execute(db.text(
-                                'SELECT id, SubPno, EoKsc FROM sub_list '
-                                'WHERE deleted = 0 AND is_frozen = 0 ORDER BY id LIMIT 10'
-                            ))
-                            db.session.execute(db.text(
-                                'SELECT id, SubPno, EoKsc FROM usage_list '
-                                'WHERE deleted = 0 AND is_frozen = 0 ORDER BY id LIMIT 10'
-                            ))
-                            db.session.commit()
-
-                            # L-12：预热 RW 对比选项接口的覆盖索引 B-tree 页。
-                            # 该接口按 (SubPno,EoKsc,VehicleType) 分组聚合，首次访问需从
-                            # 磁盘冷读 183 万行覆盖索引（2.3GB 库下可达近百秒）；
-                            # 此处后台 LIMIT 200 触发索引首页加载，消除首访冷读成本。
-                            db.session.execute(db.text(
-                                'SELECT SubPno, EoKsc, VehicleType, COUNT(id) AS cnt, MIN(is_frozen) AS mf '
-                                'FROM sub_list WHERE deleted = 0 '
-                                'GROUP BY SubPno, EoKsc, VehicleType ORDER BY SubPno, EoKsc LIMIT 200'
-                            ))
-                            db.session.commit()
-
-                            # 将 COUNT 结果写入查询缓存，避免首次访问时的 COUNT 开销
-                            try:
-                                from query_cache import query_cache_manager
-                                query_cache_manager.set_count('count:sub_list:', sl_count or 0)
-                                query_cache_manager.set_count('count:usage_list:', ul_count or 0)
-                            except Exception as cache_err:
-                                app.logger.debug(f"写入预热计数缓存失败(非致命): {cache_err}")
-
-                            app.logger.info(
-                                f"SQLite缓存预热完成: SubList活跃={sl_count}, UsageList活跃={ul_count}"
-                            )
-                    except Exception as warmup_err:
-                        app.logger.warning(f"SQLite缓存预热失败(非致命): {warmup_err}")
-
-                threading.Thread(target=_warmup_sqlite_cache, daemon=True).start()
-
-                # LOT 登录资料组合（file_info 品番+EO 集合）后台预热：
-                # 服务进程首次触碰 file_info 全表有秒级冷页成本，放入后台线程避免阻塞首请求
-                def _warmup_lot_file_pairs():
-                    import time as _t
-                    try:
-                        _t.sleep(10)  # M-11：错峰延后，避免启动期与其他预热/首请求争抢 IO
-                        t0 = _t.time()
-                        from routes import _get_file_resource_pairs_set
-                        with app.app_context():
-                            pairs = _get_file_resource_pairs_set()
-                        app.logger.info(
-                            f"LOT资料组合后台预热完成: {len(pairs)} 个组合, 耗时 {(_t.time() - t0) * 1000:.0f}ms"
-                        )
-                    except Exception as lot_warmup_err:
-                        app.logger.warning(f"LOT资料组合预热失败(非致命): {lot_warmup_err}")
-
-                threading.Thread(target=_warmup_lot_file_pairs, daemon=True).start()
+                # 启动预热已移除（原 _warmup_sqlite_cache / _warmup_lot_file_pairs）：
+                # 旧逻辑在启动期对百万行表做 COUNT/分组全表扫描，实测拖慢启动 20s+ 且与
+                # 首请求争抢 IO。改为完全按需加载：
+                # - 列表页均已实现服务端分页（WHERE + LIMIT/OFFSET），只查当前页；
+                # - LOT 品番+EO 组合集合由 _get_file_resource_pairs_set() 首次调用时
+                #   懒加载并写入 TTL 缓存（约 2.6 万条字符串，内存占用 MB 级有界）；
+                # - COUNT 结果由 query_cache_manager 首访后缓存（TTL=60s）。
+                # 代价仅为每个缓存的首访冷查询一次，不再有启动期固定开销。
 
                 # 资材品番字典后台同步：usage_list 出现新规资材品番时增量补入字典表。
                 # 该表供「盘点实查」品番选择器查询（1.4 千行 vs usage_list 53 万行）。
                 def _sync_inventory_pno_dict():
                     import time as _t
                     try:
-                        _t.sleep(30)  # M-11：进一步错峰，放在预热链最后一档
+                        _t.sleep(30)  # M-11：错峰延后，避让启动期与首请求
                         with app.app_context():
                             from models.inventory_pno_dict import InventoryPnoDict
                             InventoryPnoDict.sync_from_usage_list(app)
@@ -488,12 +426,46 @@ def create_app():
 
         # 创建默认管理员账户（账号密码由 app.py 集中配置，经环境变量注入）
         # 统一读取环境变量，确保开发/生产共用同一套凭据且可被集中修改
+        # 注意：不再使用 'admin123!' 之类的硬编码弱口令作为回退值（admin.py 已保证非空）
         _admin_user = os.environ.get('ADMIN_USERNAME', 'admin')
-        _admin_pass = os.environ.get('ADMIN_PASSWORD', 'admin123!')
+        _admin_pass = os.environ.get('ADMIN_PASSWORD') or ''
+
+        # 本地工具：生成强随机口令并落盘（用于强制重置历史弱口令）
+        def _generate_strong_password(length=16):
+            import string as _string
+            _alphabet = _string.ascii_letters + _string.digits + '!@#$%^&*-_=+'
+            return ''.join(secrets.choice(_alphabet) for _ in range(length))
+
+        def _write_admin_pwd_file(pwd):
+            try:
+                _root = os.path.abspath(os.path.dirname(__file__))
+                _inst = os.path.join(_root, 'instance')
+                os.makedirs(_inst, exist_ok=True)
+                _path = os.path.join(_inst, 'admin_initial_password.txt')
+                with open(_path, 'w', encoding='utf-8') as _f:
+                    _f.write(pwd)
+                try:
+                    os.chmod(_path, 0o600)
+                except OSError:
+                    pass
+            except Exception as _we:
+                app.logger.warning(f"写入管理员初始口令文件失败(非致命): {_we}")
+
         admin = UserInfo.query.filter_by(username=_admin_user).first()
         if not admin:
             # 新建管理员并分配全部权限
-            admin = UserInfo(username=_admin_user, password=generate_password_hash(_admin_pass), is_admin=True)
+            # 若环境变量提供的口令为空或命中已知弱口令，强制改用强随机并落盘，
+            # 避免部署者误配弱口令（如旧版默认的 admin123!）直接上线。
+            from config import KNOWN_WEAK_PASSWORDS
+            _init_pass = _admin_pass
+            if (not _admin_pass) or (_admin_pass in KNOWN_WEAK_PASSWORDS):
+                _init_pass = _generate_strong_password()
+                _write_admin_pwd_file(_init_pass)
+                app.logger.critical(
+                    "安全告警：管理员初始口令为空或命中已知弱口令，已自动改为强随机口令并写入 "
+                    "instance/admin_initial_password.txt，请尽快登录「用户管理」修改！"
+                )
+            admin = UserInfo(username=_admin_user, password=generate_password_hash(_init_pass), is_admin=True)
             db.session.add(admin)
             db.session.commit()
 
@@ -544,7 +516,40 @@ def create_app():
         else:
             # 账号已存在：同步更新密码与管理员标记，保证 app.py 中的配置修改即时生效；
             # 权限记录在首次创建时已分配，此处不再重复插入（避免唯一约束冲突）
-            admin.password = generate_password_hash(_admin_pass)
+
+            # 启动期强制重置历史遗留的已知弱口令（如旧版默认 admin123!、123456 等）。
+            # 必须在覆盖 admin.password 之前检测旧哈希，否则无法判断是否需要强制重置。
+            # 这能清除已部署实例中仍使用弱口令的 admin 账号，是本次修复的关键收敛动作。
+            from config import KNOWN_WEAK_PASSWORDS
+            _legacy_weak = any(
+                check_password_hash(admin.password, w) for w in KNOWN_WEAK_PASSWORDS
+            )
+
+            # 若环境变量未提供口令（空），沿用 app.py 已生成的强随机初始口令
+            _effective_pass = _admin_pass or _admin_user  # 兜底不应触达（app.py 已保证非空）
+            if not _admin_pass:
+                # 复用 instance/admin_initial_password.txt 中的值（由 app.py 生成/维护）
+                try:
+                    _kp = os.path.join(os.path.abspath(os.path.dirname(__file__)),
+                                       'instance', 'admin_initial_password.txt')
+                    if os.path.exists(_kp):
+                        with open(_kp, 'r', encoding='utf-8') as _kf:
+                            _effective_pass = _kf.read().strip() or _effective_pass
+                except Exception:
+                    pass
+
+            if _legacy_weak:
+                # 命中已知弱口令：无视环境变量设定，强制重置为强随机并落盘，要求立即改密
+                _new_pwd = _generate_strong_password()
+                admin.password = generate_password_hash(_new_pwd)
+                _write_admin_pwd_file(_new_pwd)
+                app.logger.critical(
+                    "安全告警：检测到管理员账号 '%s' 仍使用已知弱口令，已在启动时强制重置为"
+                    "强随机口令，新口令已写入 instance/admin_initial_password.txt，请立即登录修改！",
+                    _admin_user,
+                )
+            else:
+                admin.password = generate_password_hash(_effective_pass)
             admin.is_admin = True
             db.session.commit()
 

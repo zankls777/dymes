@@ -386,7 +386,7 @@ class TableRenderer {
             'VehicleType', 'SubPno', 'EoKsc', 'SetCode', 'Circuit', 
             'Wire', 'WireCode', 'Color', 'SQ', 'Length_Cut', 
             'Length_Cut2', 'Tml1', 'Tml2', 'Rel1', 'Rel2', 
-            'Seal1', 'Seal2', 'Remark1'
+            'Seal1', 'Seal2', 'Joint_Points', 'Remark1'
         ];
         
         // 默认映射（usage_list字段）
@@ -557,7 +557,7 @@ window.pageLoader = new PageLoadingManager();
 const SUBLIST_FIELDS = ['VehicleType', 'SubPno', 'EoKsc', 'SetCode', 'Circuit',
     'Wire', 'WireCode', 'Color', 'SQ', 'Length_Cut',
     'Length_Cut2', 'Tml1', 'Tml2', 'Rel1', 'Rel2',
-    'Seal1', 'Seal2', 'Remark1'];
+    'Seal1', 'Seal2', 'Joint_Points', 'Remark1'];
 
 const USAGELIST_FIELDS = ['VehicleType', 'SubPno', 'EoKsc', 'Comp_Kind', 'Detail_Kind',
     'KscPno', 'Part_Name', 'Usage', 'Length'];
@@ -586,6 +586,27 @@ function replaceTableBody(items, fields) {
 
     tbody.innerHTML = '';
     tbody.appendChild(fragment);
+}
+
+
+/**
+ * 首次「按钮加载」完成后切换到已加载视图。
+ * 页面初始为占位提示（load-placeholder）+ 隐藏表格/分页，避免打开页面就拉全量数据；
+ * 任一查询（加载/搜索/翻页）返回后调用本函数恢复表格显示。
+ * @param {number} rowCount 本次返回的行数，用于决定是否显示「没有找到匹配的数据」
+ */
+function revealLoadedTable(rowCount) {
+    const placeholder = document.getElementById('load-placeholder');
+    if (placeholder) placeholder.classList.add('d-none');
+
+    const table = document.getElementById('data-table');
+    if (table) table.classList.remove('d-none');
+
+    const nav = document.getElementById('pagination-nav');
+    if (nav) nav.classList.remove('d-none');
+
+    const empty = document.getElementById('empty-state');
+    if (empty) empty.classList.toggle('d-none', (rowCount || 0) > 0);
 }
 
 
@@ -711,6 +732,8 @@ function initSubListPage(options = {}) {
     let abortController = null;
     
     async function performSearch(params = {}) {
+        // 标记为「显式加载」：服务端据此才真正查库（未带该标记的首次进入不查询）
+        params = Object.assign({ loaded: '1' }, params);
         // 取消上一次未完成的请求，避免旧响应覆盖新结果（竞态修复）
         if (abortController) {
             abortController.abort();
@@ -728,6 +751,7 @@ function initSubListPage(options = {}) {
             
             if (response && response.items) {
                 replaceTableBody(response.items, SUBLIST_FIELDS);
+                revealLoadedTable(response.items.length);
                 
                 // 更新分页信息
                 if (response.pagination) {
@@ -841,6 +865,8 @@ function initUsageListPage(options = {}) {
     let abortController = null;
     
     async function performSearch(params = {}) {
+        // 标记为「显式加载」：服务端据此才真正查库（未带该标记的首次进入不查询）
+        params = Object.assign({ loaded: '1' }, params);
         // 取消上一次未完成的请求，避免旧响应覆盖新结果（竞态修复）
         if (abortController) {
             abortController.abort();
@@ -858,6 +884,7 @@ function initUsageListPage(options = {}) {
             
             if (response && response.items) {
                 replaceTableBody(response.items, USAGELIST_FIELDS);
+                revealLoadedTable(response.items.length);
                 
                 if (response.pagination) {
                     updatePaginationControls(response.pagination, '/usage_list');
