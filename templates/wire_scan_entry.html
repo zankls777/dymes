@@ -466,6 +466,16 @@
                 _detailNegative.clear();
                 _sameDrawingDone.clear();
                 render(searchInput.value);
+                // 列表加载后，为所有已保存的号机记录批量拉取「用户登录维护的压高」
+                // （与扫描新行同一匹配规则；命中后 fetchUserCrimp 内部自动 render 刷新）
+                const seenCrimp = new Set();
+                records.forEach(r => {
+                    if (!r.machine_no || !r.circuit_no) return;
+                    const k = `${r.lot_no}|${r.circuit_no}|${r.machine_no}`;
+                    if (seenCrimp.has(k)) return;
+                    seenCrimp.add(k);
+                    fetchUserCrimp(r.lot_no, r.circuit_no, r.machine_no);
+                });
             }
 
             function esc(s) {
@@ -608,16 +618,31 @@
                         }
                         let displayItems;
                         if (machineItems.length) {
+                            // 号机行优先显示；无号机的回路行中，仅丢弃「与号机行同回路」的占位行，
+                            // 不同回路的兄弟行（同图纸带入、待各自扫号机）必须保留显示
+                            const machineCircuits = new Set(
+                                machineItems.map(m => (m.circuit_no || '').trim().toUpperCase()));
+                            const siblingRows = g.items.filter(r => !r.machine_no
+                                && !machineCircuits.has((r.circuit_no || '').trim().toUpperCase()));
                             displayItems = machineItems.map(r => ({
                                 ...r,
                                 circuit_no: r.circuit_no || (circuitRow ? circuitRow.circuit_no : null)
-                            }));
+                            })).concat(siblingRows);
                         } else {
                             displayItems = g.items;
                         }
                         let firstOfLot = true;
                         displayItems.forEach(r => {
-                            const detailList = dtlRows.length ? dtlRows : [null];
+                            // 每行按自身回路号取明细（LOT|回路 稳定键优先），
+                            // 行级无明细时回退组级共享 dtlRows（同回路占位场景保持原行为）
+                            const rowCirc = (r.circuit_no || '').trim().toUpperCase();
+                            let rowDtlRows = rowCirc
+                                ? (sublistByLot[`${g.lot.trim()}|${rowCirc}`] || []) : [];
+                            if (!rowDtlRows.length && partNo && eoVal && rowCirc) {
+                                rowDtlRows = sublistMap[`${partNo.trim().toUpperCase()}|${eoVal.trim().toUpperCase()}|${rowCirc}`] || [];
+                            }
+                            if (!rowDtlRows.length) rowDtlRows = dtlRows;
+                            const detailList = rowDtlRows.length ? rowDtlRows : [null];
                             detailList.forEach(dtl => {
                                 no++;
                                 tbody.appendChild(rowItem(g, r, li, partNo, eoVal, vehicle,
@@ -672,7 +697,8 @@
                     ? ' <span class="badge bg-warning text-dark" title="该线束资料为已冻结归档版本（只读），可正常拉取参照"><i class="fa fa-lock"></i> 冻结</span>'
                     : '';
                 // 数量仅允许手动输入，禁用加减按钮（统一保存入口负责入库）
-                const qtyInput = isCircuitRow
+                // 待保存的无号机兄弟回路行（同图纸带入）同样允许先填数量，配号机后一并入库
+                const qtyInput = (isCircuitRow && !isPending)
                     ? ''
                     : `<input type="number" class="form-control form-control-sm qty-input qty-edit${isPending && (parseInt(r.wire_qty, 10) || 0) <= 0 ? ' qty-zero-warn' : ''}" data-tmp="${isPending ? qid : ''}" data-id="${isPending ? '' : qid}" value="${esc(r.wire_qty)}" min="1" step="1">`;
                 const canDelete = {{ 'true' if session.get('is_admin') or permissions.get('can_wire_scan_entry_delete') else 'false' }};
@@ -795,7 +821,8 @@
                 const detailArr = sublistByLot[`${String(lotNo).trim()}|${String(circuitNo).trim().toUpperCase()}`] || [];
                 if (!detailArr.length || !machineNo) return Promise.resolve();
                 const reqDetail = detailArr.map(d => ({
-                    circuit: d.circuit, color: d.color, sq: d.sq, tml1: d.tml1, tml2: d.tml2
+                    circuit: d.circuit, color: d.color, sq: d.sq, tml1: d.tml1, tml2: d.tml2,
+                    wire: d.wire  // 线质为匹配键必填组成部分（缺省会导致永不命中）
                 }));
                 const task = (async function() {
                     try {
@@ -1029,15 +1056,28 @@
                     machineInput.select();
                     return;
                 }
-                // 号机允许重复录入，不做查重限制
-                pending.push({
-                    tmpId: 'p' + (++tmpSeq),
-                    lot_no: p.lot_no,
-                    circuit_no: currentCircuit.circuit_no,
-                    machine_no: p.machine_no,
-                    wire_qty: 0,
-                    scan_at: localStamp()  // 扫描瞬间时间（UTC+8），保存时按此刻排序落库
-                });
+                // 号机允许重复录入，不做查重限制。
+                // 若 pending 已有同 LOT+回路 的无号机占位行（同图纸兄弟回路带入），
+                // 则直接为该占位行配上号机（保留已填数量），避免产生重复行
+                const circUp = (currentCircuit.circuit_no || '').trim().toUpperCase();
+                const existRow = pending.find(x => x.lot_no === p.lot_no && !x.machine_no
+                    && (x.circuit_no || '').trim().toUpperCase() === circUp);
+                let targetTmpId;
+                if (existRow) {
+                    existRow.machine_no = p.machine_no;
+                    existRow.scan_at = localStamp();  // 配上号机时刻（UTC+8），保存时按此刻排序落库
+                    targetTmpId = existRow.tmpId;
+                } else {
+                    pending.push({
+                        tmpId: 'p' + (++tmpSeq),
+                        lot_no: p.lot_no,
+                        circuit_no: currentCircuit.circuit_no,
+                        machine_no: p.machine_no,
+                        wire_qty: 0,
+                        scan_at: localStamp()  // 扫描瞬间时间（UTC+8），保存时按此刻排序落库
+                    });
+                    targetTmpId = pending[pending.length - 1].tmpId;
+                }
                 // 号机配对成功后再次确认资料已拉取（若回路号阶段 LOT 尚未登录，此处补齐）
                 const detailTask = fetchCircuitDetail(p.lot_no, currentCircuit.circuit_no);
                 // 资料拉取完成后，按匹配键拉取「用户登录维护的压高」；无匹配不显示
@@ -1050,8 +1090,8 @@
                 machineInput.disabled = true;
                 machineInput.placeholder = '号机：先扫回路号后启用';
                 render(searchInput.value);
-                // 焦点切到刚添加的数据行数量框，便于直接填数量
-                const addedInput = document.querySelector(`.qty-edit[data-tmp="${pending[pending.length - 1].tmpId}"]`);
+                // 焦点切到刚配对的数据行数量框，便于直接填数量
+                const addedInput = document.querySelector(`.qty-edit[data-tmp="${targetTmpId}"]`);
                 if (addedInput) {
                     addedInput.focus();
                     addedInput.select();

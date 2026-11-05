@@ -332,7 +332,7 @@
                         seen.add(r.lot_no);
                         const machine = String(r.machine_no || '').split('$')[0];
                         rows.push({
-                            _id: r.id, _raw: r, date: formatUTC8(r.created_at),
+                            _id: r.id, _raw: r, _dtl: dtl, date: formatUTC8(r.created_at),
                             vehicle: li.vehicle_type || '', seq: seq,
                             part_no: li.part_no || '', eo: li.jx_eo || '',
                             lot_no: r.lot_no, circuit_no: r.circuit_no || '',
@@ -342,11 +342,52 @@
                             qty: r.wire_qty, div_type: wireDivType(dtl),
                             terminal: dtl ? `${dtl.tml1 || ''}\n${dtl.tml2 || ''}` : '',
                             machine: machine,
-                            crimp: dtl ? `${dtl.strip1 || ''}\n${dtl.strip2 || ''}` : '',
+                            crimp: '',
                         });
                     });
                 });
                 return rows;
+            }
+
+            // 按匹配键拉取「压高登录」维护的压高：回路号+号机(去$编号)+线质+颜色+规格+双端子全一致才命中，
+            // 命中行覆盖压高列，未命中行保持空白（与扫描录入页一致：不匹配即不显示）
+            async function applyUserCrimp(rows) {
+                // 按唯一 (lot_no|circuit_no|machine_no原始值) 分组，每组一次批量请求
+                const groups = new Map();
+                rows.forEach(row => {
+                    const m = row._raw.machine_no;
+                    if (!m || !row._dtl) return;
+                    const key = `${row.lot_no}|${(row._raw.circuit_no || '').trim()}|${m}`;
+                    let g = groups.get(key);
+                    if (!g) {
+                        g = { lot_no: row.lot_no, circuit_no: row._raw.circuit_no || '', machine_no: m, rows: [] };
+                        groups.set(key, g);
+                    }
+                    g.rows.push(row);
+                });
+                const tasks = [];
+                groups.forEach(g => {
+                    const reqDetail = g.rows.map(row => {
+                        const d = row._dtl;
+                        // 线质为匹配键必填组成部分（缺省会导致永不命中）
+                        return { circuit: d.circuit, color: d.color, sq: d.sq, tml1: d.tml1, tml2: d.tml2, wire: d.wire };
+                    });
+                    tasks.push(
+                        fetch('/wire/crimp_login/match', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                            body: JSON.stringify({ lot_no: g.lot_no, circuit_no: g.circuit_no, machine_no: g.machine_no, detail: reqDetail })
+                        }).then(r => r.json()).then(data => {
+                            if (!(data.success && data.crimp)) return;
+                            // 返回索引与 reqDetail（即 g.rows）一一对应
+                            Object.keys(data.crimp).forEach(idx => {
+                                const row = g.rows[parseInt(idx, 10)];
+                                if (row) row.crimp = `${data.crimp[idx].strip1 || ''}\n${data.crimp[idx].strip2 || ''}`;
+                            });
+                        }).catch(() => { /* 静默失败：压高列保持空白，不影响主数据展示 */ })
+                    );
+                });
+                await Promise.all(tasks);
             }
 
             async function doQuery(silent) {
@@ -365,6 +406,8 @@
                     const data = await resp.json();
                     if (!data.success) throw new Error(data.error || '查询失败');
                     currentRows = processResp(data);
+                    // 先拉取登录压高再渲染，避免先显示快照值再被清空的闪烁
+                    await applyUserCrimp(currentRows);
                     renderRows(currentRows);
                     try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch(e) {}
                 } catch (err) {
