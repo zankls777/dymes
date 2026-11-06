@@ -554,7 +554,10 @@ def create_app():
             db.session.commit()
 
     # 设置日志：按天轮转，保留30天
-    # 首先添加控制台输出，确保开发时能看到日志
+    # 防死锁（2026-11-06 实发故障）：控制台/文件日志统一走 QueueHandler + QueueListener
+    # 异步写入。直接挂 StreamHandler 时，若 Windows 控制台被鼠标选中（QuickEdit 暂停
+    # 输出）或 stderr 管道缓冲区写满，emit 会在持有日志锁期间永久阻塞，随后所有
+    # 请求线程在 logging 锁上排队，整个服务假死（接口无响应、页面无法刷新）。
     console_handler = logging.StreamHandler()
     # 优化日志格式，添加更多结构化信息
     console_formatter = logging.Formatter(
@@ -574,7 +577,9 @@ def create_app():
     # 关键：关闭向 root logger 的传播，否则 app.logger 会先把日志发给自己 handler，
     # 再传给 root（被 logging 隐式默认 handler 捕获），导致每条日志在 server.log 里出现两遍
     app.logger.propagate = False
-    app.logger.addHandler(console_handler)
+
+    # 实际写入目标 handler 列表，稍后统一挂到异步队列监听器上
+    _log_handlers = [console_handler]
     
     # 同步 werkzeug 到控制台
     werkzeug_logger = logging.getLogger('werkzeug')
@@ -699,7 +704,7 @@ def create_app():
         file_handler.setFormatter(console_formatter)
         file_handler.setLevel(log_level_value)
 
-        app.logger.addHandler(file_handler)
+        _log_handlers.append(file_handler)
         # 注意：不要将同一个handler添加到多个logger，会导致重复日志
         # werkzeug_logger.addHandler(file_handler)  # 移除这行避免重复日志
         
@@ -725,6 +730,20 @@ def create_app():
     except Exception as e:
         _safe_print(f"文件日志配置失败，仅使用控制台输出: {e}")
         _safe_print(f"   建议检查日志目录权限: {log_dir}")
+
+    # 异步日志总线：请求线程只做「入队」（内存操作，永不阻塞），
+    # 由 QueueListener 守护线程把记录逐个写到控制台/文件 handler。
+    # 即使底层输出（控制台/磁盘）卡死，也只影响监听线程，不会拖垮业务线程。
+    # 注意：监听线程需持有模块级引用，防止被 GC 回收后日志静默丢失。
+    import queue as _log_queue_mod
+    from logging.handlers import QueueHandler as _QueueHandler, QueueListener as _QueueListener
+
+    _log_record_queue = _log_queue_mod.Queue(-1)
+    _log_listener = _QueueListener(_log_record_queue, *_log_handlers, respect_handler_level=True)
+    _log_listener.start()
+    app.logger.addHandler(_QueueHandler(_log_record_queue))
+    # 挂到 app 上保活（create_app 可能被调用多次，避免旧监听器线程泄漏）
+    app.extensions.setdefault('log_listener', _log_listener)
 
     # 添加全局异常处理器
     def _wants_json():
