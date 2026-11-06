@@ -1,174 +1,32 @@
-<!-- 左侧响应式侧边栏导航（替代原顶部导航）：天蓝色主题 + 可靠折叠/展开 -->
+<!-- 左侧响应式侧边栏导航：天蓝色主题 + 可靠折叠/展开；分组与条目由后端按权限生成 -->
 <aside class="app-sidebar" id="appSidebar">
     <div class="app-sidebar-header">
-        <a class="app-brand app-brand-title" id="appBrand" href="{{ url_for('main.index') }}"><i class="fa fa-fire"></i> 大焱资料管理系统</a>
+        <a class="app-brand app-brand-title" id="appBrand" href="{{ url_for('main.index') }}"><i class="fa fa-fire"></i><span class="app-brand-text">大焱资料管理系统</span></a>
         <button class="app-sidebar-btn" id="appSidebarCollapse" type="button" title="收起/展开侧边栏" aria-label="收起/展开侧边栏">
             <i class="fa fa-angle-double-left" id="collapseIcon"></i>
         </button>
     </div>
 
     <nav class="app-sidebar-nav">
-        {% set permissions = session.get('user_permissions', {}) %}
-
-        <div class="app-nav-group">资料管理</div>
-        {% if session.get('is_admin') or permissions.get('can_sub_list') or permissions.get('can_usage_list') %}
-        <div class="app-nav-sub">
-            <a class="app-nav-link app-nav-toggle" href="#"><i class="fa fa-list-ul"></i><span>清单列表</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
-            <div class="app-nav-submenu">
-                {% if session.get('is_admin') or permissions.get('can_sub_list') %}
-                <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.sub_list') }}" data-tab-title="SubList"><span>SubList</span></a>
-                {% endif %}
-                {% if session.get('is_admin') or permissions.get('can_usage_list') %}
-                <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.usage_list') }}" data-tab-title="UsageList"><span>UsageList</span></a>
-                {% endif %}
-            </div>
-        </div>
-        {% endif %}
-        {% if session.get('is_admin') or permissions.get('can_file_management') %}
-        <a class="app-nav-link" href="{{ url_for('main.file_management') }}" data-tab-title="文件管理"><i class="fa fa-folder"></i><span>文件管理</span></a>
-        {% endif %}
-        {% if session.get('is_admin') or permissions.get('can_nas_file_search') %}
-        <a class="app-nav-link" href="{{ url_for('nas.file_search_page') }}" data-tab-title="NAS文件搜索"><i class="fa fa-server"></i><span>NAS文件搜索</span></a>
-        {% endif %}
-        {% if session.get('is_admin') or permissions.get('can_file_comparison') %}
-        <div class="app-nav-sub">
-            <a class="app-nav-link app-nav-toggle" href="#"><i class="fa fa-code-fork"></i><span>数据对比</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
-            <div class="app-nav-submenu">
-                <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.file_comparison') }}" data-tab-title="数据差异对比"><span>数据差异对比</span></a>
-                <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.rw_comparison') }}" data-tab-title="RW核对"><span>RW核对</span></a>
-                <a class="app-nav-link app-nav-sub-link" href="{{ url_for('cad.rw_cad_page') }}" data-tab-title="RW图纸产出"><span>RW图纸产出</span></a>
-            </div>
-        </div>
-        {% endif %}
-
-        {% if session.get('user_id') %}
-            {% if session.get('is_admin') or permissions.get('can_products') or permissions.get('can_material_download') or permissions.get('can_material_calculator') %}
-            <div class="app-nav-group">成品关联</div>
+        {# 菜单数据由 utils/sidebar_menu.py 注入（context_processor: sidebar_menu）：
+           已按当前用户权限过滤，分组标题与条目归属可由管理员在“菜单管理”页调整。 #}
+        {% for group in (sidebar_menu or []) %}
+        <div class="app-nav-group">{{ group.title }}</div>
+        {% for item in group.entries %}
+            {% if item.type == 'sub' %}
             <div class="app-nav-sub">
-                <a class="app-nav-link app-nav-toggle" href="#"><i class="fa fa-cube"></i><span>成品关联</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
+                <a class="app-nav-link app-nav-toggle" href="#"><i class="fa {{ item.icon }}"></i><span>{{ item.title }}</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
                 <div class="app-nav-submenu">
-                    {% if session.get('is_admin') or permissions.get('can_products') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.products') }}" data-tab-title="成品"><span>成品</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_material_download') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.material_download') }}" data-tab-title="资材量下载"><span>资材量下载</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_material_calculator') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.tape_calculator') }}" data-tab-title="胶带换算"><span>胶带换算</span></a>
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.sheet_calculator') }}" data-tab-title="皮子换算"><span>皮子换算</span></a>
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.tube_calculator') }}" data-tab-title="管换算"><span>管换算</span></a>
-                    {% endif %}
+                    {% for child in item.children %}
+                    <a class="app-nav-link app-nav-sub-link" href="{{ child.url }}" data-tab-title="{{ child.tab }}"><span>{{ child.title }}</span></a>
+                    {% endfor %}
                 </div>
             </div>
+            {% else %}
+            <a class="app-nav-link" href="{{ item.url }}" data-tab-title="{{ item.tab }}"><i class="fa {{ item.icon }}"></i><span>{{ item.title }}</span></a>
             {% endif %}
-
-            {% if session.get('is_admin') or permissions.get('can_wire_lot_login') or permissions.get('can_wire_scan_entry') or permissions.get('can_wire_data_download') or permissions.get('can_wire_crimp_login') %}
-            <div class="app-nav-group">补线打端子</div>
-            <div class="app-nav-sub">
-                <a class="app-nav-link app-nav-toggle" href="#"><i class="fa fa-scissors"></i><span>补线打端子</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
-                <div class="app-nav-submenu">
-                    {% if session.get('is_admin') or permissions.get('can_wire_lot_login') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.wire_lot_login') }}" data-tab-title="LOT登录"><span>LOT登录</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_wire_scan_entry') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.wire_scan_entry') }}" data-tab-title="扫描录入"><span>扫描录入</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_wire_data_download') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.wire_data_download') }}" data-tab-title="数据下载"><span>数据下载</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_wire_crimp_login') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.wire_crimp_login') }}" data-tab-title="压高登陆"><span>压高登陆</span></a>
-                    {% endif %}
-                </div>
-            </div>
-            {% endif %}
-
-            {% if session.get('is_admin') or permissions.get('can_material_inbound_daily') or permissions.get('can_material_inbound') or permissions.get('can_corrugated_location') or permissions.get('can_inventory_login') or permissions.get('can_inventory_check') or permissions.get('can_inventory_summary') or permissions.get('can_defective_login') or permissions.get('can_defective_export') %}
-            <div class="app-nav-group">资材与盘点</div>
-            <div class="app-nav-sub">
-                <a class="app-nav-link app-nav-toggle" href="#"><i class="fa fa-cubes"></i><span>资材管理</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
-                <div class="app-nav-submenu">
-                    {% if session.get('is_admin') or permissions.get('can_material_inbound_daily') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.material_inbound_daily') }}" data-tab-title="资材入库登录"><span>资材入库登录</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_material_inbound') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.material_inbound') }}" data-tab-title="仓库资材入库(移动端)"><span>仓库资材入库(移动端)</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_corrugated_location') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.corrugated_location') }}" data-tab-title="波纹管位置录入"><span>波纹管位置录入</span></a>
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.corrugated_location_search') }}" data-tab-title="波纹管查询(移动端)"><span>波纹管查询(移动端)</span></a>
-                    {% endif %}
-                </div>
-            </div>
-            {% if session.get('is_admin') or permissions.get('can_inventory_login') or permissions.get('can_inventory_check') or permissions.get('can_inventory_summary') or permissions.get('can_defective_login') %}
-            <div class="app-nav-sub">
-                <a class="app-nav-link app-nav-toggle" href="#"><i class="fa fa-clipboard"></i><span>盘点查询</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
-                <div class="app-nav-submenu">
-                    {% if session.get('is_admin') or permissions.get('can_inventory_login') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.inventory_login') }}" data-tab-title="盘点数据登录"><span>盘点数据登录</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_inventory_check') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.inventory_check') }}" data-tab-title="盘点实查（移动端）"><span>盘点实查（移动端）</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_defective_login') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.defective_login_page') }}" data-tab-title="不良品登录(移动端)"><span>不良品登录(移动端)</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_defective_export') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.defective_export_page') }}" data-tab-title="不良品清单导出"><span>不良品清单导出</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_inventory_summary') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('main.inventory_summary') }}" data-tab-title="数据汇总"><span>数据汇总</span></a>
-                    {% endif %}
-                </div>
-            </div>
-            {% endif %}
-            {% endif %}
-
-            {% if session.get('is_admin') or permissions.get('can_invest_tidy') or permissions.get('can_auto_loading') %}
-            <div class="app-nav-group">生产数据管理</div>
-            {% if session.get('is_admin') or permissions.get('can_invest_tidy') %}
-            <a class="app-nav-link" href="{{ url_for('main.invest_tidy') }}" data-tab-title="投入计划书"><i class="fa fa-file-excel-o"></i><span>投入计划书</span></a>
-            {% endif %}
-            {% if session.get('is_admin') or permissions.get('can_auto_loading') %}
-            <a class="app-nav-link" href="{{ url_for('main.auto_loading') }}" data-tab-title="汽车厂装车实际"><i class="fa fa-truck"></i><span>汽车厂装车实际</span></a>
-            {% endif %}
-            {% endif %}
-
-            {% if session.get('is_admin') or permissions.get('can_mes_group') or permissions.get('can_mes_plan') or permissions.get('can_mes_production') or permissions.get('can_mes_quality') or permissions.get('can_mes_price') %}
-            <div class="app-nav-group">MES</div>
-            <div class="app-nav-sub">
-                <a class="app-nav-link app-nav-toggle" href="#"><i class="fa fa-industry"></i><span>MES</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
-                <div class="app-nav-submenu">
-                    {% if session.get('is_admin') or permissions.get('can_mes_plan') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('mes_mod.plan_page') }}" data-tab-title="计划登录"><span>计划登录</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_mes_production') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('mes_mod.production_page') }}" data-tab-title="生产入库"><span>生产入库</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_mes_quality') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('mes_mod.quality_page') }}" data-tab-title="品质检查(包装)"><span>品质检查(包装)</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_mes_price') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('mes_mod.price_page') }}" data-tab-title="单价登陆"><span>单价登陆</span></a>
-                    {% endif %}
-                    {% if session.get('is_admin') or permissions.get('can_mes_group') %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ url_for('mes.group_page') }}" data-tab-title="MES分组"><span>MES分组</span></a>
-                    {% endif %}
-                </div>
-            </div>
-            {% endif %}
-        {% endif %}
-
-        {% if session.get('user_id') and (session.get('is_admin') or permissions.get('can_system_management') or permissions.get('can_data_management')) %}
-        <div class="app-nav-group">系统管理</div>
-        {% if session.get('is_admin') or permissions.get('can_system_management') %}
-        <a class="app-nav-link" href="{{ url_for('main.user_management') }}" data-tab-title="用户与权限管理"><i class="fa fa-users"></i><span>用户与权限管理</span></a>
-        <a class="app-nav-link" href="{{ url_for('main.operation_logs') }}" data-tab-title="操作记录"><i class="fa fa-history"></i><span>操作记录</span></a>
-        {% endif %}
-        {% if session.get('is_admin') or permissions.get('can_data_management') %}
-        <a class="app-nav-link" href="{{ url_for('main.data_management') }}" data-tab-title="数据备份管理"><i class="fa fa-database"></i><span>数据备份管理</span></a>
-        {% endif %}
-        {% endif %}
+        {% endfor %}
+        {% endfor %}
     </nav>
 
     <div class="app-sidebar-footer">
@@ -191,7 +49,7 @@
 </button>
 <div class="app-sidebar-backdrop" id="appSidebarBackdrop"></div>
 
-<link rel="stylesheet" href="{{ url_for('static', filename='css/sidebar.css') }}?v=20261023">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/sidebar.css') }}?v=20261106">
 <script src="{{ url_for('static', filename='js/sidebar-init.js') }}?v=20261023"></script>
 <script defer src="{{ url_for('static', filename='js/sidebar.js') }}?v=20261023"></script>
 

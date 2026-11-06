@@ -1,210 +1,494 @@
-    .app-sidebar {
-        position: fixed;
-        top: 0;
-        left: 0;
-        bottom: 0;
-        width: 200px;
-        background: linear-gradient(180deg, #0d6efd 0%, #4da3ff 100%); /* 天蓝色 */
-        color: #ffffff;
-        z-index: 1050;
-        display: flex;
-        flex-direction: column;
-        overflow-y: auto;
-        overflow-x: hidden;
-        box-shadow: 2px 0 12px rgba(13, 110, 253, 0.25);
-    }
-    /* 仅交互时启用位移动画，首屏直接落位 */
-    body.app-sidebar-anim .app-sidebar { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-    .app-sidebar.collapsed { transform: translateX(-100%); }
+/* ============================================================
+ * 应用侧边栏（左侧导航）
+ * 设计方向：轻量玻璃拟态 + 扁平留白 + 天蓝主题点缀
+ * 结构：header（品牌 / 折叠按钮） + nav（可滚动菜单） + footer（用户 / 退出）
+ *
+ * 重要约定：
+ * 1) 折叠与首屏落位依赖 html.app-sidebar-open-init / html.app-sidebar-collapsed-init
+ *    以及 body.app-sidebar-open / body.app-sidebar-anim，均由 sidebar-init.js 与
+ *    sidebar.js 写入，重构视觉样式时不可改动这些类名及其语义。
+ * 2) 桌面端内容偏移用 body padding-left 驱动；移动端为抽屉式，不受折叠状态影响。
+ * 3) 侧边栏宽度只通过 --sb-width 调整，body 偏移与所有内外间距均引用该变量。
+ * ============================================================ */
 
-    /* 首屏按用户上次状态渲染（配合头部同步脚本，消除切换模块时的展开闪烁） */
-    html.app-sidebar-collapsed-init .app-sidebar { transform: translateX(-100%); }
-    html.app-sidebar-collapsed-init .app-sidebar-float-btn { display: flex; align-items: center; justify-content: center; }
+:root {
+    --sb-width: 240px;                 /* 桌面端侧边栏宽度（body padding-left 同步引用） */
+    --sb-width-mobile: 280px;          /* 移动端抽屉宽度 */
+    --sb-primary: #0d6efd;             /* 主题蓝（与项目主色一致） */
+    --sb-primary-deep: #0b5ed7;
+    --sb-sky: #4da3ff;                 /* 主题浅蓝（渐变收尾色） */
+    --sb-ink: #334155;                 /* 菜单正文色 */
+    --sb-ink-soft: #94a3b8;            /* 分组标题 / 辅助文字 */
+    --sb-line: rgba(15, 23, 42, 0.07); /* 分隔线 */
+    --sb-radius: 10px;                 /* 菜单项圆角 */
+    --sb-ease: cubic-bezier(0.22, 1, 0.36, 1); /* 统一缓动：快出慢入，折叠更自然 */
+    --sb-duration: 0.32s;
+}
 
-    /* 内容区跟随偏移：用 body padding 位移，避免改动子元素宽度导致回流抖动与白边 */
-    /* 首屏不加过渡，直接落到最终位置，避免"展开→收起"或"收起→展开"的滑动白边 */
-    body.app-sidebar-anim {
-        transition: padding-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    /* 桌面端默认无偏移（折叠态），展开时整体右移 200px */
-    /* 展开态由 html.app-sidebar-open-init（首屏同步脚本）或 body.app-sidebar-open（JS 交互）驱动，保证首屏即落位 */
-    @media (min-width: 768px) {
-        body { padding-left: 0 !important; padding-top: 0; }
-        html.app-sidebar-open-init body,
-        body.app-sidebar-open { padding-left: 200px !important; }
-        /* 悬浮临时展开时内容同步右移，避免侧边栏遮挡内容 */
-        body.app-sidebar-hover { padding-left: 200px !important; }
-    }
-    /* 内容宽度始终撑满可用区域，消除折叠过程中右侧露白 */
-    body .container-fluid {
-        width: 100% !important;
-        margin-left: 0 !important;
-        /* 保留左右内边距，抵消 Bootstrap .row 的负外边距，避免内容左溢出、右侧留白 */
-        padding-left: 15px !important;
-        padding-right: 15px !important;
-    }
+/* ---------------- 侧边栏容器：玻璃拟态底板 ---------------- */
+.app-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--sb-width);
+    display: flex;
+    flex-direction: column;
+    z-index: 1050;
+    overflow: hidden;                  /* 仅中间 nav 滚动，头部/底部常驻不随滚动位移 */
+    color: var(--sb-ink);
+    /* 半透明白底 + 两处蓝色光晕，配合 backdrop-filter 形成轻量毛玻璃质感 */
+    background-color: rgba(255, 255, 255, 0.78);
+    background-image:
+        radial-gradient(120% 55% at 8% -8%, rgba(47, 128, 237, 0.16) 0%, rgba(47, 128, 237, 0) 62%),
+        radial-gradient(100% 45% at 100% 104%, rgba(14, 165, 233, 0.12) 0%, rgba(14, 165, 233, 0) 60%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(243, 248, 255, 0.78) 55%, rgba(236, 244, 255, 0.82) 100%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    backdrop-filter: blur(18px) saturate(160%);
+    border-right: 1px solid var(--sb-line);
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07), inset -1px 0 0 rgba(255, 255, 255, 0.7);
+}
 
-    .app-sidebar-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 14px 16px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.18);
-        background: rgba(255, 255, 255, 0.08);
-        flex-shrink: 0;
-        cursor: default;
-    }
-    .app-brand {
-        color: #fff;
-        font-size: 1.02rem;
-        font-weight: 700;
-        text-decoration: none;
-        white-space: nowrap;
-    }
-    .app-brand:hover { color: #fff; }
+/* 仅用户交互时启用位移动画，首屏直接落位（避免白边闪现） */
+body.app-sidebar-anim .app-sidebar {
+    transition: transform var(--sb-duration) var(--sb-ease), box-shadow var(--sb-duration) var(--sb-ease);
+}
+.app-sidebar.collapsed { transform: translateX(-100%); }
 
-    .app-sidebar-btn {
-        background: rgba(255, 255, 255, 0.18);
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        color: #fff;
-        width: 32px;
-        height: 32px;
-        border-radius: 6px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        transition: all 0.25s ease;
+/* 首屏按上次状态直接渲染，切换模块时不出现"展开→收起"的滑动 */
+html.app-sidebar-collapsed-init .app-sidebar { transform: translateX(-100%); }
+html.app-sidebar-collapsed-init .app-sidebar-float-btn { display: flex; align-items: center; justify-content: center; }
+
+/* ---------------- 内容区偏移（桌面端） ---------------- */
+/* 用 body padding 位移，避免改动子元素宽度导致回流抖动与右侧白边 */
+body.app-sidebar-anim {
+    transition: padding-left var(--sb-duration) var(--sb-ease);
+}
+@media (min-width: 768px) {
+    body { padding-left: 0 !important; padding-top: 0; }
+    /* 展开态：首屏同步类或交互类任一存在即生效 */
+    html.app-sidebar-open-init body,
+    body.app-sidebar-open { padding-left: var(--sb-width) !important; }
+    /* 折叠态下悬浮临时展开时同样让出空间，避免遮挡内容 */
+    body.app-sidebar-hover { padding-left: var(--sb-width) !important; }
+}
+/* 内容宽度始终撑满可用区域，消除折叠过程中右侧露白 */
+body .container-fluid {
+    width: 100% !important;
+    margin-left: 0 !important;
+    padding-left: 15px !important;
+    padding-right: 15px !important;
+}
+
+/* ---------------- 头部：品牌 + 折叠按钮 ---------------- */
+.app-sidebar-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    padding: 14px 12px 12px 16px;
+    border-bottom: 1px solid var(--sb-line);
+}
+
+.app-brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex: 1 1 auto;
+    min-width: 0;                      /* 允许品牌文案在窄栏时省略 */
+    padding: 2px 0;
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.015em;
+    color: #0f172a;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: opacity 0.2s ease;
+}
+.app-brand:hover { color: #0f172a; opacity: 0.82; }
+/* 品牌图标做成渐变圆角方块，替代裸图标，提升识别度 */
+.app-brand > i {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    font-size: 0.86rem;
+    color: #fff;
+    background: linear-gradient(140deg, var(--sb-primary), var(--sb-sky));
+    box-shadow: 0 6px 14px rgba(13, 110, 253, 0.28);
+}
+.app-brand-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.app-sidebar-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.6);
+    color: #475569;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+                box-shadow 0.2s ease, transform 0.2s var(--sb-ease);
+}
+.app-sidebar-btn:hover {
+    color: var(--sb-primary);
+    background: #fff;
+    border-color: rgba(13, 110, 253, 0.24);
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.1);
+    transform: translateX(-1px);
+}
+.app-sidebar-btn:active { transform: scale(0.94); }
+
+/* ---------------- 菜单区（独立滚动） ---------------- */
+.app-sidebar-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 6px 0 10px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;      /* 菜单滚到底时不连带滚动页面 */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+/* 分组标题：小字号 + 字距，弱化层级但不抢视线 */
+.app-nav-group {
+    padding: 14px 20px 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--sb-ink-soft);
+}
+
+/* ---------------- 菜单项：统一间距 / 对齐 / 交互反馈 ---------------- */
+.app-nav-link {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 2px 8px;
+    padding: 9px 12px;
+    border-radius: var(--sb-radius);
+    color: var(--sb-ink);
+    font-size: 0.875rem;
+    text-decoration: none;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease,
+                transform 0.2s var(--sb-ease);
+}
+/* 图标列固定宽度，保证不同菜单项文字左边缘严格对齐 */
+.app-nav-link > i:first-child {
+    flex: 0 0 auto;
+    width: 18px;
+    font-size: 0.95rem;
+    text-align: center;
+    color: #64748b;
+    transition: color 0.2s ease, transform 0.2s var(--sb-ease);
+}
+.app-nav-link > span {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;               /* 单行展示，避免长文案把行高撑开 */
+}
+
+@media (hover: hover) {
+    .app-nav-link:hover {
+        background: rgba(47, 128, 237, 0.08);
+        color: var(--sb-primary-deep);
+        transform: translateX(2px);
     }
-    .app-sidebar-btn:hover { background: rgba(255, 255, 255, 0.3); }
+    .app-nav-link:hover > i:first-child { color: var(--sb-primary); }
+}
+.app-nav-link:active { transform: scale(0.99); }
 
-    .app-sidebar-nav { flex: 1; padding: 8px 0; }
+/* 选中态：浅蓝胶囊 + 左侧渐变指示条，与 hover 明确区分 */
+.app-nav-link.active {
+    background: linear-gradient(90deg, rgba(47, 128, 237, 0.14), rgba(47, 128, 237, 0.05));
+    color: var(--sb-primary-deep);
+    font-weight: 600;
+    box-shadow: inset 0 0 0 1px rgba(47, 128, 237, 0.1);
+}
+.app-nav-link.active > i:first-child { color: var(--sb-primary); }
+.app-nav-link.active:not(.app-nav-sub-link)::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 3px;
+    height: 60%;
+    border-radius: 0 3px 3px 0;
+    transform: translateY(-50%);
+    background: linear-gradient(180deg, var(--sb-primary), var(--sb-sky));
+}
 
-    .app-nav-group {
-        padding: 12px 16px 4px;
-        font-size: 0.72rem;
-        letter-spacing: 1px;
-        color: #e0f2fe;
-        text-transform: uppercase;
+/* 展开箭头：位置靠右，展开时旋转 180° */
+.app-nav-arrow {
+    flex: 0 0 auto;
+    margin-left: auto;
+    font-size: 0.7rem;
+    color: var(--sb-ink-soft);
+    transition: transform 0.3s var(--sb-ease), color 0.2s ease;
+}
+.app-nav-sub.open > .app-nav-toggle { color: var(--sb-primary-deep); }
+.app-nav-sub.open > .app-nav-toggle > i:first-child { color: var(--sb-primary); }
+.app-nav-sub.open > .app-nav-toggle .app-nav-arrow { transform: rotate(180deg); color: var(--sb-primary); }
+
+/* ---------------- 子菜单：高度展开动画 + 连接线 / 圆点标记 ---------------- */
+.app-nav-submenu {
+    position: relative;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.34s var(--sb-ease);
+}
+.app-nav-sub.open > .app-nav-submenu { max-height: 460px; }
+/* 首屏同步阶段关闭过渡，避免分组出现"滑下"动画 */
+html.app-sidebar-nav-init .app-nav-submenu { transition: none; }
+
+/* 子项连接线：从子项圆点向上延伸，强化层级归属 */
+.app-nav-submenu::before {
+    content: '';
+    position: absolute;
+    left: 22px;
+    top: 4px;
+    bottom: 4px;
+    width: 1px;
+    background: linear-gradient(180deg, rgba(13, 110, 253, 0.16), rgba(13, 110, 253, 0.02));
+    pointer-events: none;
+}
+
+.app-nav-sub-link {
+    margin: 2px 8px;
+    padding: 7px 12px 7px 34px;
+    font-size: 0.82rem;
+    color: #475569;
+}
+/* 子项圆点标记，hover / 选中时变为主题蓝 */
+.app-nav-sub-link::before {
+    content: '';
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    width: 5px;
+    height: 5px;
+    margin-top: -2.5px;
+    border-radius: 50%;
+    background: #cbd5e1;
+    transition: background 0.2s ease, transform 0.2s var(--sb-ease);
+}
+@media (hover: hover) {
+    .app-nav-sub-link:hover::before { background: var(--sb-primary); transform: scale(1.25); }
+}
+.app-nav-sub-link.active::before { background: var(--sb-primary); transform: scale(1.25); }
+/* 子项不再重复绘制左侧指示条，避免与连接线视觉冲突 */
+.app-nav-sub-link.active::after { display: none; }
+
+/* ---------------- 底部：用户信息卡 + 退出 ---------------- */
+.app-sidebar-footer {
+    flex-shrink: 0;
+    margin: 6px 10px 12px;
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.62);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+}
+
+.app-nav-user {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #475569;
+}
+.app-nav-user > i {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    font-size: 0.78rem;
+    color: var(--sb-primary);
+    background: linear-gradient(135deg, #e6f0ff, #cfe2ff);
+}
+.app-nav-user > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-nav-logout {
+    margin: 2px 0 0;
+    padding: 7px 10px;
+    font-size: 0.82rem;
+    color: #b91c1c;
+}
+.app-nav-logout > i:first-child { color: #dc2626; }
+@media (hover: hover) {
+    .app-nav-logout:hover {
+        background: rgba(239, 68, 68, 0.1);
+        color: #b91c1c;
+        transform: none;
     }
+    .app-nav-logout:hover > i:first-child { color: #dc2626; }
+}
 
-    .app-nav-link {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 9px 16px;
-        color: #f0f9ff;
-        text-decoration: none;
-        font-size: 0.92rem;
-        border-left: 3px solid transparent;
-        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-        cursor: pointer;
-        user-select: none;
+/* ---------------- 折叠后悬浮展开（桌面端） ---------------- */
+@media (hover: hover) and (min-width: 768px) {
+    .app-sidebar.collapsed:hover {
+        transform: translateX(0);
+        box-shadow: 12px 0 40px rgba(15, 23, 42, 0.16), inset -1px 0 0 rgba(255, 255, 255, 0.7);
     }
-    .app-nav-link i { width: 18px; text-align: center; font-size: 1rem; }
-    .app-nav-link:hover { background: rgba(255, 255, 255, 0.15); color: #fff; transform: translateX(4px); }
-    .app-nav-link.active { background: rgba(255, 255, 255, 0.2); border-left-color: #ffc107; color: #fff; font-weight: 600; }
+}
 
-    .app-nav-arrow { margin-left: auto; transition: transform 0.25s ease; font-size: 0.8rem; }
-    .app-nav-sub.open > .app-nav-toggle .app-nav-arrow { transform: rotate(180deg); }
+/* ---------------- 移动端汉堡按钮（玻璃胶囊） ---------------- */
+.app-sidebar-toggle {
+    position: fixed;
+    top: 10px;
+    left: 12px;
+    z-index: 1060;
+    width: 44px;
+    height: 44px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.9);
+    color: var(--sb-primary);
+    font-size: 1.05rem;
+    cursor: pointer;
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.1);
+    transition: transform 0.2s var(--sb-ease), box-shadow 0.2s ease, background 0.2s ease;
+}
+.app-sidebar-toggle:hover { background: #fff; transform: translateY(-1px); box-shadow: 0 10px 22px rgba(15, 23, 42, 0.14); }
+.app-sidebar-toggle:active { transform: scale(0.95); }
 
-    .app-nav-submenu {
-        max-height: 0;
-        overflow: hidden;
-        transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        background: rgba(255, 255, 255, 0.06);
+/* ---------------- 桌面折叠后固定展开按钮 ---------------- */
+.app-sidebar-float-btn {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    z-index: 1200;
+    width: 42px;
+    height: 42px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    border-radius: 12px;
+    background: linear-gradient(140deg, rgba(255, 255, 255, 0.98), rgba(240, 246, 255, 0.9));
+    color: var(--sb-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+    transition: transform 0.22s var(--sb-ease), box-shadow 0.22s ease, color 0.2s ease;
+}
+.app-sidebar-float-btn.show { display: flex; animation: sbFloatIn 0.28s var(--sb-ease); }
+.app-sidebar-float-btn:hover {
+    transform: translateY(-2px);
+    color: var(--sb-primary-deep);
+    box-shadow: 0 12px 28px rgba(13, 110, 253, 0.22);
+}
+@keyframes sbFloatIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+/* ---------------- 移动端遮罩 ---------------- */
+.app-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1045;
+    background: rgba(15, 23, 42, 0.32);
+    opacity: 0;
+    visibility: hidden;
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+    transition: opacity var(--sb-duration) var(--sb-ease), visibility var(--sb-duration) var(--sb-ease);
+}
+.app-sidebar-backdrop.show { opacity: 1; visibility: visible; }
+
+/* ---------------- 滚动条：细窄、悬停加深 ---------------- */
+.app-sidebar-nav::-webkit-scrollbar { width: 6px; }
+.app-sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+.app-sidebar-nav::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 6px;
+    transition: background 0.2s ease;
+}
+.app-sidebar-nav::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.45); }
+
+/* ---------------- 键盘可达性 ---------------- */
+.app-nav-link:focus-visible,
+.app-sidebar-btn:focus-visible,
+.app-sidebar-toggle:focus-visible,
+.app-sidebar-float-btn:focus-visible {
+    outline: 2px solid rgba(13, 110, 253, 0.45);
+    outline-offset: 2px;
+}
+
+/* ---------------- 响应式：移动端抽屉 ---------------- */
+/* 注意优先级：默认收起规则带 html 前缀（(0,3,0)），
+ * 展开规则必须同样带 html 前缀（(0,4,0)）才能覆盖，否则抽屉无法滑入。 */
+@media (max-width: 767.98px) {
+    body { padding-top: 56px; padding-left: 0; }
+    body.app-sidebar-open { padding-left: 0; }
+
+    html .app-sidebar {
+        width: var(--sb-width-mobile);
+        transform: translateX(-100%);
+        border-radius: 0 18px 18px 0;
+        box-shadow: 24px 0 48px rgba(15, 23, 42, 0.18);
     }
-    .app-nav-sub.open > .app-nav-submenu { max-height: 320px; }
-    /* 首屏同步阶段（sidebar-init.js 已按记忆展开分组）关闭过渡，避免"滑下"动画造成闪烁 */
-    html.app-sidebar-nav-init .app-nav-submenu { transition: none; }
-    .app-nav-sub-link { padding-left: 46px; font-size: 0.85rem; border-left: none; }
+    html .app-sidebar.open { transform: translateX(0); }
 
-    .app-sidebar-footer {
-        flex-shrink: 0;
-        border-top: 1px solid rgba(255, 255, 255, 0.18);
-        background: rgba(255, 255, 255, 0.06);
-        padding: 4px 0;
-    }
-    .app-nav-user { display: flex; align-items: center; gap: 10px; padding: 9px 16px; font-size: 0.85rem; color: #e0f2fe; }
-    .app-nav-logout { color: #fecaca; }
-    .app-nav-logout:hover { color: #fff; background: rgba(239, 68, 68, 0.3); }
+    .app-sidebar-toggle { display: flex; }
+    .app-sidebar-float-btn { display: none !important; }
 
-    /* 桌面端悬停展开（用户主动交互；不持久化，移开后回到用户当前状态） */
-    @media (hover: hover) and (min-width: 768px) {
-        .app-sidebar.collapsed:hover { transform: translateX(0); box-shadow: 4px 0 20px rgba(13, 110, 253, 0.4); }
-    }
+    .app-sidebar-header { padding: 16px 12px 12px 16px; }
+    .app-nav-link { padding: 10px 12px; font-size: 0.9rem; }
+    .app-nav-sub-link { padding: 8px 12px 8px 34px; font-size: 0.84rem; }
+    .app-nav-group:first-of-type { padding-top: 10px; }
+}
 
-    /* 移动端汉堡按钮 */
-    .app-sidebar-toggle {
-        position: fixed;
-        top: 12px;
-        left: 12px;
-        z-index: 1060;
-        width: 44px;
-        height: 44px;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.4);
-        background: linear-gradient(135deg, #0d6efd, #4da3ff);
-        color: #fff;
-        font-size: 1.15rem;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        box-shadow: 0 4px 12px rgba(13, 110, 253, 0.35);
-        transition: all 0.25s ease;
+/* ---------------- 弱动效偏好：尊重系统设置 ---------------- */
+@media (prefers-reduced-motion: reduce) {
+    body.app-sidebar-anim,
+    .app-sidebar,
+    .app-sidebar-backdrop,
+    .app-nav-submenu,
+    .app-nav-link,
+    .app-nav-link > i:first-child,
+    .app-nav-arrow,
+    .app-nav-sub-link::before {
+        transition: none !important;
+        animation: none !important;
     }
-    .app-sidebar-toggle:hover { transform: scale(1.06); }
-
-    /* 桌面折叠后固定展开按钮 */
-    .app-sidebar-float-btn {
-        position: fixed;
-        top: 12px;
-        left: 12px;
-        z-index: 1200;
-        width: 44px;
-        height: 44px;
-        border-radius: 8px;
-        border: none;
-        background: linear-gradient(135deg, #0d6efd, #4da3ff);
-        color: #fff;
-        font-size: 1.15rem;
-        cursor: pointer;
-        box-shadow: 0 4px 12px rgba(13, 110, 253, 0.35);
-        transition: all 0.25s ease;
-        display: none;
-    }
-    .app-sidebar-float-btn.show { display: flex; align-items: center; justify-content: center; animation: floatIn 0.3s ease; }
-    .app-sidebar-float-btn:hover { transform: scale(1.08); }
-    @keyframes floatIn {
-        from { opacity: 0; transform: translateX(-12px); }
-        to { opacity: 1; transform: translateX(0); }
-    }
-
-    .app-sidebar-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.45);
-        z-index: 1045;
-        opacity: 0;
-        visibility: hidden;
-        transition: opacity 0.3s ease, visibility 0.3s ease;
-    }
-    .app-sidebar-backdrop.show { opacity: 1; visibility: visible; }
-
-    .app-sidebar::-webkit-scrollbar { width: 5px; }
-    .app-sidebar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.3); border-radius: 3px; }
-
-    /* 移动端抽屉：默认收起，点击汉堡按钮加 .open 后滑入。
-     * 注意优先级：默认收起规则用了 html:not(.app-sidebar-open-init)（(0,3,0)），
-     * 因此展开规则必须加上同样的 html 前缀（(0,4,0)）才能压过它，
-     * 否则 .app-sidebar.open 仅 (0,2,0)，会被默认收起规则覆盖而无法展开。 */
-    @media (max-width: 767.98px) {
-        body { padding-top: 56px; padding-left: 0; }
-        body.app-sidebar-open { padding-left: 0; }
-        html .app-sidebar { transform: translateX(-100%); width: 240px; }
-        html .app-sidebar.open { transform: translateX(0); }
-        .app-sidebar-toggle { display: flex; }
-        .app-sidebar-float-btn { display: none !important; }
-    }
+}

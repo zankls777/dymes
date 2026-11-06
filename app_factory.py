@@ -286,6 +286,27 @@ def create_app():
 
     app.jinja_env.filters['filesizeformat'] = filesizeformat
 
+    # 侧边栏菜单：内置目录 + 可配置分组，按当前用户权限过滤后注入模板
+    from flask import session as _session, g as _g
+    from utils.sidebar_menu import build_sidebar_menu as _build_sidebar_menu
+
+    @app.context_processor
+    def inject_sidebar_menu():
+        """每个请求只构建一次，避免页面多次 include 时重复查询配置"""
+        if not _session.get('user_id'):
+            return {'sidebar_menu': []}
+        cached = getattr(_g, 'sidebar_menu_cache', None)
+        if cached is not None:
+            return {'sidebar_menu': cached}
+        try:
+            menu = _build_sidebar_menu(bool(_session.get('is_admin')),
+                                       _session.get('user_permissions') or {})
+        except Exception as exc:
+            app.logger.error('构建侧边栏菜单失败: %s', exc)
+            menu = []
+        _g.sidebar_menu_cache = menu
+        return {'sidebar_menu': menu}
+
     # 创建数据库表
     with app.app_context():
         # SQLite特定初始化 - 使用连接事件持久化 PRAGMA 配置

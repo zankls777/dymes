@@ -10713,115 +10713,77 @@ def menu_management():
     
     return render_template('menu_management.html')
 
-# 菜单管理API路由
-@main_bp.route('/api/menu_config', methods=['GET'])
-@csrf_exempt_route
-def get_menu_config():
-    """获取菜单配置"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
-    
-    try:
-        # 从本地存储获取菜单配置
-        # 这里返回默认菜单配置，实际应该从数据库或其他存储中获取
-        default_menu = [
-            {
-                'id': '1',
-                'name': '首页',
-                'url': '/file_management',
-                'icon': 'fa-home',
-                'parent_id': '0',
-                'order': 1
-            },
-            {
-                'id': '2',
-                'name': '文件管理',
-                'url': '/file_management',
-                'icon': 'fa-folder',
-                'parent_id': '0',
-                'order': 2
-            },
-            {
-                'id': '3',
-                'name': '文件对比',
-                'url': '/file_comparison',
-                'icon': 'fa-exchange',
-                'parent_id': '2',
-                'order': 1
-            },
-            {
-                'id': '4',
-                'name': '成品管理',
-                'url': '/products',
-                'icon': 'fa-box',
-                'parent_id': '0',
-                'order': 3
-            },
-            {
-                'id': '5',
-                'name': '车种管理',
-                'url': '/vehicle_types',
-                'icon': 'fa-car',
-                'parent_id': '0',
-                'order': 4
-            },
-            {
-                'id': '6',
-                'name': '资材量下载',
-                'url': '/material_download',
-                'icon': 'fa-download',
-                'parent_id': '0',
-                'order': 5
-            },
-            {
-                'id': '7',
-                'name': '系统管理',
-                'url': '#',
-                'icon': 'fa-cog',
-                'parent_id': '0',
-                'order': 6
-            },
-            {
-                'id': '8',
-                'name': '用户管理',
-                'url': '/user_management',
-                'icon': 'fa-users',
-                'parent_id': '7',
-                'order': 1
-            },
-            {
-                'id': '10',
-                'name': '菜单管理',
-                'url': '/menu_management',
-                'icon': 'fa-list',
-                'parent_id': '7',
-                'order': 3
-            }
-        ]
-        
-        return jsonify({'success': True, 'menu': default_menu})
-    except Exception as e:
-        current_app.logger.error(f"获取菜单配置失败: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
 
-@main_bp.route('/api/menu_config', methods=['POST'])
+def _can_edit_sidebar_menu():
+    """侧边栏分组管理权限：管理员，或拥有页面配置权限(can_page)的用户。"""
+    user = db.session.get(UserInfo, session['user_id'])
+    if not user:
+        return False
+    if user.is_admin:
+        return True
+    permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+    return bool(permission and permission.can_page)
+
+
+# 侧边栏分组配置API（管理员在线调整分组标题、顺序与条目归属）
+@main_bp.route('/api/sidebar_menu', methods=['GET'])
 @csrf_exempt_route
-def save_menu_config():
-    """保存菜单配置"""
+def get_sidebar_menu_config():
+    """读取当前分组配置 + 内置菜单目录，供菜单管理页渲染"""
     if 'user_id' not in session:
         return jsonify({'success': False, 'error': '未登录'}), 401
-    
+    if not _can_edit_sidebar_menu():
+        return jsonify({'success': False, 'error': '无菜单管理权限'}), 403
+
     try:
-        data = request.get_json()
-        menu_config = data.get('menu', [])
-        
-        # 这里应该将菜单配置保存到数据库或其他存储中
-        # 现在只是返回成功
-        
-        return jsonify({'success': True, 'message': '菜单配置保存成功'})
+        from utils.sidebar_menu import get_admin_catalog, load_layout
+        return jsonify({'success': True, 'layout': load_layout(), 'catalog': get_admin_catalog()})
     except Exception as e:
-        current_app.logger.error(f"保存菜单配置失败: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        current_app.logger.error(f"读取侧边栏分组失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '读取分组配置失败'}), 500
+
+
+@main_bp.route('/api/sidebar_menu', methods=['POST'])
+@csrf_exempt_route
+def save_sidebar_menu_config():
+    """保存分组配置：只落库分组标题/顺序/条目归属，页面权限仍由内置目录控制"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not _can_edit_sidebar_menu():
+        return jsonify({'success': False, 'error': '无菜单管理权限'}), 403
+
+    data = request.get_json(silent=True) or {}
+    payload = data.get('layout') if isinstance(data.get('layout'), dict) else data
+    if not isinstance(payload, dict) or not isinstance(payload.get('groups'), list):
+        return jsonify({'success': False, 'error': '配置格式不正确'}), 400
+
+    try:
+        from utils.sidebar_menu import save_layout
+        saved = save_layout(payload)
+        return jsonify({'success': True, 'layout': saved, 'message': '分组配置已保存'})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"保存侧边栏分组失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
+
+
+@main_bp.route('/api/sidebar_menu/reset', methods=['POST'])
+@csrf_exempt_route
+def reset_sidebar_menu_config():
+    """恢复默认分组（按业务域内置的默认布局）"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not _can_edit_sidebar_menu():
+        return jsonify({'success': False, 'error': '无菜单管理权限'}), 403
+
+    try:
+        from utils.sidebar_menu import reset_layout
+        layout = reset_layout()
+        return jsonify({'success': True, 'layout': layout, 'message': '已恢复默认分组'})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"恢复侧边栏默认分组失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '恢复失败，请稍后重试'}), 500
 
 # 根路由 - 已登录用户重定向到文件管理首页，未登录用户重定向到登录页面
 @main_bp.route('/')

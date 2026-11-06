@@ -5,508 +5,74 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>菜单管理</title>
-    <!-- 引入Bootstrap CSS -->
-    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
-    <!-- 引入Font Awesome -->
-    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
     {% include '_styles.html' %}
+    <style>
+        /* 侧边栏分组管理页：与新版侧栏保持一致的轻量扁平风格 */
+        .mm-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+        .mm-desc { margin: 0; font-size: .82rem; color: #64748b; }
+        .mm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+        .mm-group { display: flex; flex-direction: column; background: #fff; border: 1px solid #e5e9f0;
+            border-radius: 12px; box-shadow: 0 4px 14px rgba(15, 23, 42, .05); overflow: hidden; }
+        .mm-group-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #eef2f7; }
+        .mm-title-input { flex: 1 1 auto; min-width: 0; padding: 6px 10px; border: 1px solid transparent; border-radius: 8px;
+            background: #f8fafc; font-size: .88rem; font-weight: 600; color: #1f2937; transition: background .2s, border-color .2s, box-shadow .2s; }
+        .mm-title-input:focus { outline: none; background: #fff; border-color: rgba(13, 110, 253, .35); box-shadow: 0 0 0 3px rgba(13, 110, 253, .1); }
+        .mm-count { flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; color: #94a3b8; font-size: .72rem; }
+        .mm-icon-btn { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+            width: 28px; height: 28px; padding: 0; border: 1px solid #e5e9f0; border-radius: 7px; background: #fff;
+            color: #64748b; font-size: .75rem; cursor: pointer; transition: color .2s, border-color .2s, background .2s, transform .2s; }
+        .mm-icon-btn:hover { color: #0d6efd; border-color: rgba(13, 110, 253, .3); background: #f5f9ff; transform: translateY(-1px); }
+        .mm-icon-btn.danger:hover { color: #b91c1c; border-color: rgba(239, 68, 68, .3); background: #fef2f2; }
+        .mm-icon-btn:disabled { opacity: .35; cursor: not-allowed; transform: none; }
+        .mm-entries { display: flex; flex-direction: column; gap: 6px; padding: 8px; min-height: 52px; }
+        .mm-entry { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid #eef2f7;
+            border-radius: 9px; background: #fbfdff; transition: background .2s, border-color .2s, box-shadow .2s; }
+        .mm-entry:hover { background: #fff; border-color: rgba(13, 110, 253, .25); box-shadow: 0 3px 10px rgba(15, 23, 42, .05); }
+        .mm-entry > .fa { flex: 0 0 auto; width: 16px; text-align: center; color: #64748b; }
+        .mm-entry-title { flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            font-size: .84rem; font-weight: 600; color: #1f2937; }
+        .mm-entry-summary { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            font-size: .72rem; color: #94a3b8; }
+        .mm-move { flex: 0 0 auto; max-width: 110px; padding: 3px 4px; border: 1px solid #e5e9f0; border-radius: 7px;
+            background: #fff; color: #475569; font-size: .72rem; cursor: pointer; }
+        .mm-empty { padding: 12px; text-align: center; color: #94a3b8; font-size: .8rem; }
+        .mm-status { min-height: 20px; margin-bottom: 8px; font-size: .8rem; }
+        .mm-status.ok { color: #15803d; }
+        .mm-status.err { color: #b91c1c; }
+        @media (max-width: 575.98px) {
+            .mm-grid { grid-template-columns: 1fr; }
+            .mm-entry-summary { display: none; }
+        }
+    </style>
 </head>
 <body>
-    {% include '_navbar.html' %}
+{% include '_navbar.html' %}
 <div class="container-fluid mt-4">
-    <h1 class="h3 mb-4 text-gray-800">菜单管理</h1>
-    
-    <div class="card shadow mb-4">
-        <div class="card-header py-3">
-            <div class="d-flex justify-content-between align-items-center">
-                <h6 class="m-0 font-weight-bold text-primary">菜单配置</h6>
-                <div class="btn-group">
-                    <button class="btn btn-success btn-sm" id="add-menu-item">
-                        <i class="fa fa-plus mr-1"></i> 添加菜单
-                    </button>
-                    <button class="btn btn-info btn-sm" id="refresh-menu">
-                        <i class="fa fa-refresh mr-1"></i> 刷新
-                    </button>
-                </div>
-            </div>
+    <div class="mm-head">
+        <div>
+            <h1 class="h3 mb-1" style="color:#1f2937;">菜单管理 · 侧边栏分组</h1>
+            <p class="mm-desc">调整分组名称、顺序与菜单归属；保存后全站生效，页面权限仍按原规则过滤。</p>
         </div>
-        <div class="card-body">
-            <div class="row">
-                <!-- 左侧树形菜单 -->
-                <div class="col-md-6">
-                    <div class="card">
-                        <div class="card-header bg-primary text-white">
-                            <h6 class="m-0">菜单树形结构</h6>
-                        </div>
-                        <div class="card-body" style="max-height: 600px; overflow-y: auto;">
-                            <ul class="list-group" id="menu-tree">
-                                <!-- 菜单树将通过JavaScript动态生成 -->
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- 右侧菜单编辑 -->
-                <div class="col-md-6">
-                    <div class="card">
-                        <div class="card-header bg-info text-white">
-                            <h6 class="m-0">菜单编辑</h6>
-                        </div>
-                        <div class="card-body">
-                            <form id="menu-form">
-                                <input type="hidden" id="menu-id" value="">
-                                
-                                <div class="form-group">
-                                    <label for="menu-name">菜单名称</label>
-                                    <input type="text" class="form-control" id="menu-name" placeholder="请输入菜单名称">
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="menu-url">链接地址</label>
-                                    <input type="text" class="form-control" id="menu-url" placeholder="请输入链接地址">
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="menu-icon">字体图标</label>
-                                    <input type="text" class="form-control" id="menu-icon" placeholder="例如: fa-home">
-                                    <small class="form-text text-muted">使用Font Awesome图标类名</small>
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="menu-parent">父级菜单</label>
-                                    <select class="form-control" id="menu-parent">
-                                        <option value="0">顶级菜单</option>
-                                        <!-- 父级菜单选项将通过JavaScript动态生成 -->
-                                    </select>
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="menu-order">排序号</label>
-                                    <input type="number" class="form-control" id="menu-order" placeholder="请输入排序号">
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="menu-target">打开方式</label>
-                                    <select class="form-control" id="menu-target">
-                                        <option value="_self">当前窗口</option>
-                                        <option value="_blank">新窗口</option>
-                                        <option value="_iframe">内嵌iframe</option>
-                                    </select>
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label class="form-check-label">
-                                        <input type="checkbox" class="form-check-input" id="menu-visible">
-                                        可见
-                                    </label>
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label class="form-check-label">
-                                        <input type="checkbox" class="form-check-input" id="menu-enabled">
-                                        启用
-                                    </label>
-                                </div>
-                                
-                                <div class="d-flex justify-content-between mt-4">
-                                    <button type="button" class="btn btn-danger" id="delete-menu-item">
-                                        <i class="fa fa-trash mr-1"></i> 删除
-                                    </button>
-                                    <button type="submit" class="btn btn-primary">
-                                        <i class="fa fa-save mr-1"></i> 保存
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-            </div>
+        <div class="d-flex flex-wrap" style="gap:8px;">
+            <button type="button" class="btn btn-outline-primary btn-sm" id="mmAddGroup"><i class="fa fa-plus"></i> 新增分组</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="mmReset"><i class="fa fa-undo"></i> 恢复默认</button>
+            <button type="button" class="btn btn-primary btn-sm" id="mmSave"><i class="fa fa-save"></i> 保存配置</button>
         </div>
     </div>
-    
-    <!-- 权限配置 -->
-    <div class="card shadow mb-4">
-        <div class="card-header py-3">
-            <h6 class="m-0 font-weight-bold text-primary">权限配置</h6>
-        </div>
-        <div class="card-body">
-            <div class="alert alert-info">
-                <i class="fa fa-info-circle mr-2"></i>
-                基于角色的菜单权限控制功能正在开发中，敬请期待...
-            </div>
-        </div>
+
+    <div class="alert alert-info py-2 px-3" style="font-size:.82rem;">
+        <i class="fa fa-info-circle"></i>
+        分组只影响侧边栏的归类与排序，不会改变页面地址与权限：用户看不到自己无权限的菜单；分组内菜单全部无权限时，该分组自动隐藏。
+    </div>
+
+    <div class="mm-status" id="mmStatus"></div>
+    <div class="mm-grid" id="mmGroups">
+        <div class="mm-empty"><i class="fa fa-spinner fa-spin"></i> 加载中...</div>
     </div>
 </div>
 
-<!-- 添加菜单模态框 -->
-<div class="modal fade" id="add-menu-modal" tabindex="-1" role="dialog" aria-labelledby="add-menu-modal-label" aria-hidden="true">
-    <div class="modal-dialog" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="add-menu-modal-label">添加菜单</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <div class="modal-body">
-                <form id="add-menu-form">
-                    <div class="form-group">
-                        <label for="add-menu-name">菜单名称</label>
-                        <input type="text" class="form-control" id="add-menu-name" placeholder="请输入菜单名称" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="add-menu-parent">父级菜单</label>
-                        <select class="form-control" id="add-menu-parent">
-                            <option value="0">顶级菜单</option>
-                            <!-- 父级菜单选项将通过JavaScript动态生成 -->
-                        </select>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
-                <button type="submit" class="btn btn-primary" form="add-menu-form">添加</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script>
-$(document).ready(function() {
-    // 加载菜单数据
-    loadMenuData();
-    
-    // 刷新菜单按钮点击事件
-    $('#refresh-menu').click(function() {
-        loadMenuData();
-    });
-    
-    // 添加菜单按钮点击事件
-    $('#add-menu-item').click(function() {
-        // 加载父级菜单选项
-        loadParentMenuOptions('#add-menu-parent');
-        // 重置表单
-        $('#add-menu-form')[0].reset();
-        // 显示模态框
-        $('#add-menu-modal').modal('show');
-    });
-    
-    // 添加菜单表单提交事件
-    $('#add-menu-form').submit(function(e) {
-        e.preventDefault();
-        
-        const menuName = $('#add-menu-name').val().trim();
-        const parentId = $('#add-menu-parent').val();
-        
-        if (!menuName) {
-            alert('请输入菜单名称');
-            return;
-        }
-        
-        // 生成新菜单ID
-        const newId = 'menu_' + Date.now();
-        
-        // 创建新菜单对象
-        const newMenu = {
-            id: newId,
-            name: menuName,
-            url: '#',
-            icon: 'fa-circle-o',
-            parent_id: parentId,
-            order: 999,
-            visible: true,
-            enabled: true
-        };
-        
-        // 保存新菜单
-        saveMenu(newMenu);
-        
-        // 关闭模态框
-        $('#add-menu-modal').modal('hide');
-    });
-    
-    // 菜单表单提交事件
-    $('#menu-form').submit(function(e) {
-        e.preventDefault();
-        
-        const menuId = $('#menu-id').val();
-        const menuName = $('#menu-name').val().trim();
-        const menuUrl = $('#menu-url').val().trim();
-        const menuIcon = $('#menu-icon').val().trim();
-        const menuParent = $('#menu-parent').val();
-        const menuOrder = $('#menu-order').val();
-        const menuVisible = $('#menu-visible').prop('checked');
-        const menuEnabled = $('#menu-enabled').prop('checked');
-        
-        if (!menuName) {
-            alert('请输入菜单名称');
-            return;
-        }
-        
-        if (!menuOrder) {
-            alert('请输入排序号');
-            return;
-        }
-        
-        // 创建菜单对象
-        const menu = {
-            id: menuId,
-            name: menuName,
-            url: menuUrl,
-            icon: menuIcon,
-            parent_id: menuParent,
-            order: parseInt(menuOrder),
-            visible: menuVisible,
-            enabled: menuEnabled
-        };
-        
-        // 保存菜单
-        saveMenu(menu);
-    });
-    
-    // 删除菜单按钮点击事件
-    $('#delete-menu-item').click(function() {
-        const menuId = $('#menu-id').val();
-        
-        if (!menuId) {
-            alert('请先选择要删除的菜单');
-            return;
-        }
-        
-        if (confirm('确定要删除此菜单吗？')) {
-            // 删除菜单
-            deleteMenu(menuId);
-        }
-    });
-    
-    // 加载菜单数据
-    function loadMenuData() {
-        $.ajax({
-            url: '/api/menu_config',
-            type: 'GET',
-            success: function(response) {
-                if (response.success) {
-                    const menuData = response.menu;
-                    // 生成菜单树
-                    generateMenuTree(menuData);
-                    // 加载父级菜单选项
-                    loadParentMenuOptions('#menu-parent');
-                    // 清空编辑表单
-                    resetMenuForm();
-                } else {
-                    alert('加载菜单数据失败: ' + response.error);
-                }
-            },
-            error: function() {
-                alert('加载菜单数据失败');
-            }
-        });
-    }
-    
-    // 生成菜单树
-    function generateMenuTree(menuData) {
-        const menuTree = $('#menu-tree');
-        menuTree.empty();
-        
-        // 按父级ID和排序号排序
-        menuData.sort(function(a, b) {
-            if (a.parent_id === b.parent_id) {
-                return a.order - b.order;
-            }
-            return a.parent_id.localeCompare(b.parent_id);
-        });
-        
-        // 构建菜单树结构
-        const menuMap = {};
-        const rootMenus = [];
-        
-        // 首先创建所有菜单项
-        menuData.forEach(menu => {
-            menuMap[menu.id] = menu;
-            if (menu.parent_id === '0') {
-                rootMenus.push(menu);
-            }
-        });
-        
-        // 递归生成菜单树
-        function generateMenuLevel(menus) {
-            const levelHtml = [];
-            
-            menus.forEach(menu => {
-                const hasChildren = menuData.some(m => m.parent_id === menu.id);
-                
-                let menuHtml = `
-                    <li class="list-group-item menu-item" data-id="${menu.id}">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div class="d-flex align-items-center">
-                                ${hasChildren ? '<i class="fa fa-chevron-down mr-2 menu-toggle"></i>' : '<i class="fa fa-angle-right mr-2 text-muted"></i>'}
-                                <i class="fa ${menu.icon || 'fa-circle-o'} mr-2"></i>
-                                <span>${menu.name}</span>
-                            </div>
-                            <div>
-                                <button class="btn btn-sm btn-outline-primary edit-menu" data-id="${menu.id}">
-                                    <i class="fa fa-pencil"></i>
-                                </button>
-                            </div>
-                        </div>
-                `;
-                
-                if (hasChildren) {
-                    const childMenus = menuData.filter(m => m.parent_id === menu.id);
-                    menuHtml += '<ul class="list-group ml-4 mt-2">';
-                    menuHtml += generateMenuLevel(childMenus);
-                    menuHtml += '</ul>';
-                }
-                
-                menuHtml += '</li>';
-                levelHtml.push(menuHtml);
-            });
-            
-            return levelHtml.join('');
-        }
-        
-        // 生成根菜单
-        menuTree.html(generateMenuLevel(rootMenus));
-        
-        // 绑定菜单点击事件
-        bindMenuEvents();
-    }
-    
-    // 绑定菜单事件
-    function bindMenuEvents() {
-        // 菜单切换事件
-        $('.menu-toggle').click(function() {
-            const $this = $(this);
-            const $parent = $this.closest('.menu-item');
-            const $submenu = $parent.find('ul:first');
-            
-            if ($submenu.is(':visible')) {
-                $submenu.hide();
-                $this.removeClass('fa-chevron-down').addClass('fa-chevron-right');
-            } else {
-                $submenu.show();
-                $this.removeClass('fa-chevron-right').addClass('fa-chevron-down');
-            }
-        });
-        
-        // 编辑菜单按钮点击事件
-        $('.edit-menu').click(function() {
-            const menuId = $(this).data('id');
-            editMenu(menuId);
-        });
-        
-        // 菜单项点击事件
-        $('.menu-item').click(function(e) {
-            // 阻止事件冒泡
-            if (!$(e.target).is('.edit-menu') && !$(e.target).is('.menu-toggle')) {
-                const menuId = $(this).data('id');
-                editMenu(menuId);
-            }
-        });
-    }
-    
-    // 编辑菜单
-    function editMenu(menuId) {
-        // 获取菜单数据
-        $.ajax({
-            url: '/api/menu_config',
-            type: 'GET',
-            success: function(response) {
-                if (response.success) {
-                    const menuData = response.menu;
-                    const menu = menuData.find(m => m.id === menuId);
-                    
-                    if (menu) {
-                        // 填充编辑表单
-                        $('#menu-id').val(menu.id);
-                        $('#menu-name').val(menu.name);
-                        $('#menu-url').val(menu.url);
-                        $('#menu-icon').val(menu.icon);
-                        $('#menu-parent').val(menu.parent_id);
-                        $('#menu-order').val(menu.order);
-                        $('#menu-visible').prop('checked', menu.visible !== false);
-                        $('#menu-enabled').prop('checked', menu.enabled !== false);
-                    }
-                }
-            }
-        });
-    }
-    
-    // 重置菜单表单
-    function resetMenuForm() {
-        $('#menu-form')[0].reset();
-        $('#menu-id').val('');
-    }
-    
-    // 加载父级菜单选项
-    function loadParentMenuOptions(selector) {
-        $.ajax({
-            url: '/api/menu_config',
-            type: 'GET',
-            success: function(response) {
-                if (response.success) {
-                    const menuData = response.menu;
-                    const $select = $(selector);
-                    
-                    // 清空现有选项（保留顶级菜单选项）
-                    $select.html('<option value="0">顶级菜单</option>');
-                    
-                    // 添加父级菜单选项
-                    menuData.forEach(menu => {
-                        if (menu.parent_id === '0') {
-                            $select.append(`<option value="${menu.id}">${menu.name}</option>`);
-                        }
-                    });
-                }
-            }
-        });
-    }
-    
-    // 保存菜单
-    function saveMenu(menu) {
-        $.ajax({
-            url: '/api/menu_config',
-            type: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({ menu: [menu] }),
-            success: function(response) {
-                if (response.success) {
-                    alert('保存成功');
-                    loadMenuData();
-                } else {
-                    alert('保存失败: ' + response.error);
-                }
-            },
-            error: function() {
-                alert('保存失败');
-            }
-        });
-    }
-    
-    // 删除菜单
-    function deleteMenu(menuId) {
-        $.ajax({
-            url: '/api/menu_config',
-            type: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({ delete: menuId }),
-            success: function(response) {
-                if (response.success) {
-                    alert('删除成功');
-                    loadMenuData();
-                } else {
-                    alert('删除失败: ' + response.error);
-                }
-            },
-            error: function() {
-                alert('删除失败');
-            }
-        });
-    }
-});
-</script>
-    <!-- 引入Bootstrap JS -->
-    <script src="../static/js/bootstrap.bundle.min.js"></script>
+<script defer src="{{ url_for('static', filename='js/menu_management.js') }}?v=20261106"></script>
 </body>
 </html>
