@@ -9945,6 +9945,12 @@ def login():
             session['user_id'] = user.id
             session['is_admin'] = user.is_admin
             session['username'] = user.username
+            # 「记住登录状态」：勾选则写持久 Cookie（有效期 PERMANENT_SESSION_LIFETIME），
+            # 不勾选则为浏览器会话级 Cookie，关闭浏览器即失效。
+            if request.is_json:
+                session.permanent = bool((request.get_json(silent=True) or {}).get('remember'))
+            else:
+                session.permanent = request.form.get('remember') in ('1', 'true', 'on')
             
             # 获取用户权限信息并存储到session
             if not user.is_admin:
