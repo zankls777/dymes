@@ -610,6 +610,33 @@ function revealLoadedTable(rowCount) {
 }
 
 
+function clearSearchTimeoutNotice() {
+    const old = document.getElementById('search-timeout-notice');
+    if (old) old.remove();
+}
+
+
+/**
+ * 大表查询超时提示。
+ * 后端对数据页查询设置了时间预算（sub_list/usage_list 百万行级大表，极端模糊条件
+ * 需要整表扫描数秒到数十秒）；超时会返回 search_timeout=true 且 items 为空。
+ * 此处明确提示「不是没有数据，而是查询被中止」，引导用户收窄筛选条件。
+ */
+function showSearchTimeoutNotice() {
+    const empty = document.getElementById('empty-state');
+    if (empty) empty.classList.add('d-none'); // 超时不代表无数据，避免误报「没有找到」
+    const old = document.getElementById('search-timeout-notice');
+    if (old) old.remove();
+    const alertHtml = `
+        <div id="search-timeout-notice" class="alert alert-warning alert-dismissible fade show" role="alert">
+            本次查询数据量较大，已超过等待上限被中止。请增加更精确的筛选条件（如完整的品番/图纸号）后重试。
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>`;
+    const container = document.querySelector('.card-body');
+    if (container) container.insertAdjacentHTML('afterbegin', alertHtml);
+}
+
+
 /**
  * 统一更新分页控件（供 sub_list / usage_list 等 AJAX 局部刷新页面复用）
  * 修复：此前仅更新带 .pagination-info 的文本，且模板缺少该类导致整体为空操作，
@@ -620,20 +647,31 @@ function revealLoadedTable(rowCount) {
  */
 function updatePaginationControls(pagination, endpoint) {
     if (!pagination) return;
-    const total = pagination.total || 0;
+    // total 为 null/undefined 表示服务端总数统计超时（大表），此时只展示上一页/下一页
+    const totalKnown = pagination.total !== null && pagination.total !== undefined;
+    const total = totalKnown ? pagination.total : null;
     const page = pagination.page || 1;
-    const pages = Math.max(1, pagination.pages || 1);
+    const pages = totalKnown ? Math.max(1, pagination.pages || 1) : null;
+    const hasNext = pagination.has_next !== undefined
+        ? !!pagination.has_next
+        : (pages ? page < pages : false);
 
     // 1) 记录数/页码文本
     const totalEl = document.querySelector('.pagination-info');
     if (totalEl) {
-        totalEl.textContent = `共 ${total} 条记录，当前第 ${page} 页 / 共 ${pages} 页`;
+        totalEl.textContent = totalKnown
+            ? `共 ${total} 条记录，当前第 ${page} 页 / 共 ${pages} 页`
+            : `共 -- 条记录（数据量较大，已省略总数统计），当前第 ${page} 页`;
     }
 
     // 2) 跳转输入框：同步 max 与当前页，避免用旧 max 跳到不存在的页码
     const jumpInput = document.getElementById('jumpToPage');
     if (jumpInput) {
-        jumpInput.max = String(pages);
+        if (pages) {
+            jumpInput.max = String(pages);
+        } else {
+            jumpInput.removeAttribute('max');
+        }
         jumpInput.value = String(page);
     }
 
@@ -652,11 +690,15 @@ function updatePaginationControls(pagination, endpoint) {
     // 与后端 PaginationHelper.iter_pages 保持一致：省略号用 null 表示
     // 后端参数 left_edge=1, left_current=2, right_current=2, right_edge=1
     const nums = [];
-    const push = (n) => { if (n >= 1 && n <= pages && !nums.includes(n)) nums.push(n); };
-    push(1);                                                          // left_edge=1 → 首 1 页
-    for (let x = Math.max(1, page - 2); x <= Math.min(pages, page + 2); x++) push(x); // 当前页左右各 2 页
-    push(pages);                                                      // right_edge=1 → 末 1 页
-    nums.sort((a, b) => a - b);
+    const push = (n) => { if (n >= 1 && (!pages || n <= pages) && !nums.includes(n)) nums.push(n); };
+    if (pages) {
+        push(1);                                                          // left_edge=1 → 首 1 页
+        for (let x = Math.max(1, page - 2); x <= Math.min(pages, page + 2); x++) push(x); // 当前页左右各 2 页
+        push(pages);                                                      // right_edge=1 → 末 1 页
+        nums.sort((a, b) => a - b);
+    } else {
+        push(page);                                                       // 总数未知：仅显示当前页
+    }
 
     // 生成页码项（插入 null 占位生成省略号）
     const seq = [];
@@ -696,7 +738,7 @@ function updatePaginationControls(pagination, endpoint) {
     });
     // 下一页
     fragment.appendChild(
-        page < pages
+        hasNext
             ? makeLi(linkHtml(page + 1, '&raquo;', '下一页'))
             : makeLi('<span class="page-link" style="padding: 0.375rem 0.75rem;">&raquo;</span>', 'disabled')
     );
@@ -739,6 +781,7 @@ function initSubListPage(options = {}) {
             abortController.abort();
         }
         abortController = new AbortController();
+        clearSearchTimeoutNotice();
         
         window.pageLoader.showLoading();
         
@@ -752,6 +795,7 @@ function initSubListPage(options = {}) {
             if (response && response.items) {
                 replaceTableBody(response.items, SUBLIST_FIELDS);
                 revealLoadedTable(response.items.length);
+                if (response.search_timeout) showSearchTimeoutNotice();
                 
                 // 更新分页信息
                 if (response.pagination) {
@@ -872,6 +916,7 @@ function initUsageListPage(options = {}) {
             abortController.abort();
         }
         abortController = new AbortController();
+        clearSearchTimeoutNotice();
         
         window.pageLoader.showLoading();
         
@@ -885,6 +930,7 @@ function initUsageListPage(options = {}) {
             if (response && response.items) {
                 replaceTableBody(response.items, USAGELIST_FIELDS);
                 revealLoadedTable(response.items.length);
+                if (response.search_timeout) showSearchTimeoutNotice();
                 
                 if (response.pagination) {
                     updatePaginationControls(response.pagination, '/usage_list');

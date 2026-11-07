@@ -148,7 +148,10 @@ if __name__ == '__main__':
     # 双击/直接运行：先切到脚本目录并做端口探测，
     # 避免等 30 秒以上的数据预热后才发现已有实例在跑
     os.chdir(os.path.abspath(os.path.dirname(__file__)))
-    if _port_in_use(PORT):
+    # 开发模式开启 use_reloader 时，Werkzeug 会以 __main__ 重新执行本脚本；
+    # 重载子进程里再探测会命中父进程刚绑定的端口，被误判为「已被占用」而退出，
+    # 表现为服务打印完地址后立刻停止。因此重载子进程跳过端口探测。
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true' and _port_in_use(PORT):
         print(f"\n[提示] 端口 {PORT} 已被占用，服务可能已在运行。")
         print(f"       可直接访问 http://localhost:{PORT}")
         print("       如需重启，请先关闭已有进程（或设置 APP_PORT 换端口再启动）。")

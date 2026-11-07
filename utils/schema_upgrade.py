@@ -294,6 +294,27 @@ INDEX_STATEMENTS = [
     "ON usage_list(Part_Name COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
     "CREATE INDEX IF NOT EXISTS idx_usage_list_usage_nc_active "
     "ON usage_list(Usage COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    # 列表页搜索表单里其余可搜索字段同样需要 NOCASE 活跃部分索引：
+    # 缺少索引时『%x%』子串搜索会退化为 2.8GB 全表扫描（冷缓存实测 70s+），
+    # 强制索引扫描后只读几十 MB 的索引树。
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_color_nc_active "
+    "ON sub_list(Color COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_sq_nc_active "
+    "ON sub_list(SQ COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_length1_nc_active "
+    "ON sub_list(Length_Cut COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_rel1_nc_active "
+    "ON sub_list(Rel1 COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_rel2_nc_active "
+    "ON sub_list(Rel2 COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_seal1_nc_active "
+    "ON sub_list(Seal1 COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_seal2_nc_active "
+    "ON sub_list(Seal2 COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_sub_list_remark1_nc_active "
+    "ON sub_list(Remark1 COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
+    "CREATE INDEX IF NOT EXISTS idx_usage_list_length_nc_active "
+    "ON usage_list(Length COLLATE NOCASE) WHERE deleted=0 AND is_frozen=0",
 ]
 
 

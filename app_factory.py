@@ -355,6 +355,27 @@ def create_app():
                         app.logger.warning(f"资材品番字典同步失败(非致命): {sync_err}")
 
                 threading.Thread(target=_sync_inventory_pno_dict, daemon=True).start()
+
+                # 列表页缓存预热：sub_list / usage_list 的活跃行数 COUNT 与各搜索字段索引在
+                # 冷缓存下需读取 GB 级页面（机械盘单次数秒~数十秒）。这里在启动 10s 后于
+                # 空闲期预读一次，结果写入计数缓存（TTL=30min），并每 10 分钟刷新，
+                # 使用户首次打开/首次筛选即可直接命中系统文件缓存；
+                # 用户请求侧另有时间预算保护，不会长时间等待。
+                def _warm_list_counts():
+                    import time as _t
+                    _t.sleep(10)  # 仅避让启动瞬间的初始化写锁
+                    from routes import warm_list_total_counts, warm_search_indexes
+                    while True:
+                        try:
+                            # 先预读搜索索引（用户最直观的「加筛选后等待」），再预热默认总数
+                            warm_search_indexes(app)
+                            warm_list_total_counts(app, ttl=1800)
+                        except Exception as warm_err:
+                            app.logger.warning(f"列表缓存预热失败(非致命): {warm_err}")
+                        # 每 10 分钟刷新一次，抵消系统文件缓存淘汰，保持索引页常驻
+                        _t.sleep(600)
+
+                threading.Thread(target=_warm_list_counts, daemon=True).start()
         except Exception as e:
             app.logger.warning(f"SQLite初始化配置失败: {e}")
         

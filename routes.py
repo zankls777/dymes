@@ -108,6 +108,7 @@ from security import check_blocked, record_failure, record_success, get_remainin
 from flask_login import current_user,login_required,logout_user,login_user
 from functools import wraps
 from app_factory import db
+from sqlalchemy import func, text
 
 # # 新增SubList下载路由
 #
@@ -3750,6 +3751,45 @@ def data_management_db_stats():
     except Exception as e:
         current_app.logger.error(f"数据库状态查询失败: {e}", exc_info=True)
         return jsonify({'success': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
+@main_bp.route('/data_management/vacuum/start', methods=['POST'])
+@login_required
+@csrf_exempt_route
+def data_management_vacuum_start():
+    """手动触发空闲页回收（仅管理员）。
+
+    回收可能耗时较久（取决于空闲页数量），改为后台任务 + 进度轮询：
+    本接口启动任务并立即返回；前端轮询 /data_management/vacuum/progress 展示进度。
+    """
+    if 'user_id' not in session or not session.get('is_admin'):
+        return jsonify({'success': False, 'error': '无权限，仅管理员可回收'}), 403
+    try:
+        from db_maintenance import start_vacuum_async
+        start_vacuum_async(current_app._get_current_object())
+        current_app.logger.warning(
+            f"手动触发空闲页回收 by {session.get('username')}")
+        return jsonify({'success': True, 'started': True,
+                        'message': '已开始回收空闲页，请查看进度'})
+    except RuntimeError as e:   # 已有任务在跑等业务性提示，不作为服务器错误
+        return jsonify({'success': False, 'error': str(e)}), 409
+    except Exception as e:
+        current_app.logger.error(f"空闲页回收启动失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
+@main_bp.route('/data_management/vacuum/progress')
+@login_required
+@csrf_exempt_route
+def data_management_vacuum_progress():
+    """返回空闲页回收进度（供前端轮询）。"""
+    if 'user_id' not in session or not session.get('is_admin'):
+        return jsonify({'success': False, 'error': '无权限'}), 403
+    try:
+        from db_maintenance import get_vacuum_progress
+        return jsonify({'success': True, 'progress': get_vacuum_progress()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @main_bp.route('/data_management/backup/download')
@@ -11692,61 +11732,52 @@ def sub_list():
         active_search = {f: v for f, v in search_params.items()
                          if v and f in searchable_fields}
 
-        # P1-1: COUNT 结果缓存 - 所有查询都缓存计数(TTL=60s)，避免翻页时重复 COUNT
+        # P1-1: COUNT 结果缓存 - 命中缓存时不再重复统计（写操作会整体失效缓存）
         count_cache_key = f"count:sub_list:{':'.join(f'{k}={v}' for k, v in sorted(search_params.items()) if v)}"
-
-        # 构造数据库侧过滤条件：用等值/全模糊两段式取代纯 LIKE '%x%'（详见辅助函数说明）
-        # 两段式只对「唯一一个参与搜索的字段」启用（多字段叠加时索引收益有限，
-        # 且需保证结果语义严格一致，故仅在单字段搜索时走索引快路径）
-        if len(active_search) == 1:
-            field, value = next(iter(active_search.items()))
-            column = getattr(SubList, field)
-
-            def _make_single(expr):
-                return db.session.query(*sub_list_columns).filter(*base_filters, expr)
-
-            total = query_cache_manager.get_count(count_cache_key)
-            if total is None:
-                _, total = _paginate_with_fuzzy_fallback(
-                    column, value, _make_single, page, per_page)
-                query_cache_manager.set_count(count_cache_key, total)
-            items_list, _ = _paginate_with_fuzzy_fallback(
-                column, value, _make_single, page, per_page)
-        else:
-            # M-6：多字段搜索逐字段等值探测 + 全模糊兜底（结果与全模糊一致，但可命中索引）
-            filters = _build_multi_field_filters(SubList, active_search, base_filters)
-            total = query_cache_manager.get_count(count_cache_key)
-            if total is None:
-                total = db.session.query(func.count(SubList.id)).filter(*filters).scalar()
-                total = total or 0
-                # 所有查询都缓存COUNT结果（TTL=60s）
-                query_cache_manager.set_count(count_cache_key, total)
-            else:
-                current_app.logger.debug(f"SubList COUNT缓存命中: {count_cache_key}")
-            # 数据查询：复用 filters，with_entities 已指定列，直接分页
-            items_list = (db.session.query(*sub_list_columns).filter(*filters)
-                          .order_by(SubList.id)
-                          .offset((page - 1) * per_page).limit(per_page).all())
-
-        total = total or 0
-        total_pages = max(1, (total + per_page - 1) // per_page)
 
         # 直接从元组构建字典，避免 ORM 对象开销
         column_names = ['id', 'VehicleType', 'SubPno', 'EoKsc', 'SetCode', 'Circuit',
                        'Wire', 'WireCode', 'Color', 'SQ', 'Length_Cut', 'Length_Cut2',
                        'Tml1', 'Tml2', 'Rel1', 'Rel2', 'Seal1', 'Seal2',
                        'Joint_Points', 'Remark1']
+
+        # 构造数据库侧过滤条件：单字段走「等值索引快路径 + 强制索引模糊兜底」，
+        # 多字段走「逐字段等值探测 + 全模糊兜底」（详见辅助函数说明）
+        if len(active_search) == 1:
+            field, value = next(iter(active_search.items()))
+            items_list, total, search_timeout = _single_field_page(
+                SubList, 'sub_list', sub_list_columns, column_names,
+                field, value, page, per_page, count_cache_key)
+        else:
+            filters = _build_multi_field_filters(SubList, 'sub_list', active_search, base_filters)
+            # 先取数据页（LIMIT 尽早返回），再在时间预算内统计总数；
+            # 大表冷缓存下 COUNT 可能需数十秒，超时则返回 None（前端按未知总数展示）
+            page_stmt = (db.session.query(*sub_list_columns).filter(*filters)
+                         .order_by(SubList.id)
+                         .offset((page - 1) * per_page).limit(per_page).statement)
+            items_list = _bounded_rows(page_stmt)
+            search_timeout = items_list is None
+            if search_timeout:
+                items_list, total = [], None
+            else:
+                count_stmt = db.session.query(func.count(SubList.id)).filter(*filters).statement
+                total = _cached_count(count_cache_key, count_stmt)
+
+        has_next = (len(items_list) >= per_page) if total is None else (page < max(1, (total + per_page - 1) // per_page))
+        total_pages = None if total is None else max(1, (total + per_page - 1) // per_page)
+
         items_data = {
             'items': [dict(zip(column_names, row)) for row in items_list],
+            'search_timeout': search_timeout,
             'pagination': {
                 'page': page,
                 'per_page': per_page,
                 'total': total,
                 'pages': total_pages,
                 'has_prev': page > 1,
-                'has_next': page < total_pages,
+                'has_next': has_next,
                 'prev_num': page - 1 if page > 1 else None,
-                'next_num': page + 1 if page < total_pages else None,
+                'next_num': page + 1 if has_next else None,
             }
         }
 
@@ -11788,7 +11819,8 @@ def sub_list():
         
         def iter_pages(self, left_edge=2, left_current=2, right_current=5, right_edge=2):
             last_page = self.pages
-            if last_page <= 0:
+            # pages 为 None 表示总数统计超时（未知），此时不渲染数字页码，只保留上一页/下一页
+            if not last_page or last_page <= 0:
                 return []
             num = self.page
             pages_set = set()
@@ -11900,61 +11932,51 @@ def usage_list():
         active_search = {f: v for f, v in search_params.items()
                          if v and f in searchable_fields}
 
-        # P1-1: COUNT 结果缓存 - 所有查询都缓存计数(TTL=60s)，避免翻页时重复 COUNT
+        # P1-1: COUNT 结果缓存 - 命中缓存时不再重复统计（写操作会整体失效缓存）
         count_cache_key = f"count:usage_list:{':'.join(f'{k}={v}' for k, v in sorted(search_params.items()) if v)}"
 
-        # 构造数据库侧过滤条件：用等值/全模糊两段式取代纯 LIKE '%x%'（详见辅助函数说明）
-        # 两段式只对「唯一一个参与搜索的字段」启用；多字段叠加时索引收益有限，
-        # 且需保证结果语义严格一致，故仅在单字段搜索时走索引快路径
-        if len(active_search) == 1:
-            field, value = next(iter(active_search.items()))
-            column = getattr(UsageList, field)
-
-            def _make_single(expr):
-                return db.session.query(*usage_list_columns).filter(*base_filters, expr)
-
-            total = query_cache_manager.get_count(count_cache_key)
-            if total is None:
-                _, total = _paginate_with_fuzzy_fallback(
-                    column, value, _make_single, page, per_page)
-                query_cache_manager.set_count(count_cache_key, total)
-            items_list, _ = _paginate_with_fuzzy_fallback(
-                column, value, _make_single, page, per_page)
-        else:
-            # 搜索优化：不区分大小写的子串模糊匹配（与下载路由语义一致）
-            # 转义 LIKE 通配符，用户输入按字面值处理，避免误配/漏配
-            # M-6：逐字段等值探测 + 全模糊兜底（结果与全模糊一致，但可命中索引）
-            filters = _build_multi_field_filters(UsageList, active_search, base_filters)
-
-            total = query_cache_manager.get_count(count_cache_key)
-            if total is None:
-                total = db.session.query(sa_func.count(UsageList.id)).filter(*filters).scalar()
-                total = total or 0
-                query_cache_manager.set_count(count_cache_key, total)
-            else:
-                current_app.logger.debug(f"UsageList COUNT缓存命中: {count_cache_key}")
-
-            items_list = (db.session.query(*usage_list_columns).filter(*filters)
-                          .order_by(UsageList.id)
-                          .offset((page - 1) * per_page).limit(per_page).all())
-
-        total = total or 0
-        total_pages = max(1, (total + per_page - 1) // per_page)
-        
         # 直接从元组构建字典，避免 ORM 对象开销
         column_names = ['id', 'VehicleType', 'SubPno', 'EoKsc', 'Comp_Kind', 'Detail_Kind',
                        'KscPno', 'Part_Name', 'Usage', 'Length']
+
+        # 构造数据库侧过滤条件：单字段走「等值索引快路径 + 强制索引模糊兜底」，
+        # 多字段走「逐字段等值探测 + 全模糊兜底」（详见辅助函数说明）
+        if len(active_search) == 1:
+            field, value = next(iter(active_search.items()))
+            items_list, total, search_timeout = _single_field_page(
+                UsageList, 'usage_list', usage_list_columns, column_names,
+                field, value, page, per_page, count_cache_key)
+        else:
+            # 搜索优化：不区分大小写的子串模糊匹配（与下载路由语义一致）
+            # M-6：逐字段等值探测 + 全模糊兜底（结果与全模糊一致，但可命中索引）
+            filters = _build_multi_field_filters(UsageList, 'usage_list', active_search, base_filters)
+            # 先取数据页，再在时间预算内统计总数（超时返回 None，前端按未知总数展示）
+            page_stmt = (db.session.query(*usage_list_columns).filter(*filters)
+                         .order_by(UsageList.id)
+                         .offset((page - 1) * per_page).limit(per_page).statement)
+            items_list = _bounded_rows(page_stmt)
+            search_timeout = items_list is None
+            if search_timeout:
+                items_list, total = [], None
+            else:
+                count_stmt = db.session.query(sa_func.count(UsageList.id)).filter(*filters).statement
+                total = _cached_count(count_cache_key, count_stmt)
+
+        has_next = (len(items_list) >= per_page) if total is None else (page < max(1, (total + per_page - 1) // per_page))
+        total_pages = None if total is None else max(1, (total + per_page - 1) // per_page)
+
         items_data = {
             'items': [dict(zip(column_names, row)) for row in items_list],
+            'search_timeout': search_timeout,
             'pagination': {
                 'page': page,
                 'per_page': per_page,
                 'total': total,
                 'pages': total_pages,
                 'has_prev': page > 1,
-                'has_next': page < total_pages,
+                'has_next': has_next,
                 'prev_num': page - 1 if page > 1 else None,
-                'next_num': page + 1 if page < total_pages else None,
+                'next_num': page + 1 if has_next else None,
             }
         }
         
@@ -11993,7 +12015,8 @@ def usage_list():
         
         def iter_pages(self, left_edge=2, left_current=2, right_current=5, right_edge=2):
             last_page = self.pages
-            if last_page <= 0:
+            # pages 为 None 表示总数统计超时（未知），此时不渲染数字页码，只保留上一页/下一页
+            if not last_page or last_page <= 0:
                 return []
             num = self.page
             pages_set = set()
@@ -12031,37 +12054,93 @@ def usage_list():
 # 辅助函数：构造不区分大小写的子串模糊匹配表达式（搜索用）
 #
 # 性能说明（重要）：
-#   156 万行的 sub_list 上，前缀通配 LIKE '%x%' 无法命中任何索引，必须全表扫描，
-#   单次查询实测约 350~1800ms（COUNT + 数据页各一次 → 可达 2s 以上）。
-#   实测「前缀匹配 LIKE 'x%'」和「等值 = 'x'」都能命中 COLLATE NOCASE 部分索引
-#   （2~6ms，相差 2 个数量级），而前缀匹配会漏掉子串出现在词中的行
-#   （如品番 '91881-J6031' 搜 'J6031'），会改变现有搜索语义。
+#   sub_list 约 198 万行（库文件 2.8GB，位于机械盘）、usage_list 约 127 万行。
+#   『%x%』形式的子串 LIKE 无法命中索引，只能全表扫描，冷缓存下单次 COUNT/数据页
+#   需读取 GB 级页面，实测 5~80 秒；这正是一次打开列表页就长时间等待的根因。
 #
-#   因此这里改为「等值探测 + 全模糊兜底」两段式：
-#   1) 先用等值 NOCASE 查询走索引，若命中说明用户输入的就是完整品番等值；
-#   2) 未命中再退回原来的全模糊 LIKE（全表扫描，与原行为完全一致）。
-#   等值匹配是全模糊匹配的子集，两段合并的结果与优化前**逐行完全一致**，
-#   同时覆盖了"按品番号整串搜索"这一最常用场景，且不改变任何搜索语义。
-#
-#   注意：不能把两者用 OR 合并成单个表达式——实测 SQLite 的 LIKE 索引优化会被 OR
-#   破坏并退化为全表扫描。必须拆成两次独立查询。
+#   1) 等值快路径：用户输入正好是某个字段整串时，等值 NOCASE 比较可命中
+#      『COLLATE NOCASE 部分索引』（毫秒级），因此先做等值探测；
+#   2) 模糊兜底：仍保持原有的子串匹配语义，但用 INDEXED BY 强制扫描该字段的
+#      NOCASE 部分索引（索引远小于表），避免读取整表页面；
+#   3) 所有 COUNT 都带时间预算（_bounded_count），超时即中断并返回 None，
+#      页面先展示当页数据、总数标注为未知，不再让用户为分页数等几十秒。
 _PREFIX_UNUSABLE = ('%', '_')
 
+# 字段 -> 可在其中/模糊搜索时强制使用的 NOCASE 部分索引（key 为数据库列名）
+_NOCASE_ACTIVE_INDEXES = {
+    'sub_list': {
+        'SubPno': 'idx_sub_list_subpno_active',
+        'EoKsc': 'idx_sub_list_eoksc_active',
+        'VehicleType': 'idx_sub_list_vehicle_active',
+        'Circuit': 'idx_sub_list_circuit_active',
+        'SetCode': 'idx_sub_list_setcode_active',
+        'Wire': 'idx_sub_list_wire_nc_active',
+        'WireCode': 'idx_sub_list_wirecode_nc_active',
+        'Tml1': 'idx_sub_list_tml1_nc_active',
+        'Tml2': 'idx_sub_list_tml2_nc_active',
+        'Length_Cut': 'idx_sub_list_length1_nc_active',
+        'Length_Cut2': 'idx_sub_list_length2_nc_active',
+        'Color': 'idx_sub_list_color_nc_active',
+        'SQ': 'idx_sub_list_sq_nc_active',
+        'Rel1': 'idx_sub_list_rel1_nc_active',
+        'Rel2': 'idx_sub_list_rel2_nc_active',
+        'Seal1': 'idx_sub_list_seal1_nc_active',
+        'Seal2': 'idx_sub_list_seal2_nc_active',
+        'Remark1': 'idx_sub_list_remark1_nc_active',
+    },
+    'usage_list': {
+        'SubPno': 'idx_usage_list_subpno_active',
+        'EoKsc': 'idx_usage_list_eoksc_active',
+        'VehicleType': 'idx_usage_list_vehicle_active',
+        'Comp_Kind': 'idx_usage_list_comp_kind_active',
+        'Detail_Kind': 'idx_usage_list_detail_kind_nc_active',
+        'KscPno': 'idx_usage_list_kscpno_active',
+        'Part_Name': 'idx_usage_list_partname_nc_active',
+        'Usage': 'idx_usage_list_usage_nc_active',
+        'Length': 'idx_usage_list_length_nc_active',
+    },
+}
 
-def _build_fuzzy_candidate_expr(column, value):
+# COUNT 时间预算（毫秒）：超时即放弃统计，避免大表冷缓存下的长等待
+_COUNT_BUDGET_MS = 800
+# 数据页查询预算：整表扫描等极端条件至少给足冷缓存读盘时间（实测冷索引扫描 5~8s），
+# 超出才中断并提示用户收窄条件，避免误判为「无结果」
+_PAGE_BUDGET_MS = 8000
+# 后台预热默认视图总数时使用较宽松的预算（不占用用户请求线程）
+_COUNT_HEAVY_BUDGET_MS = 120000
+# 计数缓存哨兵：表示该条件近期统计超时，短时间内不再重试
+_COUNT_UNKNOWN = -1
+_COUNT_TTL = 600
+_COUNT_UNKNOWN_TTL = 120
+
+_count_conn_lock = threading.Lock()
+_count_conn = None
+
+
+def _like_pattern(value):
+    """把用户输入转义为 LIKE 子串模式（按字面值匹配，不解释 % 和 _）。"""
+    escaped = str(value).replace('\\', '\\\\').replace('%', r'\%').replace('_', r'\_')
+    return '%' + escaped + '%'
+
+
+def _build_fuzzy_candidate_expr(column, value, table_name):
     """构造「等值」候选表达式，用于命中 COLLATE NOCASE 索引；不可用时返回 None。
 
-    刻意不转义、不追加通配符，SQLAlchemy 对裸等值比较生成简单 SQL，
-    SQLite 才能对其应用索引优化。
+    - 刻意不转义、不追加通配符，SQLAlchemy 对裸等值比较生成简单 SQL，
+      SQLite 才能对其应用索引优化；
+    - 仅当该字段存在 NOCASE 部分索引时才启用快路径：普通的 BINARY 索引无法服务于
+      NOCASE 比较，强制等值探测只会多一次全表扫描。
     """
     if db.engine.dialect.name != 'sqlite':
         return None
-    text = str(value)
-    if not text or text[0] in _PREFIX_UNUSABLE:
+    if not _NOCASE_ACTIVE_INDEXES.get(table_name, {}).get(column.name):
         return None
-    if any(ch in text for ch in ('%', '_', '\\')):
+    text_value = str(value)
+    if not text_value or text_value[0] in _PREFIX_UNUSABLE:
         return None
-    return column.collate('NOCASE') == text
+    if any(ch in text_value for ch in ('%', '_', '\\')):
+        return None
+    return column.collate('NOCASE') == text_value
 
 
 def _fuzzy_search_expr(column, value):
@@ -12070,34 +12149,200 @@ def _fuzzy_search_expr(column, value):
     - SQLite: 使用 NOCASE 排序规则，避免 lower() 函数开销（实测快 2 倍）
     - 其他方言: 回退到 ilike
     """
-    escaped = str(value).replace('\\', '\\\\').replace('%', r'\%').replace('_', r'\_')
-    pattern = '%' + escaped + '%'
+    pattern = _like_pattern(value)
     if db.engine.dialect.name == 'sqlite':
         return column.collate('NOCASE').like(pattern, escape='\\')
     return column.ilike(pattern, escape='\\')
 
 
-def _paginate_with_fuzzy_fallback(column, value, make_query, page, per_page):
-    """两段式模糊搜索分页：等值走索引取候选，未命中退回全表全模糊。
+def _get_count_connection():
+    """获取进程内复用的只读统计连接（懒加载；常驻可避免反复打开/关闭 WAL 文件）。"""
+    global _count_conn
+    if _count_conn is not None:
+        return _count_conn
+    db_path = db.engine.url.database
+    if not db_path:
+        return None
+    if not os.path.isabs(db_path):
+        db_path = os.path.join(current_app.root_path, db_path)
+    if not os.path.exists(db_path):
+        return None
+    import sqlite3 as sqlite_driver
+    con = sqlite_driver.connect(db_path, timeout=30, check_same_thread=False)
+    try:
+        # 库文件已被大量增删改切碎，索引页散落在 2.8GB 文件各处；把 mmap 覆盖到整个文件，
+        # 使随机页访问走内存映射（避免每页一次 pread 系统调用，并享受系统顺序预读）
+        mmap_bytes = min(os.path.getsize(db_path), 3 * 1024 ** 3)
+        con.execute('PRAGMA cache_size=-32768')
+        con.execute(f'PRAGMA mmap_size={max(mmap_bytes, 512 * 1024 ** 2)}')
+        con.execute('PRAGMA busy_timeout=30000')
+    except Exception:
+        pass
+    _count_conn = con
+    return con
 
-    - make_query(expr) 返回带该过滤条件的 SQLAlchemy Query。
-    - 返回 (items, total)；total==0 时 items 必为空。
+
+def _run_bounded(sql, binds, budget_ms, fetch_all):
+    """在独立只读连接上执行 SQL，并施加硬性时间预算；超时返回 None。
+
+    说明：百万行级大表 + 机械盘，任何全表/全索引扫描都可能耗时数秒到数十秒。
+    统计与慢查询统一在这里卡时间上限，超时用 sqlite3 interrupt 中断，
+    让请求线程能尽快返回（数据页仍正常展示，仅总数/慢查询降级）。
     """
-    fuzzy_expr = _fuzzy_search_expr(column, value)
-    candidate_expr = _build_fuzzy_candidate_expr(column, value)
+    with _count_conn_lock:
+        con = _get_count_connection()
+        if con is None:
+            return None
+        timed_out = {'flag': False}
 
+        def _abort():
+            timed_out['flag'] = True
+            try:
+                con.interrupt()
+            except Exception:
+                pass
+
+        timer = threading.Timer(max(0.05, budget_ms / 1000.0), _abort)
+        timer.daemon = True
+        timer.start()
+        try:
+            cursor = con.execute(sql) if binds is None else con.execute(sql, binds)
+            return cursor.fetchall() if fetch_all else cursor.fetchone()
+        except Exception as exc:
+            if timed_out['flag'] or 'interrupt' in str(exc).lower():
+                current_app.logger.info('查询超过 %.0fms 预算，已中断', budget_ms)
+            else:
+                current_app.logger.warning(f'查询执行失败: {exc}')
+            return None
+        finally:
+            timer.cancel()
+
+
+def _compile_statement(statement):
+    """把 SQLAlchemy 语句编译成 (SQL 文本, 位置参数)；原生 SQL 字符串直接返回。"""
+    if isinstance(statement, str):
+        return statement, None
+    compiled = statement.compile(db.engine, compile_kwargs={'render_postcompile': True})
+    sql = str(compiled)
+    positiontup = getattr(compiled, 'positiontup', None) or []
+    binds = tuple(compiled.params[name] for name in positiontup) if positiontup else None
+    return sql, binds
+
+
+def _bounded_count(statement, params=None, budget_ms=_COUNT_BUDGET_MS):
+    """带时间预算的 COUNT：超时返回 None（总数未知）。"""
+    if db.engine.dialect.name != 'sqlite':
+        return db.session.execute(statement, params or {}).scalar()
+    sql, binds = _compile_statement(statement)
+    if isinstance(statement, str) and params is not None:
+        binds = params
+    row = _run_bounded(sql, binds, budget_ms, fetch_all=False)
+    return int(row[0]) if row else None
+
+
+def _bounded_rows(statement, params=None, budget_ms=_PAGE_BUDGET_MS):
+    """带时间预算的数据页查询；超时返回 None（调用方按「查询超时」降级提示）。"""
+    if db.engine.dialect.name != 'sqlite':
+        return db.session.execute(statement, params or {}).fetchall()
+    sql, binds = _compile_statement(statement)
+    if isinstance(statement, str) and params is not None:
+        binds = params
+    return _run_bounded(sql, binds, budget_ms, fetch_all=True)
+
+
+def _cached_count(cache_key, statement, params=None, budget_ms=_COUNT_BUDGET_MS):
+    """计数缓存 + 时间预算统计；返回 None 表示总数未知（前端降级展示）。"""
+    cached = query_cache_manager.get_count(cache_key)
+    if cached is not None:
+        return None if cached == _COUNT_UNKNOWN else cached
+    total = _bounded_count(statement, params, budget_ms)
+    if total is None:
+        query_cache_manager.set_count(cache_key, _COUNT_UNKNOWN, ttl=_COUNT_UNKNOWN_TTL)
+    else:
+        query_cache_manager.set_count(cache_key, total, ttl=_COUNT_TTL)
+    return total
+
+
+def _indexed_fuzzy_page(table_name, column_names, field, value, page, per_page):
+    """用 INDEXED BY 强制扫描字段的 NOCASE 部分索引取一页数据；超时返回 None。
+
+    - 按被搜索字段排序（与索引顺序一致），保证翻页结果稳定，且无需排序临时表；
+    - 命中行极少，回表取整行的代价可忽略；无匹配时需扫完整个索引，
+      因此同样受 _PAGE_BUDGET_MS 预算保护。
+    """
+    index_name = _NOCASE_ACTIVE_INDEXES.get(table_name, {}).get(field)
+    if not index_name:
+        return None
+    sql = (
+        f"SELECT {', '.join(column_names)} FROM {table_name} INDEXED BY {index_name} "
+        f"WHERE deleted = 0 AND is_frozen = 0 "
+        f"AND {field} COLLATE NOCASE LIKE :pattern "
+        f"ORDER BY {field} COLLATE NOCASE, id LIMIT :limit OFFSET :offset"
+    )
+    return _bounded_rows(sql, {
+        'pattern': _like_pattern(value),
+        'limit': per_page,
+        'offset': (page - 1) * per_page,
+    })
+
+
+def _fuzzy_count(table_name, model, field, value, count_cache_key):
+    """模糊匹配的计数：命中索引时也用 INDEXED BY，否则退回原全表 COUNT（带预算）。"""
+    index_name = _NOCASE_ACTIVE_INDEXES.get(table_name, {}).get(field)
+    if index_name:
+        sql = (
+            f"SELECT COUNT(*) FROM {table_name} INDEXED BY {index_name} "
+            f"WHERE deleted = 0 AND is_frozen = 0 "
+            f"AND {field} COLLATE NOCASE LIKE :pattern"
+        )
+        return _cached_count(count_cache_key, sql, {'pattern': _like_pattern(value)})
+    count_stmt = (db.session.query(func.count(model.id))
+                  .filter(model.deleted == False, model.is_frozen == False,
+                          _fuzzy_search_expr(getattr(model, field), value)).statement)
+    return _cached_count(count_cache_key, count_stmt)
+
+
+def _single_field_page(model, table_name, columns, column_names,
+                       field, value, page, per_page, count_cache_key):
+    """单字段搜索分页：等值索引快路径 → 强制索引模糊兜底。
+
+    返回 (items, total, timed_out)；total 为 None 表示总数未知，
+    timed_out=True 表示数据页查询超过预算被中断（前端给出收窄条件提示）。
+    """
+    column = getattr(model, field)
+    base_filters = [model.deleted == False, model.is_frozen == False]
+    offset = (page - 1) * per_page
+
+    candidate_expr = _build_fuzzy_candidate_expr(column, value, table_name)
     if candidate_expr is not None:
-        q_eq = make_query(candidate_expr)
-        total = q_eq.count()
-        if total:
-            return q_eq.offset((page - 1) * per_page).limit(per_page).all(), total
+        eq_query = db.session.query(*columns).filter(*base_filters, candidate_expr)
+        eq_items = eq_query.offset(offset).limit(per_page).all()
+        if eq_items:
+            return eq_items, _cached_count(
+                count_cache_key, eq_query.with_entities(func.count()).statement), False
+        if page > 1:
+            # 页码越界时无法区分「等值无结果」和「翻过了最后一页」，用等值统计确认
+            eq_total = _cached_count(
+                count_cache_key, eq_query.with_entities(func.count()).statement)
+            if eq_total:
+                return [], eq_total, False
 
-    # 等值未命中：子串可能出现在词中，退回全模糊（与优化前结果一致）
-    q_full = make_query(fuzzy_expr)
-    return q_full.offset((page - 1) * per_page).limit(per_page).all(), q_full.count()
+    if _NOCASE_ACTIVE_INDEXES.get(table_name, {}).get(field):
+        fuzzy_items = _indexed_fuzzy_page(table_name, column_names, field, value, page, per_page)
+    else:
+        fuzzy_query = (db.session.query(*columns)
+                       .filter(*base_filters, _fuzzy_search_expr(column, value))
+                       .order_by(model.id)
+                       .offset(offset).limit(per_page))
+        fuzzy_items = _bounded_rows(fuzzy_query.statement)
+
+    if fuzzy_items is None:
+        # 数据页查询超时：不再做计数，直接按「查询超时」降级返回
+        return [], None, True
+    return fuzzy_items, _fuzzy_count(table_name, model, field, value, count_cache_key), False
 
 
-def _build_multi_field_filters(model, active_search, base_filters):
+def _build_multi_field_filters(model, table_name, active_search, base_filters):
     """多字段搜索的过滤条件构造（M-6：逐字段等值探测 + 全模糊兜底）。
 
     语义说明：多字段之间是 AND（同时满足）。对每个字段独立做「等值探测」：
@@ -12108,12 +12353,15 @@ def _build_multi_field_filters(model, active_search, base_filters):
     由于「等值」是「全模糊」的子集，且逐字段取并集/回退不改变每个字段的判定结果，
     最终各字段 AND 组合出的结果与优化前**逐行完全一致**。
 
+    仅对存在 NOCASE 部分索引的字段做探测：其他字段的等值比较无法命中索引，
+    探测本身会变成一次全表扫描，反而更慢。
+
     base_filters 作为探测命中判定的基准（deleted/is_frozen 等），保证探测与最终查询同口径。
     """
     filters = list(base_filters)
     for field, value in active_search.items():
         column = getattr(model, field)
-        candidate_expr = _build_fuzzy_candidate_expr(column, value)
+        candidate_expr = _build_fuzzy_candidate_expr(column, value, table_name)
         if candidate_expr is not None:
             # 等值探测：命中任意一行即可确定使用等值表达式（走索引）
             if db.session.query(column).filter(*base_filters, candidate_expr).first() is not None:
@@ -12122,6 +12370,60 @@ def _build_multi_field_filters(model, active_search, base_filters):
         # 等值整表未命中：子串可能出现在词中，退回全模糊
         filters.append(_fuzzy_search_expr(column, value))
     return filters
+
+
+def warm_list_total_counts(app, budget_ms=_COUNT_HEAVY_BUDGET_MS, ttl=_COUNT_TTL):
+    """后台预热 sub_list / usage_list 默认视图（无筛选）的活跃行数。
+
+    大表 COUNT 冷缓存下要读取 GB 级页面，放在启动后的空闲时段完成，
+    避免用户首次打开列表页时等待；只写计数缓存，不影响业务数据。
+    """
+    try:
+        with app.app_context():
+            from sqlalchemy import func as sa_func
+            for cache_key, model in (('count:sub_list:', SubList),
+                                     ('count:usage_list:', UsageList)):
+                cached = query_cache_manager.get_count(cache_key)
+                if cached is not None and cached != _COUNT_UNKNOWN:
+                    continue  # 已有有效结果（未知哨兵不算，仍需重新统计）
+                stmt = (db.session.query(sa_func.count(model.id))
+                        .filter(model.deleted == False, model.is_frozen == False)).statement
+                total = _bounded_count(stmt, budget_ms=budget_ms)
+                if total is not None:
+                    query_cache_manager.set_count(cache_key, total, ttl=ttl)
+                    app.logger.info(f"列表总数预热完成 {cache_key}={total}")
+                db.session.remove()
+    except Exception as exc:
+        app.logger.warning(f"列表总数预热失败（非致命）: {exc}")
+
+
+def warm_search_indexes(app, budget_ms=_COUNT_HEAVY_BUDGET_MS):
+    """后台预读搜索用的 NOCASE 部分索引。
+
+    原因：库文件 2.8GB 位于机械盘（顺序读 77MB/s、随机 6.3ms/次），且索引页经过
+    多次批量导入/删除后已碎片化（实测单个 25MB 索引的叶子页散落在 2.4GB 范围内、
+    跳变 4500+ 次），冷文件缓存下首次按字段筛选需数秒；预读一次后同一批页面
+    会留在系统文件缓存，后续搜索仅需 100~300ms。
+
+    常用字段（品番/EO/车种）优先预热，让用户最先用到的筛选最早变快；
+    整体在后台串行执行，不占用请求线程。
+    """
+    priority_fields = ('SubPno', 'EoKsc', 'VehicleType')
+    tasks = []
+    for table_name, index_map in _NOCASE_ACTIVE_INDEXES.items():
+        for field, index_name in index_map.items():
+            # 常用字段排前面（0），其余字段随后（1）
+            tasks.append((0 if field in priority_fields else 1, table_name, index_name))
+    try:
+        with app.app_context():
+            for _rank, table_name, index_name in sorted(tasks):
+                sql = (f"SELECT COUNT(*) FROM {table_name} INDEXED BY {index_name} "
+                       f"WHERE deleted = 0 AND is_frozen = 0")
+                # 单索引预算宽松即可；失败（超时/异常）不影响业务
+                _bounded_count(sql, budget_ms=budget_ms)
+            app.logger.info('搜索索引预热完成')
+    except Exception as exc:
+        app.logger.warning(f"搜索索引预热失败（非致命）: {exc}")
 
 
 # 辅助函数：检测文件类型

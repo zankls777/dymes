@@ -633,3 +633,149 @@
             font-size: 0.95rem;
         }
     }
+
+    /* ================================================
+       页面主题（参考图风格）：白卡片 + 浅蓝表头 + 圆角分页
+       说明：统一作用于所有业务页面，只调整视觉，不改动结构与交互。
+       ================================================ */
+    body {
+        background-color: #f4f7fb;
+        color: #24344a;
+    }
+
+    /* ---------------- 卡片：浅边框 + 圆角 + 极淡投影 ---------------- */
+    .card {
+        border: 1px solid #e8eef7;
+        border-radius: 12px;
+        background-color: #ffffff;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+    }
+    .card-header {
+        padding: 14px 18px !important;
+        border-bottom: 1px solid #eef2f8 !important;
+        border-radius: 12px 12px 0 0;
+    }
+    .card-header .card-title,
+    .card-header h1,
+    .card-header h2,
+    .card-header h5 {
+        margin: 0;
+        font-size: 1.02rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        color: #0f172a;
+    }
+    .card-body { padding: 18px; }
+
+    /* ---------------- 表格：浅蓝表头 + 细分隔线（参考图核心特征） ---------------- */
+    .table > thead > tr > th,
+    .table thead th {
+        padding: 0.62rem 0.75rem;
+        background-color: #eef4ff !important;
+        border-bottom: 1px solid #e2ebf9 !important;
+        border-top: none !important;
+        color: #33517d;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+    .table > tbody > tr > td,
+    .table tbody td {
+        padding: 0.58rem 0.75rem;
+        border-color: #eef2f7 !important;
+        color: #33475f;
+        font-size: 0.84rem;
+        vertical-align: middle;
+    }
+    /* 参考图为纯白行 + 细线分隔，去掉重色斑马纹，仅保留极淡隔行 */
+    .table-striped > tbody > tr:nth-of-type(odd) > * {
+        background-color: #fbfcff;
+        box-shadow: none;
+    }
+    .table-hover > tbody > tr:hover > * {
+        background-color: #f3f8ff;
+        color: #0f172a;
+    }
+    /* 固定列沿用同一底色，避免滚动时出现色块断层 */
+    .fixed-column { background-color: #ffffff; border-right: 1px solid #eef2f7; }
+    .fixed-column-header { background-color: #eef4ff !important; border-right: 1px solid #e2ebf9; }
+
+    /* ---------------- 表单：圆角输入 + 小号标签 ---------------- */
+    .form-control,
+    .form-select {
+        border-color: #dfe7f2;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        color: #24344a;
+    }
+    .form-control:focus,
+    .form-select:focus {
+        border-color: #9cc1ff;
+        box-shadow: 0 0 0 3px rgba(27, 107, 255, 0.12);
+    }
+    .search-filters label,
+    .form-group > label {
+        margin-bottom: 4px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #64748b;
+    }
+    .column-selector {
+        background-color: #f7faff !important;
+        border-color: #e8eef7 !important;
+        border-radius: 10px !important;
+    }
+
+    /* ---------------- 按钮：统一主色与圆角 ---------------- */
+    .btn {
+        border-radius: 8px;
+        font-weight: 500;
+    }
+    .btn-primary {
+        background-color: #1b6bff;
+        border-color: #1b6bff;
+    }
+    .btn-primary:hover,
+    .btn-primary:focus {
+        background-color: #0b5ed7;
+        border-color: #0b5ed7;
+    }
+    .btn-outline-primary { color: #1b6bff; border-color: #cfe0ff; }
+    .btn-outline-primary:hover { background-color: #1b6bff; border-color: #1b6bff; }
+
+    /* ---------------- 分页：浅灰圆角按钮，当前页白底蓝字 ---------------- */
+    .pagination { gap: 4px; }
+    .pagination .page-link {
+        margin: 0;
+        padding: 0.35rem 0.7rem;
+        border: 1px solid #e6ecf5;
+        border-radius: 8px;
+        background-color: #f2f5f9;
+        color: #44607f;
+        font-size: 0.84rem;
+        font-weight: 600;
+        line-height: 1.4;
+        transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease,
+                    box-shadow 0.18s ease;
+    }
+    .pagination .page-link:hover {
+        background-color: #e8f0ff;
+        border-color: #cfe0ff;
+        color: #1b6bff;
+    }
+    .pagination .page-item.active .page-link {
+        background-color: #ffffff;
+        border-color: #cfe0ff;
+        color: #1b6bff;
+        box-shadow: 0 2px 8px rgba(27, 107, 255, 0.14);
+    }
+    .pagination .page-item.disabled .page-link {
+        background-color: #f7f9fc;
+        border-color: #edf1f7;
+        color: #b6c2d2;
+    }
+    /* 分页里的"前往"按钮与输入框高度对齐 */
+    .pagination-info { color: #8494a8 !important; }
+

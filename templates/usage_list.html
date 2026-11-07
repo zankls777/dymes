@@ -245,14 +245,18 @@
                                 <div class="d-flex align-items-center">
                                     <label class="me-2 mb-0">跳转至:</label>
                                     <input type="number" class="form-control form-control-sm" id="jumpToPage"
-                                           min="1" max="{{ items.pages }}" value="{{ items.page }}" style="width: 60px;">
+                                           min="1" {% if items.pages %}max="{{ items.pages }}"{% endif %} value="{{ items.page }}" style="width: 60px;">
                                     <button class="btn btn-sm btn-primary" id="jump-btn">前往</button>
                                 </div>
                             </div>
                             
                             <!-- 第二行：记录信息 -->
                             <div class="text-muted text-center small mt-2 pagination-info">
+                                {% if items.total is none %}
+                                共 -- 条记录（数据量较大，已省略总数统计），当前第 {{ items.page }} 页
+                                {% else %}
                                 共 {{ items.total }} 条记录，当前第 {{ items.page }} 页 / 共 {{ items.pages }} 页
+                                {% endif %}
                             </div>
                         </nav>
                     </div>
@@ -297,7 +301,7 @@
     <!-- 引入渲染优化工具 -->
     <script defer src="../static/js/render-optimizer.js"></script>
     <!-- 引入页面优化器（同步加载：紧随其后的内联脚本会立即调用 window.initUsageListPage，若用 defer 会导致未定义） -->
-    <script src="../static/js/page-optimizer.js?v=20261104a"></script>
+    <script src="../static/js/page-optimizer.js?v=20261107a"></script>
     {% include '_scripts.html' %}
 
     <script>

@@ -16,6 +16,10 @@
         var collapsed = !isMobile && saved === '1'; // 移动端强制按展开处理
         if (collapsed) {
             root.classList.add('app-sidebar-collapsed-init');
+            /* 同步给侧栏加 collapsed：折叠态是 80px 图标栏，
+             * 仅靠 html 类只能改变宽度，隐藏文字/子菜单等规则依赖 .app-sidebar.collapsed */
+            var sidebar = document.getElementById('appSidebar');
+            if (sidebar) { sidebar.classList.add('collapsed'); }
         } else if (!isMobile) {
             root.classList.add('app-sidebar-open-init');
         }

@@ -74,8 +74,11 @@
         function applyDesktop(collapsed) {
             sidebar.classList.toggle('collapsed', collapsed);
             body.classList.toggle('app-sidebar-open', !collapsed);
-            syncInitClasses(collapsed); // 关键：同步 html 类，消除折叠后残留的 200px 内容偏移
-            if (floatBtn) { floatBtn.classList.toggle('show', collapsed); }
+            /* 折叠态为图标栏（宽 80px），body 需让出图标栏宽度，故单独打标记 */
+            body.classList.toggle('app-sidebar-collapsed', collapsed);
+            syncInitClasses(collapsed); // 关键：同步 html 类，消除折叠后残留的内容偏移
+            /* 图标栏常显，固定悬浮展开按钮不再需要 */
+            if (floatBtn) { floatBtn.classList.remove('show'); }
         }
 
         /* 移动端：抽屉打开/关闭 */
@@ -165,8 +168,27 @@
                 sub.classList.add('open'); // 首屏恢复上次的展开状态
             }
 
+            /* 当前页面属于该分组时给父级打标：折叠成图标栏后子项不可见，
+             * 用父级图标高亮提示用户"当前页在这个分组里" */
+            if (sub.querySelector('.app-nav-sub-link.active')) {
+                sub.classList.add('has-active');
+            }
+
             toggle.addEventListener('click', function (e) {
                 e.preventDefault(); // 阻止 href="#" 跳转到页首
+
+                /* 折叠图标栏状态下点击分组图标：先展开侧栏，再展开该分组，
+                 * 避免"点了没反应"（子菜单在图标栏中不可见） */
+                if (!isMobile() && isCollapsed()) {
+                    enableAnim();
+                    applyDesktop(false);
+                    persist(false);
+                    sub.classList.add('open');
+                    if (openGroups.indexOf(id) === -1) { openGroups.push(id); }
+                    writeOpenGroups(openGroups);
+                    return;
+                }
+
                 var isOpen = sub.classList.toggle('open');
                 var idx = openGroups.indexOf(id);
                 if (isOpen) {
@@ -194,6 +216,7 @@
             if (isMobile()) {
                 // 进入移动端：抽屉改为媒体查询控制，仅收起遮罩与抽屉，不动首屏同步类
                 body.classList.remove('app-sidebar-open');
+                body.classList.remove('app-sidebar-collapsed');
                 sidebar.classList.remove('open');
                 /* 清除桌面折叠痕迹，避免移动端抽屉被 collapsed-init 压回屏幕外 */
                 sidebar.classList.remove('collapsed');

@@ -55,7 +55,7 @@
                         <button type="button" class="btn btn-info" id="backupDownloadBtn">
                             <i class="fa fa-download me-1"></i> 下载当前数据库备份快照
                         </button>
-                        <div class="form-text">SQLite 在线快照；空闲页占比 ≥20% 且可回收 ≥200MB 时后台自动 VACUUM。</div>
+                        <div class="form-text">SQLite 在线快照；空闲页占比 ≥20% 且可回收 ≥200MB 时后台自动 VACUUM，也可手动回收。</div>
                         <!-- 整库备份进度（后台任务 + 轮询） -->
                         <div id="backupProgressBox" class="mt-2 d-none">
                             <div class="progress" style="height: 20px;">
@@ -65,6 +65,21 @@
                                      aria-valuemax="100">0%</div>
                             </div>
                             <div id="backupProgressMsg" class="form-text mt-1 text-muted">准备中…</div>
+                        </div>
+                        <hr class="my-3">
+                        <!-- 手动空闲页回收：整库 VACUUM 后台执行，心跳显示已用时间 -->
+                        <button type="button" class="btn btn-outline-info" id="vacuumBtn">
+                            <i class="fa fa-recycle me-1"></i> 立即回收空闲页
+                        </button>
+                        <div class="form-text">回收空闲页、缩小数据库文件并整理碎片；大库可能耗时几分钟，期间不影响查询。</div>
+                        <div id="vacuumProgressBox" class="mt-2 d-none">
+                            <div class="progress" style="height: 20px;">
+                                <div id="vacuumProgressBar"
+                                     class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                                     role="progressbar" style="width: 0%;" aria-valuemin="0"
+                                     aria-valuemax="100">0%</div>
+                            </div>
+                            <div id="vacuumProgressMsg" class="form-text mt-1 text-muted">准备中…</div>
                         </div>
                     </div>
                     <div class="col-md-5">
@@ -474,7 +489,8 @@
 
         // ---------- 数据库维护状态展示 ----------
         const dbStatsBox = document.getElementById('dbStatsBox');
-        if (dbStatsBox) {
+        function loadDbStats() {
+            if (!dbStatsBox) { return; }
             fetch('/data_management/stats')
                 .then(r => r.json())
                 .then(d => {
@@ -492,6 +508,76 @@
                         '</div>';
                 })
                 .catch(() => { dbStatsBox.textContent = '状态加载失败'; });
+        }
+        loadDbStats();
+
+        // ---------- 手动空闲页回收（后台任务 + 轮询进度） ----------
+        const vacuumBtn = document.getElementById('vacuumBtn');
+        const vacuumBox = document.getElementById('vacuumProgressBox');
+        const vacuumBar = document.getElementById('vacuumProgressBar');
+        const vacuumMsg = document.getElementById('vacuumProgressMsg');
+        if (vacuumBtn) {
+            let vacuumTimer = null;
+            const setVacuumBar = function (pct) {
+                vacuumBar.style.width = pct + '%';
+                vacuumBar.textContent = pct + '%';
+            };
+            const stopVacuumPoll = function () {
+                if (vacuumTimer) { clearInterval(vacuumTimer); vacuumTimer = null; }
+            };
+            vacuumBtn.addEventListener('click', function () {
+                if (!confirm('确认回收数据库空闲页？\n将整库重建（VACUUM），大库可能耗时几分钟；期间不影响查询。')) { return; }
+                vacuumBtn.disabled = true;      // 防重复触发耗时任务
+                vacuumBox.classList.remove('d-none');
+                setVacuumBar(0);
+                vacuumMsg.textContent = '正在启动…';
+                fetch('/data_management/vacuum/start', {
+                    method: 'POST',
+                    headers: {'X-Requested-With': 'XMLHttpRequest'},
+                })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d.success) {
+                            vacuumMsg.textContent = d.error || '启动失败';
+                            vacuumBtn.disabled = false;
+                            return;
+                        }
+                        vacuumMsg.textContent = d.message || '已开始回收';
+                        // 轮询进度，直至 success 字段给出结论
+                        vacuumTimer = setInterval(function () {
+                            fetch('/data_management/vacuum/progress')
+                                .then(r => r.json())
+                                .then(p => {
+                                    if (!p.success) { return; }
+                                    const st = p.progress || {};
+                                    // VACUUM 是单条语句无法按页报进度：
+                                    // 进行中显示全宽动画条，文字携带已用时间；结束才定格 100%
+                                    if (st.success === null || st.success === undefined) {
+                                        vacuumBar.style.width = '100%';
+                                        vacuumBar.textContent = '';
+                                    } else {
+                                        setVacuumBar(st.percent || 0);
+                                    }
+                                    vacuumMsg.textContent = st.message || '';
+                                    if (st.success !== null && st.success !== undefined) {
+                                        stopVacuumPoll();
+                                        vacuumBtn.disabled = false;
+                                        vacuumBar.classList.remove('progress-bar-animated');
+                                        if (st.success) {
+                                            vacuumBar.classList.remove('bg-info');
+                                            vacuumBar.classList.add('bg-success');
+                                        }
+                                        loadDbStats();   // 回收后刷新空闲页统计
+                                    }
+                                })
+                                .catch(() => {});
+                        }, 1500);
+                    })
+                    .catch(() => {
+                        vacuumMsg.textContent = '启动请求失败（网络错误）';
+                        vacuumBtn.disabled = false;
+                    });
+            });
         }
 
         // ---------- 自动备份到网盘（配置保存 / 立即执行 / 刷新历史） ----------

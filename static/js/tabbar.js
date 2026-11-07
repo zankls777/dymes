@@ -4,7 +4,8 @@
  *   1) 打开标签：点击左侧栏带 data-tab-title 的菜单链接 → 新增/激活标签（改走 SPA 局部加载）
  *   2) 切换标签：点击标签 → 局部加载目标页面、不整页刷新
  *   3) 关闭标签：× 按钮 / 右键菜单「关闭」「关闭其他」「关闭全部」
- *   4) 持久化：标签列表与当前激活项写入 localStorage，刷新后自动恢复
+ *   4) 持久化：标签列表与当前激活项写入 localStorage；浏览器刷新时按「关闭全部」处理
+ *      ——清空全部标签并回到首页（避免刷新后旧工作区被自动恢复）
  *   5) 拖拽排序：HTML5 拖放调整顺序并持久化
  *   6) 兜底：不做 SPA、Ctrl/Cmd 点击、无 JS 加载能力时一律回退为整页跳转
  *
@@ -15,6 +16,7 @@
     'use strict';
 
     var STORAGE_KEY = 'appTabbarState';
+    var LOAD_MARK_KEY = 'appTabbarLastLoad';   // sessionStorage：本标签页上次加载的地址
     var MAX_TABS = 15;            // 标签数量上限，超出时关闭最久未使用的（首页除外）
     var HOME_URL = null;          // 首页路径（不可关闭的兜底标签）
 
@@ -49,18 +51,32 @@
         return titleByUrl[key] || decodeURIComponent(key.split('/').pop() || '页面');
     }
 
-    /* 判断本次页面加载是否由浏览器刷新触发（F5 / 刷新按钮 / Ctrl+R）。
-     * 用 Navigation Timing 区分"刷新"与普通链接跳转、地址栏输入：
-     * 产品约定刷新即主动重置工作区，应关闭当前页标签。 */
-    function isPageReload() {
+    /* 判断本次页面加载是否属于「刷新」（F5 / 刷新按钮 / Ctrl+R，或同一标签页内重复加载同一地址）。
+     * 主判据用 Navigation Timing（type==='reload'）；
+     * 部分内嵌浏览器/自动化环境会把刷新上报成 'navigate'，因此增加兜底：
+     * 上一次加载记录的地址与本次相同 → 视为刷新。
+     * 产品约定刷新即主动重置工作区，应关闭全部标签。 */
+    function isPageReload(currentUrl) {
         try {
             var entries = performance.getEntriesByType('navigation');
             if (entries.length && entries[0].type === 'reload') { return true; }
         } catch (e) { /* 不支持时走旧 API 兜底 */ }
         /* 旧版浏览器（Win7 上的老 Chrome/IE11）兜底：type===1 即 TYPE_RELOAD */
-        return typeof performance.navigation === 'object' &&
+        if (typeof performance.navigation === 'object' &&
             performance.navigation !== null &&
-            performance.navigation.type === 1;
+            performance.navigation.type === 1) {
+            return true;
+        }
+        try {
+            var lastUrl = sessionStorage.getItem(LOAD_MARK_KEY);
+            if (lastUrl && normalize(lastUrl) === currentUrl) { return true; }
+        } catch (e) { /* 隐私模式忽略 */ }
+        return false;
+    }
+
+    /* 记录本次加载的地址（供下次刷新判断用）；sessionStorage 随标签页关闭而清空 */
+    function markLoad(url) {
+        try { sessionStorage.setItem(LOAD_MARK_KEY, url); } catch (e) { /* 隐私模式忽略 */ }
     }
 
     /* ---------- 状态：{ tabs: [{url,title}], active: url } ---------- */
@@ -226,7 +242,9 @@
         var links = document.querySelectorAll('.app-sidebar .app-nav-link');
         for (var i = 0; i < links.length; i++) {
             var href = links[i].getAttribute('href') || '';
-            var isSame = href && normalize(href) === state.active;
+            /* 分组标题的 href 是 "#"，normalize 后会变成 '/'，
+             * 在首页会误命中所有分组——占位链接不参与高亮 */
+            var isSame = href && href !== '#' && normalize(href) === state.active;
             links[i].classList.toggle('active', !!isSame);
         }
     }
@@ -419,22 +437,19 @@
         }
 
         /* 浏览器刷新（F5 / 刷新按钮）= 主动重置工作区：
-         * 关闭当前页标签，跳到相邻标签（优先右邻，其次左邻，最后首页）。
-         * 首页本身不关闭，避免出现无标签可落的空状态。
-         * location.replace 不留历史记录，防止后退又退回被关闭的刷新页。 */
-        if (isPageReload()) {
+         * 按右键菜单「关闭全部」的语义处理——清空所有标签后回到首页，
+         * 首页作为唯一保留的兜底标签，避免出现无标签可落的空状态。
+         * location.replace 不留历史记录，防止后退又退回被清空前的工作区。 */
+        if (isPageReload(currentUrl)) {
             var homeUrl = normalize(HOME_URL || '/');
-            var reloadIndex = findTabIndex(currentUrl);
-            if (reloadIndex !== -1 && currentUrl !== homeUrl) {
-                state.tabs.splice(reloadIndex, 1);
-                var fallback = state.tabs[reloadIndex] ||
-                               state.tabs[reloadIndex - 1] ||
-                               state.tabs[0] || null;
-                state.active = fallback ? fallback.url : homeUrl;
-                saveState();
-                window.location.replace(fallback ? fallback.url : homeUrl);
-                return;  /* 即将跳转到新页面，本次渲染与骨架迁移无意义 */
+            state.tabs = [];
+            state.active = '';
+            if (currentUrl !== homeUrl) {
+                saveState();                      // 先落盘：否则首页加载时又会把旧标签恢复回来
+                window.location.replace(homeUrl);
+                return;  /* 即将跳转到首页，本次渲染与骨架迁移无意义 */
             }
+            /* 已在首页刷新：清空后仅保留首页一个标签（由下方统一逻辑补回） */
         }
 
         /* 当前页面不在标签列表中：追加（直接输入地址/普通链接进入时） */
@@ -445,6 +460,8 @@
 
         saveState();
         render();
+        /* 记录本次加载地址：下次在本标签页再次加载同一地址即判定为刷新 */
+        markLoad(currentUrl);
 
         /* 首屏同步阶段关闭过渡，避免标签出现淡入抖动 */
         root.classList.add('app-tabbar-init');

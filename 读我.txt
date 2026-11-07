@@ -1,9 +1,9 @@
 下面是安装说明，使用python3.13版本开发，
 
 
-# 1. 删掉无效的 .venv，用 Python 3.13 重建
+# 1. 删掉无效的 .venv，用 Python 3.12 重建
 rm -rf .venv
-python3.13 -m venv .venv
+python3.12 -m venv .venv
 
 # 2. 安装依赖
 .venv/bin/pip install -r requirements.txt
