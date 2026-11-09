@@ -5143,7 +5143,9 @@ def wire_scan_entry():
         return redirect(url_for('main.login', next=request.url))
     if not check_permission(session.get('user_id'), 'can_wire_scan_entry'):
         return render_template('error.html', error_code=403, error_message='访问被拒绝'), 403
-    return render_template('wire_scan_entry.html')
+    from models.system_setting import is_wire_scan_auto_same_drawing
+    return render_template('wire_scan_entry.html',
+                           auto_same_drawing=is_wire_scan_auto_same_drawing())
 
 
 # 扫描录入：LOT 固定长度（示例 Q817A03Q = 8 位，如长度变化只需修改此常量）
@@ -5816,11 +5818,12 @@ def wire_scan_entry_data():
             q = q.filter(WireScanRecord.created_at >= datetime.utcnow() - timedelta(days=3))
         # 行数上限：默认窗口大时只取近期数据，防止全量查询拖慢接口
         #（上限 2000 行足够覆盖日扫码量；历史数据通过数据下载页按日期查询）
+        # 排序按 id 倒序取最近 2000 条后再反转为升序，保证最终为「扫描进入顺序」
         records = (q
-                   .order_by(WireScanRecord.lot_no, WireScanRecord.machine_no.is_(None).desc(),
-                             WireScanRecord.id)
+                   .order_by(WireScanRecord.id.desc())
                    .limit(2000)
                    .all())
+        records.reverse()
         # LOT 关联信息：优先读扫描记录上固化的文本快照，缺失才回退 lot_login_info
         lot_nos = list({r.lot_no for r in records})
         lot_info = _wire_build_lot_info(records, lot_nos)
@@ -6749,9 +6752,9 @@ def wire_scan_entry_download():
         elif not start:
             # 未指定日期范围默认最近7天
             q = q.filter(WireScanRecord.created_at >= datetime.utcnow() - timedelta(days=7))
+        # 排序：按记录 id 升序 = 扫描进入的先后顺序（与下载页面展示顺序一致）
         records = (q
-                   .order_by(WireScanRecord.created_at.desc(), WireScanRecord.lot_no,
-                             WireScanRecord.id)
+                   .order_by(WireScanRecord.id)
                    .all())
         lot_nos = list({r.lot_no for r in records})
         # LOT 关联信息：优先读记录上固化的文本快照，缺失才回退 lot_login_info
@@ -6765,6 +6768,41 @@ def wire_scan_entry_download():
         # 线束明细：直接读 wire_scan_detail 文本快照，不再实时条件查询 sub_list；
         # 仅历史缺口惰性实时拉取一次并补固化。原始资料删除后导出内容仍完整
         subl, subl_by_lot = _wire_load_snapshot_map(lot_info, lot_circuit, lazy_heal=True)
+
+        # ---- 压高来源：与下载页面保持一致，统一取「压高登录」(wire_crimp_login) 的实时匹配结果 ----
+        # 旧实现直接导出 wire_scan_detail 固化时的 strip1/strip2（历史值），
+        # 而页面展示的是压高登录匹配值，二者不同源会导致 Excel 内容“不更新”。
+        # 先做一次预遍历，收集全部 (记录, 明细) 的匹配键并去重，再分批查询，避免逐行查库。
+        rec_detail_map = {}  # 记录id -> (回路键, 明细列表)
+        for r in records:
+            circ_key = (r.circuit_no or '').strip().upper()
+            if not circ_key and lot_circuit.get(r.lot_no):
+                circ_key = next(iter(lot_circuit[r.lot_no]), '').strip().upper()
+            dtl_list = subl_by_lot.get(f'{r.lot_no.strip()}|{circ_key}')
+            if dtl_list is None:
+                li = lot_info.get(r.lot_no) or {}
+                dtl_list = subl.get(
+                    f'{(li.get("part_no") or "").strip().upper()}|'
+                    f'{(li.get("jx_eo") or "").strip().upper()}|{circ_key}') or []
+            rec_detail_map[r.id] = (circ_key, dtl_list)
+
+        # 匹配键去重（回路+号机+线质+颜色+规格+端子对），同键多行只查一次
+        crimp_keys, seen_crimp_key = [], set()
+        for r in records:
+            if not r.machine_no:
+                continue
+            for d in rec_detail_map.get(r.id, ('', []))[1]:
+                for k in _wire_user_crimp_query_keys([d], r.machine_no):
+                    tup = (k['circuit_no'], k['machine_no'], k['wire'], k['color'],
+                           k['sq'], k['tml1'], k['tml2'])
+                    if tup not in seen_crimp_key:
+                        seen_crimp_key.add(tup)
+                        crimp_keys.append(k)
+        # 分批查询（单条 OR 条件过多会拖慢 SQLite），结果按 7 元组键汇总
+        user_crimp = {}
+        for i in range(0, len(crimp_keys), 300):
+            user_crimp.update(_wire_lookup_user_crimp(crimp_keys[i:i + 300]))
+
         from io import BytesIO
         from openpyxl import Workbook
         from openpyxl.styles import Font, Alignment, PatternFill
@@ -6786,21 +6824,27 @@ def wire_scan_entry_download():
             part_no = li.get('part_no') or ''
             eo = li.get('jx_eo') or ''
             vehicle = li.get('vehicle_type') or ''
-            # 每条记录按自身回路号匹配资料，缺省回退该 LOT 首个回路号（保持旧键兼容）
-            circ_key = (r.circuit_no or '').strip().upper()
-            if not circ_key and lot_circuit.get(r.lot_no):
-                circ_key = next(iter(lot_circuit[r.lot_no]), '').strip().upper()
-            # 取数优先用「LOT|回路」稳定键（不依赖登录资料，LOT登录资料删除后仍命中），
-            # 未命中再回退旧的 品番|EO|回路 键
-            dtl_list = subl_by_lot.get(f'{r.lot_no.strip()}|{circ_key}')
-            if dtl_list is None:
-                dtl_list = subl.get(f'{part_no.strip().upper()}|{eo.strip().upper()}|{circ_key}') or []
+            # 每条记录按自身回路号匹配资料（预遍历已算好，直接复用）
+            circ_key, dtl_list = rec_detail_map.get(r.id, ('', []))
             rows = dtl_list if dtl_list else [None]
             for dtl in rows:
                 seq = 1 if r.lot_no not in seen_lot_first else ''
                 seen_lot_first.add(r.lot_no)
                 tml = f'{dtl["tml1"] or ""}\n{dtl["tml2"] or ""}' if dtl else ''
-                crimp = f'{dtl["strip1"] or ""}\n{dtl["strip2"] or ""}' if dtl else ''
+                # 压高与页面同源：命中压高登录才输出，未命中留空（不再回退固化旧值）
+                crimp = ''
+                if dtl and r.machine_no:
+                    t1 = _wire_norm_tml(dtl['tml1'])
+                    t2 = _wire_norm_tml(dtl['tml2'])
+                    if t1 and t2:
+                        pair = user_crimp.get((
+                            str(dtl['circuit'] or '').strip().upper(),
+                            _wire_norm_machine(r.machine_no),
+                            str(dtl['wire'] or '').strip().upper(),
+                            str(dtl['color'] or '').strip(),
+                            _wire_norm_sq(dtl['sq']), t1, t2))
+                        if pair:
+                            crimp = f'{pair[0] or ""}\n{pair[1] or ""}'
                 spec_color = f'{dtl["sq"] or ""}/{dtl["color"] or ""}' if dtl else ''
                 # 配线区分：Remark1 以 "TW-" 开头时取 TW；否则取 Rel2（如 S、E*）；都空则为空白
                 def _wire_div_type(d):

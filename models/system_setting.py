@@ -104,3 +104,13 @@ def set_maintenance_mode(enabled):
     """设置系统维护模式开关"""
     set_setting(MAINTENANCE_MODE_KEY, '1' if enabled else '0', '系统维护模式：开启后普通用户跳转维护页')
     db.session.commit()
+
+
+# 扫描录入 - 扫描回路号后是否自动带入同图纸兄弟回路（'1' 开启 / '0' 关闭，默认关闭）
+WIRE_SCAN_AUTO_SAME_DRAWING_KEY = 'wire_scan_auto_same_drawing'
+WIRE_SCAN_AUTO_SAME_DRAWING_DEFAULT = '0'
+
+
+def is_wire_scan_auto_same_drawing():
+    """扫描录入是否自动带入同图纸兄弟回路（默认 False = 关闭）"""
+    return get_setting(WIRE_SCAN_AUTO_SAME_DRAWING_KEY, WIRE_SCAN_AUTO_SAME_DRAWING_DEFAULT) == '1'

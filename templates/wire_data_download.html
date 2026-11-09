@@ -307,10 +307,10 @@
             let abortCtrl = null;
 
             function processResp(data) {
+                // 按扫描进入顺序排序：记录 id 随扫描递增，直接用 id 升序（同 id 按 LOT 兜底）
                 const sorted = (data.records || []).slice().sort((a, b) => {
-                    const ta = String(a.created_at || '');
-                    const tb = String(b.created_at || '');
-                    if (ta !== tb) return tb.localeCompare(ta);
+                    const ia = Number(a.id), ib = Number(b.id);
+                    if (ia !== ib) return ia - ib;
                     return String(a.lot_no || '').localeCompare(String(b.lot_no || ''));
                 });
                 const rows = [];

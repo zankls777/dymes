@@ -185,7 +185,12 @@
                             {% endif %}
                             <div class="form-text scan-tip mt-1 d-flex justify-content-between align-items-center">
                                 <span>扫码完成自动回车切换；也可手动按回车</span>
-                                <div class="d-flex gap-1">
+                                <div class="d-flex gap-1 align-items-center">
+                                    <div class="form-check form-check-inline mb-0 me-1" title="开启后，扫描回路号会自动带入同一图纸下的其他兄弟回路（默认关闭）">
+                                        <input class="form-check-input" type="checkbox" id="autoSameDrawingToggle"
+                                               {{ 'checked' if auto_same_drawing else '' }}>
+                                        <label class="form-check-label small" for="autoSameDrawingToggle">自动带入同图纸回路</label>
+                                    </div>
                                     {% if session.get('is_admin') or permissions.get('can_wire_scan_entry_scan') %}
                                     <button class="btn btn-outline-primary btn-sm" id="photoBtn" type="button"
                                             title="拍摄/上传线束标签照片，离线识别二维码与文字，自动把压高修正为标签实测 CCH 值">
@@ -618,16 +623,16 @@
                         }
                         let displayItems;
                         if (machineItems.length) {
-                            // 号机行优先显示；无号机的回路行中，仅丢弃「与号机行同回路」的占位行，
-                            // 不同回路的兄弟行（同图纸带入、待各自扫号机）必须保留显示
+                            // 保持「扫描进入顺序」显示：同回路已配对号机的无号机占位行直接剔除（避免重复），
+                            // 其余行（含同图纸带入的兄弟回路待扫行）按原始扫描先后位置展示
                             const machineCircuits = new Set(
                                 machineItems.map(m => (m.circuit_no || '').trim().toUpperCase()));
-                            const siblingRows = g.items.filter(r => !r.machine_no
-                                && !machineCircuits.has((r.circuit_no || '').trim().toUpperCase()));
-                            displayItems = machineItems.map(r => ({
-                                ...r,
-                                circuit_no: r.circuit_no || (circuitRow ? circuitRow.circuit_no : null)
-                            })).concat(siblingRows);
+                            displayItems = g.items
+                                .filter(r => r.machine_no
+                                    || !machineCircuits.has((r.circuit_no || '').trim().toUpperCase()))
+                                .map(r => (r.machine_no && !r.circuit_no
+                                    ? { ...r, circuit_no: circuitRow ? circuitRow.circuit_no : null }
+                                    : r));
                         } else {
                             displayItems = g.items;
                         }
@@ -1018,9 +1023,12 @@
                 machineInput.disabled = false;
                 machineInput.placeholder = `号机（LOT=${esc(p.lot_no)}）：${esc(p.lot_no)}号机\$编号`;
                 machineInput.focus();
-                // 立即拉取该回路资料（不等数量填写），同图纸兄弟回路自动带入并提醒
+                // 立即拉取该回路资料（不等数量填写）
                 fetchCircuitDetail(p.lot_no, p.circuit_no);
-                checkSameDrawing(p.lot_no, p.circuit_no);
+                // 同图纸兄弟回路自动带入：仅在用户勾选开关时执行（默认关闭，避免出现大量无关数据）
+                if (autoSameDrawingToggle && autoSameDrawingToggle.checked) {
+                    checkSameDrawing(p.lot_no, p.circuit_no);
+                }
             }
 
             circuitInput.addEventListener('keydown', function(e) {
