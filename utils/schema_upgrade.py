@@ -731,6 +731,51 @@ def init_default_data():
 
 
 def ensure_schema_ready():
-    """完整初始化：结构升级 + 默认数据。供启动流程与恢复后调用。"""
+    """完整初始化：结构升级 + 默认数据 + 历史数据回填。供启动流程与恢复后调用。"""
     result = {'schema': upgrade_schema(), 'defaults': init_default_data()}
+    # 历史数据回填（幂等：只回填 created_by_name 仍为空的行）
+    try:
+        result['wire_created_by_name'] = _backfill_wire_scan_created_by_name()
+    except Exception as e:
+        db.session.rollback()
+        result['wire_created_by_name'] = f'fail: {e}'
+        logger.warning(f"回填 wire_scan_record.created_by_name 失败: {e}")
     return result
+
+
+def _backfill_wire_scan_created_by_name():
+    """为历史 wire_scan_record 记录回填 created_by_name 姓名快照（幂等）。
+
+    旧数据写入时只存了 created_by（用户ID），未固化姓名；新写入已补齐。
+    本函数把 created_by_name 仍为 NULL/空串 的老行，通过 UserInfo 关联回填。
+    """
+    from models.wire_scan_record import WireScanRecord
+    from models.user_info import UserInfo
+    from sqlalchemy import or_
+
+    # 找 created_by_name 为空、但 created_by 有值的老数据
+    rows = (WireScanRecord.query
+            .filter(WireScanRecord.created_by.isnot(None))
+            .filter(or_(
+                WireScanRecord.created_by_name.is_(None),
+                WireScanRecord.created_by_name == ''
+            ))
+            .all())
+    if not rows:
+        return 'skip'
+    # 批量查用户
+    uids = list({r.created_by for r in rows})
+    users = {u.id: u for u in UserInfo.query.filter(UserInfo.id.in_(uids)).all()}
+    patched = 0
+    for r in rows:
+        u = users.get(r.created_by)
+        if not u:
+            continue
+        name = (u.full_name or '').strip() or (u.username or '').strip()
+        if name:
+            r.created_by_name = name
+            patched += 1
+    if patched:
+        db.session.commit()
+        logger.info(f"回填 wire_scan_record.created_by_name: {patched} 条")
+    return f'patched={patched}/total={len(rows)}'

@@ -221,7 +221,8 @@
                 ['序号', 'seq'], ['EO', 'eo'], ['品番', 'part_no'], ['LOT/NO', 'lot_no'],
                 ['回路号', 'circuit_no'], ['线质', 'wire'], ['规格/颜色', 'spec_color'],
                 ['长度', 'length_cut2'], ['数量', 'qty'], ['配线区分', 'div_type'],
-                ['端子名1/2', 'terminal'], ['号机名', 'machine'], ['压高', 'crimp'], ['日期', 'date']
+                ['端子名1/2', 'terminal'], ['号机名', 'machine'], ['压高', 'crimp'],
+                ['操作人', 'created_by_name'], ['日期', 'date']
             ];
 
             function esc(s) {
@@ -333,6 +334,7 @@
                         const machine = String(r.machine_no || '').split('$')[0];
                         rows.push({
                             _id: r.id, _raw: r, _dtl: dtl, date: formatUTC8(r.created_at),
+                            created_by_name: r.created_by_name || '',
                             vehicle: li.vehicle_type || '', seq: seq,
                             part_no: li.part_no || '', eo: li.jx_eo || '',
                             lot_no: r.lot_no, circuit_no: r.circuit_no || '',

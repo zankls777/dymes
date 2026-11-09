@@ -290,16 +290,14 @@
                                 <th>端子名1/2</th>
                                 <th>号机名</th>
                                 <th>压高</th>
-                                <th>QC检查者</th>
-                                <th>取线者</th>
-                                <th>取线时间</th>
+                                <th>操作人</th>
                                 <th>备注</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
                         <tbody id="recordTbody">
                             <tr id="emptyRow">
-                                <td colspan="21" class="text-center py-4">
+                                <td colspan="20" class="text-center py-4">
                                     <i class="fa fa-clipboard-check fa-2x text-success d-block mb-2"></i>
                                     <span class="text-success fw-bold">清单已清空</span>
                                     <span class="text-muted d-block mt-1">所有数据已保存至「数据下载」页（长期保存），可开始新的扫描</span>
@@ -330,6 +328,7 @@
     <script>
         (function() {
             const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+            const CURRENT_USER_NAME = {{ (current_user_name or '') | tojson }};  // 当前操作人姓名（后端注入）
             const tbody = document.getElementById('recordTbody');
             const emptyRow = document.getElementById('emptyRow');
             const recordCount = document.getElementById('recordCount');
@@ -741,10 +740,7 @@
                     ${terminal ? `<td>${terminal}</td>` : cell('')}
                     ${cell(machineName(r.machine_no))}
                     ${crimp ? `<td>${crimp}</td>` : cell('')}
-                    ${cell('')}
-                    ${cell('')}
-                    ${cell('')}
-                    ${cell('')}
+                    ${cell(esc(r.created_by_name))}
                     <td>${esc(remark)}${frozenBadge}</td>
                     <td class="text-center">${delBtn}</td>`;
                 return tr;
@@ -879,7 +875,7 @@
                             // 去重：已保存 / 已待保存 的同回路跳过
                             if (records.some(r => r.lot_no === lotNo && r.circuit_no === c.circuit)) return;
                             if (pending.some(p => p.lot_no === lotNo && p.circuit_no === c.circuit)) return;
-                            pending.push({ tmpId: 'p' + (++tmpSeq), lot_no: lotNo, circuit_no: c.circuit, machine_no: '', wire_qty: 0 });
+                            pending.push({ tmpId: 'p' + (++tmpSeq), lot_no: lotNo, circuit_no: c.circuit, machine_no: '', wire_qty: 0, created_by_name: CURRENT_USER_NAME });
                             added++;
                             // 兄弟回路资料立即合并：优先用 LOT|回路 稳定键（不依赖品番/EO），
                             // 再兼容旧的 品番|EO|回路 键，确保 LOT登录资料删除后仍能显示
@@ -1083,7 +1079,8 @@
                         circuit_no: currentCircuit.circuit_no,
                         machine_no: p.machine_no,
                         wire_qty: 0,
-                        scan_at: localStamp()  // 扫描瞬间时间（UTC+8），保存时按此刻排序落库
+                        scan_at: localStamp(),  // 扫描瞬间时间（UTC+8），保存时按此刻排序落库
+                        created_by_name: CURRENT_USER_NAME
                     });
                     targetTmpId = pending[pending.length - 1].tmpId;
                 }
@@ -1144,7 +1141,8 @@
                     circuit_no: circuitNo,
                     machine_no: machineNo,
                     wire_qty: 0,
-                    scan_at: localStamp()  // 手动添加时刻（UTC+8），保存时按此刻排序落库
+                    scan_at: localStamp(),  // 手动添加时刻（UTC+8），保存时按此刻排序落库
+                    created_by_name: CURRENT_USER_NAME
                 });
                 showResult(true, `已手动添加：LOT <b>${esc(lotNo)}</b>，回路号 <b>${esc(circuitNo)}</b>，号机 <b>${esc(machineNo)}</b>，请填写补线数量`);
                 manualLot.value = '';

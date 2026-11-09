@@ -5144,8 +5144,11 @@ def wire_scan_entry():
     if not check_permission(session.get('user_id'), 'can_wire_scan_entry'):
         return render_template('error.html', error_code=403, error_message='访问被拒绝'), 403
     from models.system_setting import is_wire_scan_auto_same_drawing
+    # 前端 pending 行需要当前操作人姓名（待保存时已记录，保存入库后复用）
+    current_user_name = _wire_op_name(session.get('user_id'))
     return render_template('wire_scan_entry.html',
-                           auto_same_drawing=is_wire_scan_auto_same_drawing())
+                           auto_same_drawing=is_wire_scan_auto_same_drawing(),
+                           current_user_name=current_user_name or '')
 
 
 # 扫描录入：LOT 固定长度（示例 Q817A03Q = 8 位，如长度变化只需修改此常量）
@@ -5883,6 +5886,20 @@ def wire_scan_entry_data():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _wire_op_name(user_id):
+    """取扫描录入操作人姓名快照（full_name 优先，username 兜底；供写入时固化）。"""
+    if not user_id:
+        return None
+    try:
+        from models.user_info import UserInfo
+        u = db.session.get(UserInfo, user_id)
+        if not u:
+            return None
+        return (u.full_name or '').strip() or (u.username or '').strip() or None
+    except Exception:
+        return None
+
+
 @main_bp.route('/wire/scan_entry/scan_circuit', methods=['POST'])
 @login_required
 def wire_scan_entry_scan_circuit():
@@ -5902,16 +5919,20 @@ def wire_scan_entry_scan_circuit():
         except ValueError as e:
             return jsonify({'success': False, 'error': str(e)}), 400
 
-        # 同 LOT 仅保留一条回路行：已存在则更新回路号，否则新建
+        uid = session.get('user_id')
+        op_name = _wire_op_name(uid)
+        # 同 LOT 仅保留一条回路行：已存在则更新回路号（补齐姓名快照），否则新建
         rec = (WireScanRecord.query
                .filter_by(lot_no=lot_no, machine_no=None)
                .order_by(WireScanRecord.id)
                .first())
         if rec:
             rec.circuit_no = circuit_no
+            if op_name and not rec.created_by_name:
+                rec.created_by_name = op_name
         else:
             rec = WireScanRecord(lot_no=lot_no, circuit_no=circuit_no,
-                                 created_by=session.get('user_id'))
+                                 created_by=uid, created_by_name=op_name)
             db.session.add(rec)
         # 合并：同步更新该 LOT 下所有号机行的回路号（保持同 LOT 信息一致）
         WireScanRecord.query.filter_by(lot_no=lot_no).filter(
@@ -5955,12 +5976,14 @@ def wire_scan_entry_scan_machine():
                        .order_by(WireScanRecord.id)
                        .first())
         li_row = LotLoginInfo.query.filter_by(lot_no=lot_no).first()
+        uid = session.get('user_id')
+        op_name = _wire_op_name(uid)
         rec = WireScanRecord(lot_no=lot_no, circuit_no=circuit_row.circuit_no if circuit_row else None,
                              machine_no=machine_no, wire_qty=0,
                              part_no=(li_row.part_no if li_row else None),
                              jx_eo=(li_row.jx_eo if li_row else None),
                              vehicle_type=(li_row.vehicle_type if li_row else None),
-                             created_by=session.get('user_id'))
+                             created_by=uid, created_by_name=op_name)
         db.session.add(rec)
         # 保存即固化：品番/EO/车种别盖章 + 回路资料文本快照（缺失才实时拉取）
         if rec.circuit_no:
@@ -6853,7 +6876,7 @@ def wire_scan_entry_download():
         ws.title = '扫描录入'
         headers = ['车种别', '序号', 'EO', '品番', 'LOT/NO', '回路号',
                    '线质', '规格/颜色', '长度', '数量', '配线区分', '端子名1/2', '号机名',
-                   '压高', '日期']
+                   '压高', '操作人', '日期']
         ws.append(headers)
         for c in ws[1]:
             c.font = Font(bold=True)
@@ -6910,6 +6933,7 @@ def wire_scan_entry_download():
                     (dtl['wire'] or '') if dtl else '', spec_color,
                     (dtl['length_cut2'] or '') if dtl else '',
                     r.wire_qty if r.machine_no else '', div_type, tml, machine, crimp or '',
+                    r.created_by_name or '',
                     r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else ''
                 ])
         # 行内容自动换行

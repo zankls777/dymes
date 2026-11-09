@@ -317,6 +317,85 @@ def invalidate_user_permission_cache(user_id=None):
         pass
 
 
+def _compute_effective_permissions_batch(user_ids):
+    """
+    批量计算多个用户的有效权限（替代循环调 compute_effective_permissions 的 N+1 版本）。
+
+    一次 IN 查询取回所有相关数据（UserGroup / PermissionGroup / GroupPermission /
+    UserPermissionOverride / UserInfo），在内存中按 user_id 归并计算，避免逐用户
+    6+ 次 DB 查询。
+
+    Returns:
+        dict: {user_id: {permission_code: bool}}
+    """
+    if not user_ids:
+        return {}
+
+    # 1) 批量查用户，过滤管理员与活跃状态
+    users = {u.id: u for u in UserInfo.query.filter(UserInfo.id.in_(user_ids)).all()}
+
+    # 2) 批量查用户-权限组绑定
+    user_groups = {}  # {user_id: [group_id, ...]}
+    for ug in UserGroup.query.filter(UserGroup.user_id.in_(user_ids)).all():
+        user_groups.setdefault(ug.user_id, []).append(ug.group_id)
+
+    # 3) 批量查权限组（只关心 active 的）
+    all_group_ids = set()
+    for gids in user_groups.values():
+        all_group_ids.update(gids)
+    active_groups = {g.id for g in PermissionGroup.query.filter(
+        PermissionGroup.id.in_(list(all_group_ids)) if all_group_ids else False,
+        PermissionGroup.is_active.is_(True)
+    ).all()} if all_group_ids else set()
+
+    # 4) 批量查组-权限明细，内存归并 {group_id: {code: effect}}
+    group_perms_map = {}
+    if active_groups:
+        for gp in GroupPermission.query.filter(GroupPermission.group_id.in_(active_groups)).all():
+            group_perms_map.setdefault(gp.group_id, {})[gp.permission_code] = gp.effect
+
+    # 5) 批量查用户覆盖 {user_id: {code: effect}}
+    user_overrides = {}
+    for ov in UserPermissionOverride.query.filter(UserPermissionOverride.user_id.in_(user_ids)).all():
+        user_overrides.setdefault(ov.user_id, {})[ov.permission_code] = ov.effect
+
+    # 6) 逐个用户合并计算（无管理员/无回退分支，因为调用方已处理）
+    result = {}
+    for uid in user_ids:
+        user = users.get(uid)
+        if user is None:
+            result[uid] = {code: False for code in PERMISSION_CODES}
+            continue
+
+        if user.is_admin:
+            result[uid] = {code: True for code in PERMISSION_CODES}
+            continue
+
+        # 合并所有关联组的权限（多组并集）
+        merged = {}
+        for gid in user_groups.get(uid, []):
+            if gid not in active_groups:
+                continue
+            for code, effect in group_perms_map.get(gid, {}).items():
+                if code not in merged or effect == EFFECT_ALLOW:
+                    merged[code] = effect
+
+        # 用户覆盖优先
+        overrides = user_overrides.get(uid, {})
+        perms = {}
+        for code in PERMISSION_CODES:
+            if code in overrides:
+                perms[code] = (overrides[code] == EFFECT_ALLOW)
+            elif code in merged:
+                perms[code] = (merged[code] == EFFECT_ALLOW)
+            else:
+                perms[code] = False
+
+        result[uid] = perms
+
+    return result
+
+
 def invalidate_group_permission_cache(group_id):
     """失效所有绑定该权限组的用户缓存（权限组权限变更后调用）"""
     try:
@@ -333,10 +412,25 @@ def invalidate_group_permission_cache(group_id):
                 invalidate_legacy_permission_cache(uid)
         except Exception:
             pass
-        # 同步刷新旧表镜像，保证直查 PermissionInfo 的页面一致
-        sync_legacy_rows_from_rbac(user_ids)
+        # 同步刷新旧表镜像，保证直查 PermissionInfo 的页面一致（后台执行）
+        import threading
+        threading.Thread(
+            target=_bg_sync_legacy_rows,
+            args=(list(user_ids),),
+            daemon=True,
+        ).start()
     except Exception as e:
         current_app.logger.warning(f"失效权限组缓存失败 - 权限组ID {group_id}: {e}")
+
+
+def _bg_sync_legacy_rows(user_ids):
+    """后台线程：批量镜像旧表（不阻塞 API 响应）。"""
+    try:
+        # 新建独立应用上下文与 DB session，避免跨线程 session 问题
+        with current_app.app_context():
+            sync_legacy_rows_from_rbac(user_ids)
+    except Exception as e:
+        current_app.logger.warning(f"后台镜像旧表失败: {e}")
 
 
 def sync_legacy_rows_from_rbac(user_ids):
@@ -344,13 +438,15 @@ def sync_legacy_rows_from_rbac(user_ids):
     if not user_ids:
         return
     try:
+        # 批量计算所有用户的有效权限（一次归并，N 次 DB 查询总量 ~10）
+        batch_perms = _compute_effective_permissions_batch(user_ids)
+
         # 批量读取已存在的旧表行，避免逐用户查询
         existing = {row.user_id: row for row in
                     PermissionInfo.query.filter(PermissionInfo.user_id.in_(user_ids)).all()}
-        for user_id in user_ids:
-            perms = compute_effective_permissions(user_id, use_cache=False)
-            if not perms:
-                continue
+
+        # 统一写入
+        for user_id, perms in batch_perms.items():
             row = existing.get(user_id)
             if row is None:
                 row = PermissionInfo(user_id=user_id)
@@ -359,7 +455,12 @@ def sync_legacy_rows_from_rbac(user_ids):
             for code, allowed in perms.items():
                 if hasattr(row, code):
                     setattr(row, code, bool(allowed))
-        db.session.commit()  # 统一提交，减少事务开销
+        db.session.commit()
+
+        # 失效缓存
+        cache = _get_perm_cache()
+        for uid in user_ids:
+            cache.invalidate_user_cache(uid)
         try:
             from utils.permission_utils import invalidate_legacy_permission_cache
             for uid in user_ids:
@@ -583,7 +684,12 @@ def set_group_members(group_id, user_ids, operator_id=None):
         db.session.commit()
         for uid in user_ids:
             invalidate_user_permission_cache(uid)
-            sync_legacy_row_from_rbac(uid)
+        # 批量镜像旧表（后台）
+        if user_ids:
+            import threading
+            threading.Thread(
+                target=_bg_sync_legacy_rows, args=(list(user_ids),), daemon=True,
+            ).start()
         return True, '权限组成员保存成功'
     except Exception as e:
         db.session.rollback()
@@ -615,7 +721,11 @@ def set_user_groups(user_id, group_ids, operator_id=None):
 
         db.session.commit()
         invalidate_user_permission_cache(user_id)
-        sync_legacy_row_from_rbac(user_id)
+        # 单用户也改为后台，避免偶发阻塞
+        import threading
+        threading.Thread(
+            target=_bg_sync_legacy_rows, args=([user_id],), daemon=True,
+        ).start()
         return True, '用户权限组保存成功'
     except Exception as e:
         db.session.rollback()
@@ -677,7 +787,11 @@ def set_user_overrides(user_id, overrides, operator_id=None):
 
         db.session.commit()
         invalidate_user_permission_cache(user_id)
-        sync_legacy_row_from_rbac(user_id)
+        # 用户覆盖变更也后台镜像旧表
+        import threading
+        threading.Thread(
+            target=_bg_sync_legacy_rows, args=([user_id],), daemon=True,
+        ).start()
         return True, '用户权限覆盖保存成功'
     except Exception as e:
         db.session.rollback()

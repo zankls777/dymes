@@ -192,6 +192,8 @@ class ProductionConfig(Config):
     DEBUG = False
     SQLALCHEMY_DATABASE_URI = Config.get_database_uri()
     SQLALCHEMY_ENGINE_OPTIONS = Config.get_engine_options()
+    # 模板自动重载：让 HTML 模板修改立即生效，无需重启服务（仅额外一次 mtime 检查，开销可忽略）
+    TEMPLATES_AUTO_RELOAD = True
 
 
 class TestingConfig(Config):

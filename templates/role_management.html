@@ -393,9 +393,12 @@ const GroupUI = (function () {
     }
 
     async function init() {
-        await loadCatalog();
-        await loadUsers();
-        await loadGroups();
+        // 三个请求相互独立，并行发起（原代码串行 await，首次进入页面慢 3 倍）
+        await Promise.all([
+            loadCatalog(),
+            loadUsers(),
+            loadGroups(),
+        ]);
         if (groups.length) selectGroup(groups[0].id);
     }
     document.addEventListener('DOMContentLoaded', init);
