@@ -15,6 +15,7 @@ class WireScanDetail(db.Model):
     __table_args__ = (
         Index('idx_wsd_lot_circuit', 'lot_no', 'circuit_no'),
         Index('idx_wsd_part_eo_circuit', 'part_no', 'jx_eo', 'circuit_no'),
+        Index('idx_wsd_lot_setcode', 'lot_no', 'set_code'),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -22,6 +23,7 @@ class WireScanDetail(db.Model):
     circuit_no = db.Column(db.String(100), nullable=True)    # 回路号
     part_no = db.Column(db.String(100), nullable=True)       # 品番（快照）
     jx_eo = db.Column(db.String(50), nullable=True)          # 京信EO（快照）
+    set_code = db.Column(db.String(50), nullable=True)       # 图纸编号 SetCode（快照，用于同图纸兄弟回路过滤）
     seq = db.Column(db.Integer, default=0)                   # 同回路内行序（按 sub_list.id）
 
     # ---- 以下全部为扫描时刻从原始资料固化的文本，不再随原始资料变化 ----
@@ -52,6 +54,7 @@ class WireScanDetail(db.Model):
             # 保留快照行固化的品番/EO，供下载/录入页「兼容键」逻辑读取
             # （LOT 登录资料后来变更时仍需按快照原品番/EO 命中）
             'part_no': self.part_no or '', 'jx_eo': self.jx_eo or '',
+            'set_code': self.set_code or '',
             'wire': self.wire or '', 'color': self.color or '', 'sq': self.sq or '',
             'length_cut2': self.length_cut2 or '',
             'tml1': self.tml1 or '', 'tml2': self.tml2 or '',

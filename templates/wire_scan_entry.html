@@ -186,7 +186,7 @@
                             <div class="form-text scan-tip mt-1 d-flex justify-content-between align-items-center">
                                 <span>扫码完成自动回车切换；也可手动按回车</span>
                                 <div class="d-flex gap-1 align-items-center">
-                                    <div class="form-check form-check-inline mb-0 me-1" title="开启后，扫描回路号会自动带入同一图纸下的其他兄弟回路（默认关闭）">
+                                    <div class="form-check form-check-inline mb-0 me-1" title="开启后，扫描回路号会自动带入同一图纸编号(SetCode)下的其他兄弟回路；关闭则只显示当前回路（默认开启）">
                                         <input class="form-check-input" type="checkbox" id="autoSameDrawingToggle"
                                                {{ 'checked' if auto_same_drawing else '' }}>
                                         <label class="form-check-label small" for="autoSameDrawingToggle">自动带入同图纸回路</label>
@@ -343,6 +343,7 @@
             const scanResult = document.getElementById('scanResult');
             const circuitInput = document.getElementById('circuitInput');
             const machineInput = document.getElementById('machineInput');
+            const autoSameDrawingToggle = document.getElementById('autoSameDrawingToggle');
             const manualLot = document.getElementById('manualLot');
             const manualCircuit = document.getElementById('manualCircuit');
             const manualMachine = document.getElementById('manualMachine');
@@ -1158,11 +1159,14 @@
                 } else {
                     manualLot.focus();
                 }
-                // 立即拉取该回路资料（不等数量填写），同图纸兄弟回路自动带入并提醒
+                // 立即拉取该回路资料（不等数量填写）
                 const detailTask2 = fetchCircuitDetail(lotNo, circuitNo);
                 // 资料拉取完成后，按匹配键拉取「用户登录维护的压高」；无匹配不显示
                 Promise.resolve(detailTask2).then(() => fetchUserCrimp(lotNo, circuitNo, machineNo));
-                checkSameDrawing(lotNo, circuitNo);
+                // 同图纸兄弟回路自动带入：仅在用户勾选开关时执行（默认关闭）
+                if (autoSameDrawingToggle && autoSameDrawingToggle.checked) {
+                    checkSameDrawing(lotNo, circuitNo);
+                }
             }
 
             manualAddBtn.addEventListener('click', handleManualAdd);

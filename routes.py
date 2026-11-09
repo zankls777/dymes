@@ -5295,6 +5295,7 @@ def _wire_store_snapshot(lot_no, circuit_no, part, eo, sub_rows):
         mappings.append({
             'lot_no': lot_no, 'circuit_no': circuit_no,
             'part_no': part, 'jx_eo': eo,
+            'set_code': (getattr(s, 'SetCode', None) or '').strip() or None,
             'seq': seq,
             'wire': s.Wire, 'color': s.Color, 'sq': s.SQ, 'length_cut2': s.Length_Cut2,
             'tml1': s.Tml1, 'tml2': s.Tml2, 'rel1': s.Rel1, 'rel2': s.Rel2,
@@ -5580,32 +5581,71 @@ def _wire_snapshot_dicts(lot_no, circuit_no):
     return [d.to_dict() for d in rows]
 
 
-def _wire_snapshot_sibling_circuits(lot_no, exclude_circuit_up, limit=60):
-    """从已固化的 wire_scan_detail 快照中取该 LOT 下其他回路（兄弟回路）。
+def _wire_snapshot_sibling_circuits(lot_no, exclude_circuit_up, limit=60, set_code=None):
+    """从已固化的 wire_scan_detail 快照中取该 LOT 下同图纸的其他回路（兄弟回路）。
 
     用于 same_drawing 实时资料缺失（原始资料被删除/冻结）时的兜底：
     仅依据 LOT 快照，不查询 sub_list、不依赖 LOT 登录资料，
     保证「已拉取过的信息不丢失」。返回结构与 same_drawing.circuits 一致。
+
+    关键：必须按图纸编号 SetCode 过滤，仅返回与当前回路同图纸的回路，
+    避免把同 LOT 下不同图纸的回路误判为兄弟回路（导致大量无关数据）。
+    - set_code 不为空时：按该 SetCode 精确过滤；
+    - set_code 为空时：尝试从当前回路自身的快照行取 SetCode；
+    - 仍无法确定 SetCode 时：返回空（宁可少返回，不可错返回）。
     """
     from models.wire_scan_detail import WireScanDetail
+    from sqlalchemy import func
     lot_no = (lot_no or '').strip()
     if not lot_no:
         return []
+    exclude_up = (exclude_circuit_up or '').strip().upper()
+
+    # 确定用于过滤的 SetCode 集合（当前回路可能有多行，取全部非空 SetCode）
+    target_set_codes = set()
+    if set_code:
+        target_set_codes.add(str(set_code).strip().upper())
+    if not target_set_codes:
+        cur_rows = (WireScanDetail.query
+                    .filter(WireScanDetail.lot_no == lot_no,
+                            func.upper(func.coalesce(WireScanDetail.circuit_no, '')) == exclude_up)
+                    .all())
+        for r in cur_rows:
+            sc = (r.set_code or '').strip()
+            if sc:
+                target_set_codes.add(sc.upper())
+    if not target_set_codes:
+        # 无法确定当前回路的图纸编号，不能安全地判定兄弟回路，返回空
+        return []
+
     rows = (WireScanDetail.query
             .filter(WireScanDetail.lot_no == lot_no)
             .order_by(WireScanDetail.circuit_no, WireScanDetail.seq)
             .all())
-    circuits = []
-    seen = set()
+    # 先按回路号分组，记录每个回路的 SetCode 集合与首行明细
+    circ_meta = {}  # circuit_up -> {'name': str, 'set_codes': set, 'first': row}
     for d in rows:
         c = (d.circuit_no or '').strip()
-        c_up = c.upper()
-        # 排除当前回路本身，且同一回路只取一条（首行）
-        if not c or c_up == (exclude_circuit_up or '').strip().upper() or c in seen:
+        if not c:
             continue
-        seen.add(c)
+        c_up = c.upper()
+        if c_up == exclude_up:
+            continue
+        meta = circ_meta.get(c_up)
+        if meta is None:
+            meta = {'name': c, 'set_codes': set(), 'first': d}
+            circ_meta[c_up] = meta
+        sc = (d.set_code or '').strip()
+        if sc:
+            meta['set_codes'].add(sc.upper())
+    circuits = []
+    for c_up, meta in circ_meta.items():
+        # 仅当该回路的 SetCode 与当前回路有交集时，才视为同图纸兄弟回路
+        if not (meta['set_codes'] & target_set_codes):
+            continue
+        d = meta['first']
         circuits.append({
-            'circuit': c, 'wire': d.wire, 'color': d.color, 'sq': d.sq,
+            'circuit': meta['name'], 'wire': d.wire, 'color': d.color, 'sq': d.sq,
             'length_cut2': d.length_cut2, 'tml1': d.tml1, 'tml2': d.tml2,
             'strip1': d.strip1, 'strip2': d.strip2,
             'rel1': d.rel1, 'rel2': d.rel2,
@@ -6174,9 +6214,10 @@ def wire_scan_entry_same_drawing():
                                 func.upper(func.trim(SubList.Circuit)) != cu, *base_any)
                         .order_by(SubList.Circuit).limit(60).all())
         # 实时无资料（原始资料已删除/冻结等）：回退该 LOT 下已固化的兄弟回路快照，
-        # 保证「已拉取过的信息不丢失」，同一图纸的兄弟回路仍能自动带入
+        # 保证「已拉取过的信息不丢失」，同一图纸的兄弟回路仍能自动带入。
+        # 必须传入当前回路的 SetCode(drawing)，确保只返回同图纸回路，避免无关数据。
         if not rows:
-            snap_circuits = _wire_snapshot_sibling_circuits(lot, cu)
+            snap_circuits = _wire_snapshot_sibling_circuits(lot, cu, set_code=drawing)
             if snap_circuits:
                 return jsonify({'success': True, 'circuits': snap_circuits,
                                 'drawing': drawing, 'snapshot': True})

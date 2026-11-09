@@ -106,11 +106,11 @@ def set_maintenance_mode(enabled):
     db.session.commit()
 
 
-# 扫描录入 - 扫描回路号后是否自动带入同图纸兄弟回路（'1' 开启 / '0' 关闭，默认关闭）
+# 扫描录入 - 扫描回路号后是否自动带入同图纸兄弟回路（'1' 开启 / '0' 关闭，默认开启）
 WIRE_SCAN_AUTO_SAME_DRAWING_KEY = 'wire_scan_auto_same_drawing'
-WIRE_SCAN_AUTO_SAME_DRAWING_DEFAULT = '0'
+WIRE_SCAN_AUTO_SAME_DRAWING_DEFAULT = '1'
 
 
 def is_wire_scan_auto_same_drawing():
-    """扫描录入是否自动带入同图纸兄弟回路（默认 False = 关闭）"""
+    """扫描录入是否自动带入同图纸兄弟回路（默认 True = 开启）"""
     return get_setting(WIRE_SCAN_AUTO_SAME_DRAWING_KEY, WIRE_SCAN_AUTO_SAME_DRAWING_DEFAULT) == '1'

@@ -180,6 +180,11 @@ COLUMN_UPGRADES = {
         ('vehicle_type', 'VARCHAR(100)'),
         ('created_by_name', 'VARCHAR(80)'),
     ],
+    'wire_scan_detail': [
+        # 图纸编号 SetCode 快照：用于同图纸兄弟回路兜底查询时按 SetCode 精确过滤，
+        # 避免返回同 LOT 下不同图纸的无关回路
+        ('set_code', 'VARCHAR(50)'),
+    ],
     'wire_crimp_login': [
         # 匹配键扩展：线质（如 AVSS/CIVUS），加入后旧数据将被清空由用户重新上传
         ('wire', 'VARCHAR(50) NOT NULL DEFAULT ""'),
@@ -229,6 +234,8 @@ INDEX_STATEMENTS = [
     "ON wire_scan_detail(lot_no, circuit_no)",
     "CREATE INDEX IF NOT EXISTS idx_wsd_part_eo_circuit "
     "ON wire_scan_detail(part_no, jx_eo, circuit_no)",
+    "CREATE INDEX IF NOT EXISTS idx_wsd_lot_setcode "
+    "ON wire_scan_detail(lot_no, set_code)",
     # 活跃数据部分索引（deleted=0 AND is_frozen=0）
     "CREATE INDEX IF NOT EXISTS idx_sub_list_active "
     "ON sub_list(deleted, is_frozen) WHERE deleted=0 AND is_frozen=0",
