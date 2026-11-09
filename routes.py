@@ -1,6 +1,7 @@
 from flask import (
     Blueprint, request, jsonify, render_template, redirect, url_for, flash,
-    send_from_directory, current_app, Response, session, make_response, send_file
+    send_from_directory, current_app, Response, session, make_response, send_file,
+    abort
 )
 import traceback
 from urllib.parse import urlparse
@@ -10974,6 +10975,100 @@ def api_maintenance_mode():
         db.session.rollback()
         current_app.logger.error(f"设置系统维护模式失败: {str(e)}")
         return jsonify({'success': False, 'error': f'设置失败: {str(e)}'}), 500
+
+
+# ================= 快捷键设置（自定义网站快捷入口） =================
+def _can_manage_shortcuts():
+    """快捷键设置的管理权限：管理员或拥有系统管理权限(can_system_management)的用户。"""
+    return check_permission(session.get('user_id'), 'can_system_management')
+
+
+@main_bp.route('/shortcut_settings')
+@login_required
+def shortcut_settings():
+    """快捷键设置页面：维护自定义网站清单（数量不限，地址可随时调整）。"""
+    if 'user_id' not in session:
+        return redirect(url_for('main.login', next=request.url))
+    if not _can_manage_shortcuts():
+        current_app.logger.warning(f"用户 {session.get('username')} 尝试访问快捷键设置，权限不足")
+        return forbidden_page('您没有快捷键设置的访问权限')
+    return render_template('shortcut_settings.html')
+
+
+def _alias_conflicts_with_system(alias):
+    """固定入口是否与系统现有静态路由冲突（冲突时该入口永远不会生效）。"""
+    return any(not rule.arguments and rule.rule == alias
+               for rule in current_app.url_map.iter_rules())
+
+
+@main_bp.route('/api/web_shortcuts', methods=['GET', 'POST'])
+@csrf_exempt_route
+@login_required
+def api_web_shortcuts():
+    """自定义网址映射读写接口：GET 查询清单，POST 新增或更新单条记录。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not _can_manage_shortcuts():
+        return jsonify({'success': False, 'error': '您没有快捷键设置的访问权限'}), 403
+
+    from utils.shortcut_settings import load_shortcuts, normalize_alias, save_shortcut
+
+    if request.method == 'GET':
+        return jsonify({'success': True, 'items': load_shortcuts()})
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        alias, error = normalize_alias(payload.get('alias'))
+        if error:
+            return jsonify({'success': False, 'error': error}), 400
+        if _alias_conflicts_with_system(alias):
+            return jsonify({'success': False, 'error': f'该网址 {alias} 与系统现有页面冲突，请更换'}), 400
+        item, error = save_shortcut(payload)
+        if error:
+            return jsonify({'success': False, 'error': error}), 400
+        return jsonify({'success': True, 'item': item, 'items': load_shortcuts(),
+                        'message': '保存成功'})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"保存自定义网址失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
+
+
+@main_bp.route('/api/web_shortcuts/delete', methods=['POST'])
+@csrf_exempt_route
+@login_required
+def api_web_shortcuts_delete():
+    """删除单条自定义网站记录。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not _can_manage_shortcuts():
+        return jsonify({'success': False, 'error': '您没有快捷键设置的访问权限'}), 403
+
+    from utils.shortcut_settings import delete_shortcut, load_shortcuts
+
+    data = request.get_json(silent=True) or {}
+    try:
+        if not delete_shortcut(data.get('id')):
+            return jsonify({'success': False, 'error': '记录不存在或已被删除'}), 404
+        return jsonify({'success': True, 'items': load_shortcuts(), 'message': '删除成功'})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"删除自定义网址失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '删除失败，请稍后重试'}), 500
+
+
+@main_bp.route('/<path:alias_path>', methods=['GET'])
+def shortcut_alias_redirect(alias_path):
+    """自定义网址固定入口：按后台配置 302 跳转到可随时调整的目标地址。
+
+    说明：该路由为兜底路由，系统已有的静态页面路由优先级更高，不会被覆盖；
+    只有命中“快捷键设置”中登记过的入口路径才会跳转，其余仍按 404 处理。
+    """
+    from utils.shortcut_settings import find_shortcut_by_alias
+    item = find_shortcut_by_alias('/' + alias_path)
+    if not item:
+        abort(404)
+    return redirect(item['target'], code=302)
 
 
 # 文件管理路由（上传、搜索、列表展示）

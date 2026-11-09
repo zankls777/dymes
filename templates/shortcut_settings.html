@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>快捷键设置</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        /* 快捷键设置页：统一浅蓝白风格 */
+        .sc-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+        .sc-desc { margin: 0; font-size: .82rem; color: #64748b; }
+        .sc-card { background: #fff; border: 1px solid #e2ebf9; border-radius: 12px; box-shadow: 0 4px 16px rgba(15, 23, 42, .05); overflow: hidden; }
+        .sc-table { margin: 0; }
+        .sc-table th { background: #eef4ff; color: #1f2937; font-weight: 600; font-size: .84rem; white-space: nowrap; }
+        .sc-table td { vertical-align: middle; font-size: .86rem; color: #334155; }
+        .sc-url { display: block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1b6bff; text-decoration: none; }
+        .sc-url:hover { text-decoration: underline; }
+        .sc-alias-tip { display: block; margin-top: 2px; font-size: .72rem; color: #94a3b8; }
+        .sc-remark { color: #64748b; }
+        .sc-actions { display: flex; gap: 6px; white-space: nowrap; }
+        .sc-actions .btn { padding: 2px 9px; font-size: .76rem; }
+        .sc-empty { padding: 36px 12px; text-align: center; color: #94a3b8; font-size: .86rem; }
+        .sc-status { min-height: 20px; margin-bottom: 8px; font-size: .82rem; }
+        .sc-status.ok { color: #15803d; }
+        .sc-status.err { color: #b91c1c; }
+        .sc-index { color: #94a3b8; width: 42px; }
+        .sc-updated { color: #94a3b8; font-size: .8rem; white-space: nowrap; }
+        @media (max-width: 767.98px) {
+            .sc-url { max-width: 190px; }
+            .sc-hide-sm { display: none; }
+        }
+    </style>
+</head>
+<body>
+{% include '_navbar.html' %}
+<div class="container-fluid mt-4">
+    <div class="sc-head">
+        <div>
+            <h1 class="h3 mb-1" style="color:#1f2937;">快捷键设置</h1>
+            <p class="sc-desc">自定义网址：固定入口地址用于 APK 封装，封装后无需再改；后期只需在后台调整目标网址即可生效。</p>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" id="scAddBtn">
+            <i class="fa fa-plus"></i> 新增网址
+        </button>
+    </div>
+
+    <div class="alert alert-info py-2 px-3" style="font-size:.82rem;">
+        <i class="fa fa-info-circle"></i>
+        固定入口（如 <code>/xidingyi01</code>）封装进 APK 后保持不变；访问该入口会自动跳转到「目标网址」。后期改目标网址，无需重新封装 APK。
+    </div>
+
+    <div class="sc-status" id="scStatus"></div>
+
+    <div class="sc-card">
+        <div class="table-responsive">
+            <table class="table table-hover sc-table" id="scTable">
+                <thead>
+                    <tr>
+                        <th class="sc-index">#</th>
+                        <th style="min-width:220px;">固定入口地址（APK 使用）</th>
+                        <th style="min-width:200px;">目标网址（可后台调整）</th>
+                        <th class="sc-hide-sm">备注</th>
+                        <th class="sc-hide-sm">更新时间</th>
+                        <th style="width:200px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="scBody">
+                    <tr><td colspan="6" class="sc-empty"><i class="fa fa-spinner fa-spin"></i> 加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 新增 / 编辑弹窗 -->
+<div class="modal fade" id="scModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="scForm" autocomplete="off">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="scModalTitle">新增网址</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="scId">
+                    <div class="mb-3">
+                        <label class="form-label" for="scAlias">自定义网址（固定入口） <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="scAlias" maxlength="200" placeholder="/xidingyi01 或 http://服务器地址/xidingyi01" required>
+                        <div class="form-text">封装 APK 时使用此地址，之后保持不变；可填完整网址，系统自动提取路径。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="scTarget">目标网址（可后台调整） <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="scTarget" maxlength="500" placeholder="/user_management 或 www.baidu.com 或 https://example.com" required>
+                        <div class="form-text">支持站内路径（如 /user_management）、站外域名（如 www.baidu.com，自动补 http://）或完整网址，后期可随时修改。</div>
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label" for="scRemark">备注</label>
+                        <input type="text" class="form-control" id="scRemark" maxlength="100" placeholder="选填，用于说明用途">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary btn-sm" id="scSaveBtn">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/shortcut_settings.js') }}?v=20261109b"></script>
+</body>
+</html>

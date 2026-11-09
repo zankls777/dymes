@@ -62,6 +62,7 @@ PAGE_DEFS = {
     'operation_logs': {'title': '操作记录', 'endpoint': 'main.operation_logs', 'tab': '操作记录', 'perm': 'can_system_management'},
     'data_management': {'title': '数据备份管理', 'endpoint': 'main.data_management', 'tab': '数据备份管理', 'perm': 'can_data_management'},
     'menu_management': {'title': '菜单管理', 'endpoint': 'main.menu_management', 'tab': '菜单管理', 'perm': 'can_page'},
+    'shortcut_settings': {'title': '快捷键设置', 'endpoint': 'main.shortcut_settings', 'tab': '快捷键设置', 'perm': 'can_system_management'},
 }
 
 # 一级条目定义：page=直接跳转页面；children=可展开的子菜单页面
@@ -83,6 +84,7 @@ ENTRY_DEFS = {
     'operation_logs': {'title': '操作记录', 'icon': 'fa-history', 'page': 'operation_logs'},
     'data_management': {'title': '数据备份管理', 'icon': 'fa-database', 'page': 'data_management'},
     'menu_management': {'title': '菜单管理', 'icon': 'fa-list', 'page': 'menu_management'},
+    'shortcut_settings': {'title': '快捷键设置', 'icon': 'fa-link', 'page': 'shortcut_settings'},
 }
 
 # 默认分组：按实际业务域归类（管理员可在菜单管理页调整）
@@ -92,7 +94,7 @@ DEFAULT_GROUPS = [
     {'key': 'material', 'title': '资材与盘点', 'entries': ['material_download', 'material_calc', 'material', 'inventory']},
     {'key': 'wire', 'title': '补线打端子', 'entries': ['wire']},
     {'key': 'production', 'title': '生产与 MES', 'entries': ['invest_tidy', 'auto_loading', 'mes']},
-    {'key': 'system', 'title': '系统管理', 'entries': ['user_management', 'operation_logs', 'data_management', 'menu_management']},
+    {'key': 'system', 'title': '系统管理', 'entries': ['user_management', 'operation_logs', 'data_management', 'menu_management', 'shortcut_settings']},
 ]
 
 MAX_GROUPS = 12          # 分组数量上限，避免侧边栏过长

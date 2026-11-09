@@ -49,7 +49,8 @@ window.__TABBAR_ROUTES__ = [
     (url_for('mes.group_page'), 'MES分组'),
     (url_for('main.user_management'), '用户与权限管理'),
     (url_for('main.operation_logs'), '操作记录'),
-    (url_for('main.data_management'), '数据备份管理')
+    (url_for('main.data_management'), '数据备份管理'),
+    (url_for('main.shortcut_settings'), '快捷键设置')
 ] %}
     {% for _url, _title in _routes %}{ "url": "{{ _url }}", "title": "{{ _title }}" }{{ "," if not loop.last }}{% endfor %}
 ];
