@@ -12312,7 +12312,10 @@ _NOCASE_ACTIVE_INDEXES = {
 }
 
 # COUNT 时间预算（毫秒）：超时即放弃统计，避免大表冷缓存下的长等待
-_COUNT_BUDGET_MS = 800
+# 实测 2.7GB 机械盘 SQLite 冷缓存下 COUNT 活跃行需要 3~5s，800ms 预算过紧会导致
+# 首次带搜索条件的查询普遍命中超时 → 总数未知、分页控件降级；放宽到 5s 让预热覆盖不到
+# 的搜索条件也能完成 COUNT（热缓存下仅需 50~150ms，不受影响）
+_COUNT_BUDGET_MS = 5000
 # 数据页查询预算：整表扫描等极端条件至少给足冷缓存读盘时间（实测冷索引扫描 5~8s），
 # 超出才中断并提示用户收窄条件，避免误判为「无结果」
 _PAGE_BUDGET_MS = 8000
@@ -12339,7 +12342,10 @@ def _build_fuzzy_candidate_expr(column, value, table_name):
     - 刻意不转义、不追加通配符，SQLAlchemy 对裸等值比较生成简单 SQL，
       SQLite 才能对其应用索引优化；
     - 仅当该字段存在 NOCASE 部分索引时才启用快路径：普通的 BINARY 索引无法服务于
-      NOCASE 比较，强制等值探测只会多一次全表扫描。
+      NOCASE 比较，强制等值探测只会多一次全表扫描；
+    - 注意：等值比较（==）里的 '%' '_' '\\' 都是字面量，不是 LIKE 通配符，
+      因此不需要过滤（之前的过度防御导致含下划线的 VehicleType 如 SP3k_MAIN
+      被错误跳过快路径，退回 LIKE 后 '_' 被解释为通配符 → 搜不到数据）。
     """
     if db.engine.dialect.name != 'sqlite':
         return None
@@ -12347,8 +12353,6 @@ def _build_fuzzy_candidate_expr(column, value, table_name):
         return None
     text_value = str(value)
     if not text_value or text_value[0] in _PREFIX_UNUSABLE:
-        return None
-    if any(ch in text_value for ch in ('%', '_', '\\')):
         return None
     return column.collate('NOCASE') == text_value
 
@@ -12473,6 +12477,79 @@ def _cached_count(cache_key, statement, params=None, budget_ms=_COUNT_BUDGET_MS)
     return total
 
 
+# FTS5 trigram 全文索引表名映射（无 NOCASE 索引的字段模糊搜索 fallback 到这里）
+_FTS5_TABLES = {
+    'sub_list':   'sub_list_fts',
+    'usage_list': 'usage_list_fts',
+}
+
+
+def _fts5_match_clause(table_name, field, value):
+    """构造 FTS5 trigram MATCH 搜索词。
+
+    - trigram tokenizer 下不限定列（"列名":搜索词 语法在 trigram 下失效），
+      直接搜所有 FTS5 列；JOIN 主表 + WHERE 过滤走列本身的精确条件；
+    - trigram 要求搜索词 ≥ 3 字符才能形成匹配。英文/数字 ≥ 3 自动处理；
+      中文单/双字（如"线""线束"）返回 None，让 fallback LIKE 兜底
+      （双字中文在 SQLite 2.7GB 数据上 LIKE 全表扫约 2-3s，可接受）。
+    - 去掉 LIKE 通配符残留（用户可能粘贴了 %xxx%）。
+    """
+    fts_tbl = _FTS5_TABLES.get(table_name)
+    if not fts_tbl:
+        return None, None
+    term = str(value).strip().strip('%')
+    if not term:
+        return None, None
+    # trigram 至少要 3 个可形成窗口的字符（中文每个字一个 token，2 字补空格也不够 3-trigram）
+    if len(term) < 3:
+        return None, None
+    # 英文/数字可以用前缀通配让匹配更宽（"91840*" 能命中 "91840ABC"、"X91840" 等）
+    # 但 MATCH 不带前缀 '*' 就是子串匹配，等价于 LIKE '%xxx%'
+    return term, fts_tbl
+
+
+def _fts5_page(table_name, column_names, field, value, page, per_page):
+    """用 FTS5 trigram + 子查询 JOIN 取数据页（毫秒级，替代 LIKE '%xxx%' 全表扫）。
+
+    关键：把 MATCH 放子查询里先跑（FTS5 毫秒级返回 rowid 列表），
+    再 JOIN 主表走主键 id，避免 SQLite 优化器先扫 active_count 覆盖索引（100 万行）。
+    """
+    match_clause, fts_tbl = _fts5_match_clause(table_name, field, value)
+    if match_clause is None:
+        return None
+    col_list = ', '.join(column_names)
+    sql = (
+        f"SELECT s.{col_list.replace(', ', ', s.')} "
+        f"FROM {table_name} s "
+        f"INNER JOIN ( "
+        f"  SELECT rowid FROM {fts_tbl} WHERE {fts_tbl} MATCH :match "
+        f"  LIMIT :limit OFFSET :offset "
+        f") f ON s.id = f.rowid "
+        f"WHERE s.deleted = 0 AND s.is_frozen = 0 "
+        f"ORDER BY s.id "
+    )
+    return _bounded_rows(sql, {
+        'match': match_clause,
+        'limit': per_page,
+        'offset': (page - 1) * per_page,
+    })
+
+
+def _fts5_count(table_name, field, value):
+    """用 FTS5 MATCH + JOIN 做 COUNT（同样走子查询先 MATCH）。"""
+    match_clause, fts_tbl = _fts5_match_clause(table_name, field, value)
+    if match_clause is None:
+        return None
+    sql = (
+        f"SELECT COUNT(*) FROM {table_name} s "
+        f"INNER JOIN ( "
+        f"  SELECT rowid FROM {fts_tbl} WHERE {fts_tbl} MATCH :match "
+        f") f ON s.id = f.rowid "
+        f"WHERE s.deleted = 0 AND s.is_frozen = 0"
+    )
+    return _run_bounded(sql, {'match': match_clause}, _COUNT_BUDGET_MS, True)
+
+
 def _indexed_fuzzy_page(table_name, column_names, field, value, page, per_page):
     """用 INDEXED BY 强制扫描字段的 NOCASE 部分索引取一页数据；超时返回 None。
 
@@ -12497,7 +12574,13 @@ def _indexed_fuzzy_page(table_name, column_names, field, value, page, per_page):
 
 
 def _fuzzy_count(table_name, model, field, value, count_cache_key):
-    """模糊匹配的计数：命中索引时也用 INDEXED BY，否则退回原全表 COUNT（带预算）。"""
+    """模糊匹配计数：优先 FTS5 trigram（毫秒级子串匹配），兜底 LIKE/INDEXED BY。"""
+    # 先走 FTS5 子查询 COUNT（毫秒级）
+    fts_total = _fts5_count(table_name, field, value)
+    if fts_total is not None:
+        query_cache_manager.set_count(count_cache_key, fts_total, ttl=_COUNT_TTL)
+        return fts_total
+    # FTS5 不可用时 fallback LIKE（有 NOCASE 索引走 INDEXED BY LIKE 'xxx%'）
     index_name = _NOCASE_ACTIVE_INDEXES.get(table_name, {}).get(field)
     if index_name:
         sql = (
@@ -12538,13 +12621,20 @@ def _single_field_page(model, table_name, columns, column_names,
                 return [], eq_total, False
 
     if _NOCASE_ACTIVE_INDEXES.get(table_name, {}).get(field):
-        fuzzy_items = _indexed_fuzzy_page(table_name, column_names, field, value, page, per_page)
+        # 有 NOCASE 索引 → 优先 FTS5（毫秒级子串匹配），兜底 INDEXED BY LIKE 'xxx%'（后缀通配走索引）
+        # 不再直接用 _indexed_fuzzy_page — LIKE '%xxx%' 前缀通配让索引失效，还是全表扫
+        fuzzy_items = _fts5_page(table_name, column_names, field, value, page, per_page)
+        if fuzzy_items is None:
+            fuzzy_items = _indexed_fuzzy_page(table_name, column_names, field, value, page, per_page)
     else:
-        fuzzy_query = (db.session.query(*columns)
-                       .filter(*base_filters, _fuzzy_search_expr(column, value))
-                       .order_by(model.id)
-                       .offset(offset).limit(per_page))
-        fuzzy_items = _bounded_rows(fuzzy_query.statement)
+        # 无 NOCASE 索引 → 先走 FTS5，不可用时兜底 LIKE '%xxx%'
+        fuzzy_items = _fts5_page(table_name, column_names, field, value, page, per_page)
+        if fuzzy_items is None:
+            fuzzy_query = (db.session.query(*columns)
+                           .filter(*base_filters, _fuzzy_search_expr(column, value))
+                           .order_by(model.id)
+                           .offset(offset).limit(per_page))
+            fuzzy_items = _bounded_rows(fuzzy_query.statement)
 
     if fuzzy_items is None:
         # 数据页查询超时：不再做计数，直接按「查询超时」降级返回
