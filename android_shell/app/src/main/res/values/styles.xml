@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <!-- 启动瞬间的窗口底色，避免白屏/黑屏闪烁 -->
+        <item name="android:windowBackground">@color/splash_bg</item>
+    </style>
+</resources>

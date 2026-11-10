@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <script>
+    // APK 原生扫码桥：先占位排队，等页面主脚本执行后再接管，避免 WebView 注入过早导致扫码结果丢失
+    window.__bomPdaQueue = [];
+    window.__bomPdaScan = function (code) { window.__bomPdaQueue.push(code); };
+    </script>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
     <title>资材入库 - 大焱资料管理系统</title>
     <link href="../static/css/bootstrap.min.css" rel="stylesheet">
@@ -155,7 +160,7 @@
                             </button>
                             <span class="scan-tip-icon" id="scanTipIcon" tabindex="0" role="button"
                                   data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-html="true"
-                                  title="<div class='text-start small'>① 扫描头：光标在扫码框内时，直接扣 DT40 扫描键即可（需在「扫描设置 → 输出设置」开启「扫描到输入框 / Scan to input field」并关闭「广播意图 / Broadcast Intent」）<br>② 相机：点「相机」按钮用摄像头或拍照识别（无需设置扫描头）<br>③ 手工输入 P/N 后回车或点「查询」<br>条码自动取第2-12位，如 P91175-DE540Q5S26092385 → <strong>91175-DE540</strong></div>">
+                                  title="<div class='text-start small'>① 扫描头（键盘模式）：光标在扫码框内时，直接扣 DT40 扫描键即可（需在「扫描设置 → 输出设置」开启「扫描到输入框 / Scan to input field」并关闭「广播意图 / Broadcast Intent」）<br>①' 扫描头（Intent 输出）：仅自建 WebView 壳可用，需监听扫描广播并回调 <code>window.__bomPdaScan(条码)</code>；lw.Web2Android 等通用打包工具不提供原生桥，请改用键盘模拟<br>② 相机：点「相机」按钮用摄像头或拍照识别（无需设置扫描头）<br>③ 手工输入 P/N 后回车或点「查询」<br>条码自动取第2-12位，如 P91175-DE540Q5S26092385 → <strong>91175-DE540</strong></div>">
                                 <i class="fa fa-info-circle"></i>
                             </span>
                         </div>
@@ -698,6 +703,91 @@
                 isScanning = true;   // 回车确认视为完整输入，直接查询
                 triggerScan();
             }
+        });
+
+        // ---------------- APK 原生扫码桥（优博讯「Intent 输出」模式） ----------------
+        // Intent 输出不会像键盘模拟那样往输入框灌字符，而是把条码放进 Intent（广播/回调），
+        // 网页 JS 无法直接监听原生广播，必须由 APK 侧收到后回调本函数，例如：
+        //   webView.evaluateJavascript("window.__bomPdaScan(" + JSONObject.quote(code) + ");", null)
+        function onNativeScan(code) {
+            var text = String(code === null || code === undefined ? '' : code).trim();
+            if (!text) { return false; }
+            scanInput.value = text;   // 回填扫码框，便于人工核对
+            isScanning = true;        // 视为扫描枪输入，跳过人工输入的停顿判定
+            if (scanTimer) { clearTimeout(scanTimer); }
+            triggerScan();            // 复用原有去重（1.5s 同码）+ 查询逻辑
+            return true;
+        }
+        window.__bomPdaScan = onNativeScan;   // APK 主调用入口
+        window.bomPdaScan = onNativeScan;     // 兼容其它命名约定
+
+        // 兜底通道：部分封装方式通过 postMessage 传递（仅接受约定的结构化消息，避免误吞普通消息）
+        window.addEventListener('message', function (e) {
+            var d = e ? e.data : null;
+            if (!d || typeof d !== 'object') { return; }
+            if (d.type !== 'bom-scan' && d.type !== 'scan') { return; }
+            onNativeScan(d.code || d.barcode || d.data || '');
+        });
+
+        // 页面脚本加载完成前 APK 已注入的扫码结果，在此补处理
+        (function flushPdaQueue() {
+            var q = window.__bomPdaQueue;
+            if (!q || !q.length) { return; }
+            var pending = q.slice();
+            q.length = 0;
+            pending.forEach(function (c) { onNativeScan(c); });
+        })();
+
+        // ---------------- 全局按键捕获（键盘模拟 / HID 模式，WebView 无焦点时） ----------------
+        // 通用 WebView 封装（如 lw.Web2Android）不提供原生桥，只能走「键盘模拟」输出；
+        // 而本页为避免软键盘遮挡，默认不聚焦任何输入框，此时扫描字符不会进入 scanInput，
+        // 只会以 keydown 事件派发到 document，因此在这里自行累积后统一交给 triggerScan。
+        var DOC_IDLE_MS = 350;      // 字符静止判定（毫秒），键盘模拟灌入的字符间隔极短
+        var docBuf = '';
+        var docTimer = null;
+
+        function isEditableEl(el) {
+            if (!el) { return false; }
+            var t = el.tagName ? el.tagName.toUpperCase() : '';
+            return t === 'INPUT' || t === 'TEXTAREA' || el.isContentEditable === true;
+        }
+
+        // keyCode 兜底映射（老内核无 e.key 时使用）
+        function charFromKeyCode(kc) {
+            if (kc >= 48 && kc <= 57) { return String.fromCharCode(kc); }   // 0-9
+            if (kc >= 65 && kc <= 90) { return String.fromCharCode(kc); }   // A-Z
+            if (kc >= 96 && kc <= 105) { return String.fromCharCode(kc - 48); } // 小键盘 0-9
+            if (kc === 189 || kc === 109) { return '-'; }
+            if (kc === 190 || kc === 110) { return '.'; }
+            if (kc === 32) { return ' '; }
+            return '';
+        }
+
+        function docFlush() {
+            if (docTimer) { clearTimeout(docTimer); docTimer = null; }
+            var raw = docBuf;
+            docBuf = '';
+            if (!raw) { return; }
+            scanInput.value = raw;   // 回填扫码框，便于核对
+            isScanning = true;
+            triggerScan();           // 复用去重 + 查询逻辑
+        }
+
+        document.addEventListener('keydown', function (e) {
+            // 有输入框聚焦（用户点扫码框手输 / 数量框）时交给原有 input 逻辑，避免重复
+            if (isEditableEl(document.activeElement)) { return; }
+            if (e.ctrlKey || e.altKey || e.metaKey) { return; }
+            if (e.key === 'Enter' || e.keyCode === 13) {
+                e.preventDefault();
+                docFlush();
+                return;
+            }
+            var ch = (e.key && e.key.length === 1) ? e.key : charFromKeyCode(e.keyCode || 0);
+            if (!ch) { return; }
+            e.preventDefault();      // 阻止字符落进 body 引起滚动/误触
+            docBuf += ch;
+            if (docTimer) { clearTimeout(docTimer); }
+            docTimer = setTimeout(docFlush, DOC_IDLE_MS);
         });
 
         // ---------------- 软键盘守卫 ----------------

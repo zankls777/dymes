@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 应用名称：桌面图标名 + 启动页标题 -->
+    <string name="app_name">大焱资料管理系统</string>
+    <!-- 启动页副标题，可改成公司/第三方名称 -->
+    <string name="splash_subtitle">正在连接服务器…</string>
+</resources>
