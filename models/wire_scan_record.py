@@ -32,6 +32,8 @@ class WireScanRecord(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey('user_info.id'), nullable=True)  # 录入人ID
     # 录入人姓名快照：账号删除后仍可显示历史文本
     created_by_name = db.Column(db.String(80), nullable=True, comment='录入人姓名快照')
+    # 备注：同图纸回路扫描不全时自动补录的占位行标记为「录入不全」
+    remark = db.Column(db.String(200), nullable=True, comment='备注（录入不全等）')
 
     creator = db.relationship('UserInfo', foreign_keys=[created_by],
                               backref=db.backref('wire_scan_records', lazy='dynamic'))
@@ -54,4 +56,5 @@ class WireScanRecord(db.Model):
             'created_by': self.created_by,
             # 优先运行时关联用户名；账号已删除时回退写入时快照
             'created_by_name': (self.creator.username if self.creator else None) or self.created_by_name or '',
+            'remark': self.remark or '',
         }

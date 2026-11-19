@@ -1184,6 +1184,8 @@
             // 每批一次 HTTP 往返 + 一次事务提交，批次过小会显著放大网络与提交开销
             // （原 10 条/批，500 条需 50 次请求），这里放大到 200 条/批。
             const BATCH_SIZE = 200;
+            // 本次保存由后端自动补录的「录入不全」条数（同图纸未扫回路）
+            let lastIncomplete = 0;
             function setProgress(done, total) {
                 if (total <= 0) { saveProgressWrap.classList.add('d-none'); return; }
                 saveProgressWrap.classList.remove('d-none');
@@ -1194,6 +1196,7 @@
             }
             async function batchSaveAll(items) {
                 let saved = 0;
+                lastIncomplete = 0;
                 const total = items.length;
                 setProgress(0, total);
                 for (let i = 0; i < total; i += BATCH_SIZE) {
@@ -1220,6 +1223,7 @@
                         throw e;
                     }
                     saved += (data.saved || 0);
+                    lastIncomplete += (data.incomplete || 0);
                     setProgress(Math.min(i + chunk.length, total), total);
                 }
                 return saved;
@@ -1273,6 +1277,10 @@
                     });
                     let tip = `<span class="fw-bold"><i class="fa fa-check-circle me-1"></i>保存成功：共 ${saved} 条已迁移至「数据下载」页（长期保存）</span>`
                             + `<br><span class="text-success"><i class="fa fa-clipboard-check me-1"></i>清单已清空，可开始新的扫描</span>`;
+                    if (lastIncomplete) {
+                        tip += `<br><span class="text-warning"><i class="fa fa-exclamation-circle me-1"></i>同图纸回路扫描不全：`
+                            + `已自动补录 <b>${lastIncomplete}</b> 条未扫回路（备注「录入不全」，数据下载页与 Excel 中已标红）</span>`;
+                    }
                     if (bothMissing.length) {
                         tip += `<br><span class="text-danger"><i class="fa fa-exclamation-triangle me-1"></i>LOT ${bothMissing.map(esc).join('、')}：<b>品番、京信EO均未登记</b>，请到 <b>LOT登录页</b> 补录后再重新扫描</span>`;
                     }

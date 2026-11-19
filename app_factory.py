@@ -307,6 +307,20 @@ def create_app():
         _g.sidebar_menu_cache = menu
         return {'sidebar_menu': menu}
 
+    @app.template_global()
+    def asset_v(rel_path):
+        """静态资源版本号：取文件修改时间。
+
+        静态资源响应头是 30 天 immutable 强缓存，浏览器不会回源校验，
+        因此版本号必须随文件内容变化，否则改完 JS 用户永远拿不到新脚本。
+        """
+        try:
+            import os
+            full = os.path.join(app.static_folder or '', rel_path.replace('/', os.sep))
+            return str(int(os.path.getmtime(full)))
+        except Exception:
+            return '1'
+
     # 创建数据库表
     with app.app_context():
         # SQLite特定初始化 - 使用连接事件持久化 PRAGMA 配置

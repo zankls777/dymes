@@ -12,8 +12,8 @@ $root       = Split-Path -Parent $MyInvocation.MyCommand.Path
 $sdk        = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $env:LOCALAPPDATA 'Android\sdk' }
 $buildTools = Join-Path $sdk 'build-tools\35.0.0'
 $androidJar = Join-Path $sdk 'platforms\android-34\android.jar'
-$versionCode = 4
-$versionName = '1.1.2'
+$versionCode = 5
+$versionName = '1.2.0'
 
 if (-not $env:JAVA_HOME) { $env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot' }
 if (-not (Test-Path (Join-Path $env:JAVA_HOME 'bin\javac.exe'))) { throw 'javac not found, set JAVA_HOME' }

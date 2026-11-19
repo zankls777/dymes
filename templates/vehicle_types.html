@@ -1165,7 +1165,7 @@
             .then(data => {
                 if (data.success) {
                     alert('添加成功！');
-                    location.reload();
+                    appRefreshPage();
                 } else if (data.conflict) {
                     // 显示EO冲突处理模态框
                     showSingleConflictModal(data);
@@ -1229,7 +1229,7 @@
             .then(data => {
                 if (data.success) {
                     alert('更新成功！');
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('更新失败：' + data.error);
                 }
@@ -1514,7 +1514,7 @@
             .then(data => {
                 if (data.success) {
                     alert('批量添加成功！');
-                    location.reload();
+                    appRefreshPage();
                 } else if (data.conflict) {
                     // 显示批量EO冲突处理模态框
                     showBatchConflictModal(data);
@@ -1633,7 +1633,7 @@
                     } else {
                         // 显示上传成功信息
                         alert(data.message || '上传成功！');
-                        location.reload();
+                        appRefreshPage();
                     }
                 } else {
                     alert('上传失败：' + data.error);
@@ -1721,7 +1721,7 @@
             .then(data => {
                 if (data.success) {
                     alert('添加成功！');
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('添加失败：' + data.error);
                 }
@@ -1891,7 +1891,7 @@
             .then(data => {
                 if (data.success) {
                     alert('冲突处理完成！');
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('冲突处理失败：' + data.error);
                 }
@@ -1987,7 +1987,7 @@
                 .then(data => {
                     if (data.success) {
                         alert('删除成功！');
-                        location.reload();
+                        appRefreshPage();
                     } else {
                         alert('删除失败：' + data.error);
                     }
@@ -2293,7 +2293,7 @@
             .then(data => {
                 if (data.success) {
                     alert('导入成功！');
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('导入失败：' + data.error);
                 }
@@ -2465,7 +2465,7 @@
         function clearFilter() {
             document.getElementById('filterForm').reset();
             // 重新加载页面显示所有数据
-            location.reload();
+            appRefreshPage();
         }
 
         // 清空单个字段
@@ -2550,7 +2550,7 @@
             currentFilterParams = {};
             currentPage = 1;
             // 重新加载页面显示所有数据
-            location.reload();
+            appRefreshPage();
         }
 
         // 将冲突数据转换为重复品番格式，以便统一处理
@@ -3227,7 +3227,7 @@
             .then(data => {
                 if (data.success) {
                     alert(`成功删除 ${data.deleted_count} 个车种`);
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('批量删除失败：' + data.error);
                     // 恢复按钮状态

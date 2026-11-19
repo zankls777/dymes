@@ -4770,8 +4770,9 @@ def wire_lot_login_data():
             return _finish(result, rows)
         else:
             # list 模式：原有全量分页行为（保持翻页能力）
-            # 计数缓存（30秒），COUNT 走主键
-            count_key = f'{_LOT_COUNT_PREFIX}{q.lower()}'
+            # 计数缓存（30秒）必须包含全部过滤条件，避免不同车种/日期共用总数。
+            count_key = (f'{_LOT_COUNT_PREFIX}{q.lower()}|{vehicle_type.lower()}|'
+                         f'{start_date}|{end_date}')
             total = query_cache_manager.get_count(count_key)
             if total is None:
                 total = base_q.with_entities(sa_func.count(LotLoginInfo.id)).scalar() or 0
@@ -5194,6 +5195,7 @@ def _parse_wire_machine(content):
 # ========================================================================
 WIRE_SNAPSHOT_ROW_CAP = 20   # 每回路最多固化的明细行数（与历史展示上限一致）
 WIRE_HEAL_NEG_TTL = 300      # 无资料回路的自愈负缓存秒数（避免每次加载都全表扫描）
+WIRE_INCOMPLETE_REMARK = '录入不全'  # 同图纸回路扫描不全时自动补录行的备注
 _wire_heal_neg_cache = {}    # (lot_no, 回路号大写) -> 负缓存过期时刻
 
 
@@ -5660,6 +5662,160 @@ def _wire_snapshot_sibling_circuits(lot_no, exclude_circuit_up, limit=60, set_co
     return circuits
 
 
+def _wire_drawing_circuits(part, eo, set_code, limit=200):
+    """取同 品番+EO+图纸编号(SetCode) 下的全部回路号（去重保序）。
+
+    与 same_drawing 相同的资料拉取策略：活跃精确 → 冻结精确 → 归一化兜底；
+    无法确定（品番/EO 不存在或无该图纸资料）时返回空列表，不猜测。
+    """
+    from sqlalchemy import func, exists
+    from models.sub_list import SubList
+    part = (part or '').strip()
+    eo = (eo or '').strip()
+    code_up = (set_code or '').strip().upper()
+    if not (part and eo and code_up):
+        return []
+    base_active = (SubList.deleted == False, SubList.is_frozen == False)
+    base_any = (SubList.deleted == False,)
+
+    def _rows(bases, normalize=False):
+        if normalize:
+            key_cols = (func.upper(func.trim(SubList.SubPno)) == part.upper(),
+                        func.upper(func.trim(SubList.EoKsc)) == eo.upper())
+        else:
+            key_cols = (SubList.SubPno == part, SubList.EoKsc == eo)
+        return (SubList.query.with_entities(SubList.Circuit)
+                .filter(*key_cols,
+                        func.upper(func.trim(SubList.SetCode)) == code_up, *bases)
+                .order_by(SubList.Circuit)
+                .limit(limit)
+                .all())
+
+    rows = _rows(base_active) or _rows(base_any)
+    if not rows:
+        # O(1) 闸门：品番/EO 组合从未上传或已删除 → 不可能有资料，避免全表扫描
+        try:
+            if (part.lower(), eo.lower()) not in _get_file_resource_pairs_set():
+                return []
+        except Exception:
+            pass
+        part_eo_exists = db.session.query(
+            exists().where(SubList.SubPno == part, SubList.EoKsc == eo, *base_any)
+        ).scalar()
+        if not part_eo_exists:
+            rows = _rows(base_active, normalize=True) or _rows(base_any, normalize=True)
+    out, seen = [], set()
+    for (c,) in rows:
+        c = (c or '').strip()
+        if c and c.upper() not in seen:
+            seen.add(c.upper())
+            out.append(c)
+    return out
+
+
+def _wire_autofill_incomplete(lot_no, batch_circuits, lot_info_map, now,
+                              user_id, op_name):
+    """同图纸回路扫描不全时自动补录「录入不全」占位行（同事务，不 commit）。
+
+    规则：
+    - 仅处理本次保存涉及的回路所属图纸(SetCode)，无图纸编号时跳过；
+    - 覆盖率 = 本次保存的回路 + 库内已有号机记录的回路；
+    - 图纸内未覆盖的回路写入占位行（号机为空、数量 0、备注「录入不全」），
+      并顺带固化其资料快照，保证数据下载/Excel 能显示线束明细；
+    - 本次已录入真实数据的回路，删除历史遗留的同回路「录入不全」占位行。
+
+    返回本次新增补录条数。
+    """
+    from models.wire_scan_record import WireScanRecord
+    from models.wire_scan_detail import WireScanDetail
+    lot_no = (lot_no or '').strip()
+    if not lot_no:
+        return 0
+    li = lot_info_map.get(lot_no) or {}
+    part = (li.get('part_no') or '').strip()
+    eo = (li.get('jx_eo') or '').strip()
+    if not (part and eo):
+        return 0
+    batch_up = {(c or '').strip().upper() for c in (batch_circuits or []) if (c or '').strip()}
+    if not batch_up:
+        return 0
+    # 库内已有号机记录的回路视为已录入（跨批次累积，避免重复补录）
+    covered = set(batch_up)
+    for (c,) in (WireScanRecord.query
+                 .filter(WireScanRecord.lot_no == lot_no,
+                         WireScanRecord.machine_no.isnot(None))
+                 .with_entities(WireScanRecord.circuit_no).all()):
+        if (c or '').strip():
+            covered.add(c.strip().upper())
+    # 已存在的「录入不全」占位行（同回路不重复插入）
+    placeholder_map = {}
+    for rid, c in (WireScanRecord.query
+                   .filter(WireScanRecord.lot_no == lot_no,
+                           WireScanRecord.machine_no.is_(None),
+                           WireScanRecord.remark == WIRE_INCOMPLETE_REMARK)
+                   .with_entities(WireScanRecord.id, WireScanRecord.circuit_no).all()):
+        cup = (c or '').strip().upper()
+        if cup:
+            placeholder_map[cup] = rid
+    # 本次已录入真实数据的回路：删除历史占位行（数据已完整，不再标「录入不全」）
+    stale_ids = [rid for cup, rid in placeholder_map.items() if cup in batch_up]
+    if stale_ids:
+        WireScanRecord.query.filter(WireScanRecord.id.in_(stale_ids)).delete(
+            synchronize_session=False)
+        for cup in [c for c in placeholder_map if c in batch_up]:
+            placeholder_map.pop(cup, None)
+    # 本次批次各回路所属图纸编号（来自扫描时固化的快照）
+    circuit_codes = {}
+    for c, sc in (WireScanDetail.query
+                  .filter(WireScanDetail.lot_no == lot_no)
+                  .with_entities(WireScanDetail.circuit_no, WireScanDetail.set_code).all()):
+        cup = (c or '').strip().upper()
+        sc = (sc or '').strip().upper()
+        if cup and sc:
+            circuit_codes.setdefault(cup, set()).add(sc)
+    target_codes = set()
+    for cup in batch_up:
+        target_codes |= circuit_codes.get(cup, set())
+    if not target_codes:
+        return 0
+    # 图纸内全部回路（多张图纸时合并去重）
+    drawing_circuits, seen_c = [], set()
+    for code in sorted(target_codes):
+        for c in _wire_drawing_circuits(part, eo, code):
+            cu = c.upper()
+            if cu in seen_c:
+                continue
+            seen_c.add(cu)
+            drawing_circuits.append(c)
+    missing = [c for c in drawing_circuits
+               if c.upper() not in covered and c.upper() not in placeholder_map]
+    if not missing:
+        return 0
+    mappings = []
+    for c in missing:
+        # 补齐未扫回路资料快照，保证下载页与 Excel 明细列完整
+        try:
+            _wire_ensure_snapshot(lot_no, c, lot_info_map=lot_info_map,
+                                  commit=False, stamp=False)
+        except Exception as snap_err:
+            current_app.logger.warning(f'未扫回路快照固化失败(已跳过) {lot_no}/{c}: {snap_err}')
+        mappings.append({
+            'lot_no': lot_no,
+            'circuit_no': c,
+            'machine_no': None,
+            'wire_qty': 0,
+            'part_no': part or None,
+            'jx_eo': eo or None,
+            'vehicle_type': (li.get('vehicle_type') or None),
+            'remark': WIRE_INCOMPLETE_REMARK,
+            'created_at': now,
+            'created_by': user_id,
+            'created_by_name': op_name,
+        })
+    db.session.bulk_insert_mappings(WireScanRecord, mappings)
+    return len(mappings)
+
+
 def _wire_ensure_snapshot(lot_no, circuit_no, lot_info_map=None, commit=True,
                           force_refresh=False, stamp=True):
     """确保 (lot, circuit) 的文本快照存在，返回快照明细 dict 列表（无资料为 []）。
@@ -5922,8 +6078,12 @@ def wire_scan_entry_scan_circuit():
         uid = session.get('user_id')
         op_name = _wire_op_name(uid)
         # 同 LOT 仅保留一条回路行：已存在则更新回路号（补齐姓名快照），否则新建
+        # 注意：机器号为空但备注「录入不全」的自动补录行不是回路标记行，必须排除
         rec = (WireScanRecord.query
-               .filter_by(lot_no=lot_no, machine_no=None)
+               .filter(WireScanRecord.lot_no == lot_no,
+                       WireScanRecord.machine_no.is_(None),
+                       db.or_(WireScanRecord.remark.is_(None),
+                              WireScanRecord.remark == ''))
                .order_by(WireScanRecord.id)
                .first())
         if rec:
@@ -5934,9 +6094,11 @@ def wire_scan_entry_scan_circuit():
             rec = WireScanRecord(lot_no=lot_no, circuit_no=circuit_no,
                                  created_by=uid, created_by_name=op_name)
             db.session.add(rec)
-        # 合并：同步更新该 LOT 下所有号机行的回路号（保持同 LOT 信息一致）
+        # 合并：仅回填尚未指定回路的号机行（先扫号机后扫回路的场景），
+        # 不得覆盖已有回路，避免同 LOT 多回路时把其他回路的数据改错
         WireScanRecord.query.filter_by(lot_no=lot_no).filter(
-            WireScanRecord.machine_no.isnot(None)
+            WireScanRecord.machine_no.isnot(None),
+            WireScanRecord.circuit_no.is_(None)
         ).update({'circuit_no': circuit_no}, synchronize_session=False)
         # 扫码即固化：把品番/EO/车种别快照到记录，并将该回路资料以文本存入快照表
         _wire_ensure_snapshot(lot_no, circuit_no, commit=False)
@@ -5972,7 +6134,10 @@ def wire_scan_entry_scan_machine():
         # 合并：号机行继承同 LOT 回路行的回路号（两次扫描合并为一条完整信息）
         from models.lot_login_info import LotLoginInfo
         circuit_row = (WireScanRecord.query
-                       .filter_by(lot_no=lot_no, machine_no=None)
+                       .filter(WireScanRecord.lot_no == lot_no,
+                               WireScanRecord.machine_no.is_(None),
+                               db.or_(WireScanRecord.remark.is_(None),
+                                      WireScanRecord.remark == ''))
                        .order_by(WireScanRecord.id)
                        .first())
         li_row = LotLoginInfo.query.filter_by(lot_no=lot_no).first()
@@ -6130,8 +6295,20 @@ def wire_scan_entry_batch_save():
                                         (lot_map[lot_no].get('part_no') or '').strip(),
                                         (lot_map[lot_no].get('jx_eo') or '').strip(),
                                         (lot_map[lot_no].get('vehicle_type') or '').strip())
+        # 扫描不全自动补录：同图纸(SetCode)下未被扫描的回路，
+        # 以「号机为空 + 数量0 + 备注录入不全」的占位行入库，保证图纸数据完整性可追踪
+        incomplete = 0
+        lot_circuits = {}
+        for lot_no, circuit_no, _m, _q, _t in parsed:
+            if circuit_no:
+                lot_circuits.setdefault(lot_no, set()).add(circuit_no)
+        if lot_circuits:
+            op_name = _wire_op_name(session.get('user_id'))
+            for lot_no, circs in lot_circuits.items():
+                incomplete += _wire_autofill_incomplete(
+                    lot_no, circs, lot_map, now, session.get('user_id'), op_name)
         db.session.commit()
-        return jsonify({'success': True, 'saved': saved})
+        return jsonify({'success': True, 'saved': saved, 'incomplete': incomplete})
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f'批量保存扫描记录失败: {e}')
@@ -6876,12 +7053,15 @@ def wire_scan_entry_download():
         ws.title = '扫描录入'
         headers = ['车种别', '序号', 'EO', '品番', 'LOT/NO', '回路号',
                    '线质', '规格/颜色', '长度', '数量', '配线区分', '端子名1/2', '号机名',
-                   '压高', '操作人', '日期']
+                   '压高', '备注', '操作人', '日期']
         ws.append(headers)
         for c in ws[1]:
             c.font = Font(bold=True)
             c.fill = PatternFill('solid', fgColor='D9E1F2')
             c.alignment = Alignment(horizontal='center', vertical='center')
+        # 「录入不全」自动补录行统一浅红底+深红字，与页面高亮保持一致
+        incomplete_fill = PatternFill('solid', fgColor='FFC7CE')
+        incomplete_font = Font(color='9C0006')
         seen_lot_first = set()
         for r in records:
             li = lot_info.get(r.lot_no) or {}
@@ -6922,20 +7102,30 @@ def wire_scan_entry_download():
                 machine = ''
                 if r.machine_no:
                     machine = str(r.machine_no).split('$')[0]
-                # 备注：冻结归档资料追加醒目标注，保持原备注内容不变
-                remark_val = ''
+                # 备注：线束资料备注 + 冻结标注 + 记录备注（同图纸扫描不全补录行为「录入不全」）
+                rec_remark = (r.remark or '').strip()
+                is_incomplete = WIRE_INCOMPLETE_REMARK in rec_remark
+                note_parts = []
                 if dtl:
-                    remark_val = (dtl['remark1'] or '')
+                    if (dtl['remark1'] or '').strip():
+                        note_parts.append((dtl['remark1'] or '').strip())
                     if dtl.get('frozen'):
-                        remark_val = (remark_val + ' ' if remark_val else '') + '【资料已冻结归档·只读】'
+                        note_parts.append('【资料已冻结归档·只读】')
+                if rec_remark:
+                    note_parts.append(rec_remark)
                 ws.append([
                     vehicle, seq, eo, part_no, r.lot_no, r.circuit_no or '',
                     (dtl['wire'] or '') if dtl else '', spec_color,
                     (dtl['length_cut2'] or '') if dtl else '',
                     r.wire_qty if r.machine_no else '', div_type, tml, machine, crimp or '',
+                    ' '.join(note_parts),
                     r.created_by_name or '',
                     r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else ''
                 ])
+                if is_incomplete:
+                    for cell in ws[ws.max_row]:
+                        cell.fill = incomplete_fill
+                        cell.font = incomplete_font
         # 行内容自动换行
         for row in ws.iter_rows(min_row=2):
             for c in row:
@@ -7026,6 +7216,11 @@ def wire_scan_entry_update():
             if rec.wire_qty != val:
                 rec.wire_qty = val
                 changed.append('wire_qty')
+
+        # 「录入不全」自动补录行补齐号机后，说明该回路已录入完整，清除备注标记
+        if rec.machine_no and (rec.remark or '').strip() == WIRE_INCOMPLETE_REMARK:
+            rec.remark = None
+            changed.append('remark')
 
         if not changed:
             return jsonify({'success': True, 'record': rec.to_dict(), 'message': '无变更'})
@@ -12511,8 +12706,9 @@ def _fts5_match_clause(table_name, field, value):
 def _fts5_page(table_name, column_names, field, value, page, per_page):
     """用 FTS5 trigram + 子查询 JOIN 取数据页（毫秒级，替代 LIKE '%xxx%' 全表扫）。
 
-    关键：把 MATCH 放子查询里先跑（FTS5 毫秒级返回 rowid 列表），
-    再 JOIN 主表走主键 id，避免 SQLite 优化器先扫 active_count 覆盖索引（100 万行）。
+    关键：CROSS JOIN 固定先执行 FTS5 MATCH，再按主键读取主表，避免 SQLite
+    改为先扫 active_count 覆盖索引（100 万行）。LIMIT/OFFSET 必须放在过滤
+    deleted/is_frozen 之后，否则冻结/删除记录会占用子查询分页名额，导致空页。
     """
     match_clause, fts_tbl = _fts5_match_clause(table_name, field, value)
     if match_clause is None:
@@ -12520,13 +12716,11 @@ def _fts5_page(table_name, column_names, field, value, page, per_page):
     col_list = ', '.join(column_names)
     sql = (
         f"SELECT s.{col_list.replace(', ', ', s.')} "
-        f"FROM {table_name} s "
-        f"INNER JOIN ( "
-        f"  SELECT rowid FROM {fts_tbl} WHERE {fts_tbl} MATCH :match "
-        f"  LIMIT :limit OFFSET :offset "
-        f") f ON s.id = f.rowid "
+        f"FROM ( "
+        f"  SELECT rowid FROM {fts_tbl} WHERE {fts_tbl} MATCH :match ORDER BY rowid "
+        f") f CROSS JOIN {table_name} s ON s.id = f.rowid "
         f"WHERE s.deleted = 0 AND s.is_frozen = 0 "
-        f"ORDER BY s.id "
+        f"ORDER BY f.rowid LIMIT :limit OFFSET :offset "
     )
     return _bounded_rows(sql, {
         'match': match_clause,
@@ -12541,13 +12735,12 @@ def _fts5_count(table_name, field, value):
     if match_clause is None:
         return None
     sql = (
-        f"SELECT COUNT(*) FROM {table_name} s "
-        f"INNER JOIN ( "
-        f"  SELECT rowid FROM {fts_tbl} WHERE {fts_tbl} MATCH :match "
-        f") f ON s.id = f.rowid "
+        f"SELECT COUNT(*) FROM ( "
+        f"  SELECT rowid FROM {fts_tbl} WHERE {fts_tbl} MATCH :match ORDER BY rowid "
+        f") f CROSS JOIN {table_name} s ON s.id = f.rowid "
         f"WHERE s.deleted = 0 AND s.is_frozen = 0"
     )
-    return _run_bounded(sql, {'match': match_clause}, _COUNT_BUDGET_MS, True)
+    return _bounded_count(sql, {'match': match_clause})
 
 
 def _indexed_fuzzy_page(table_name, column_names, field, value, page, per_page):
@@ -12614,9 +12807,10 @@ def _single_field_page(model, table_name, columns, column_names,
             return eq_items, _cached_count(
                 count_cache_key, eq_query.with_entities(func.count()).statement), False
         if page > 1:
-            # 页码越界时无法区分「等值无结果」和「翻过了最后一页」，用等值统计确认
+            # 等值探测与模糊结果必须分开计数：首页无等值结果时，count_cache_key
+            # 已保存模糊总数；若复用该键，会把模糊总数误当等值总数并提前返回空页。
             eq_total = _cached_count(
-                count_cache_key, eq_query.with_entities(func.count()).statement)
+                f"{count_cache_key}:exact", eq_query.with_entities(func.count()).statement)
             if eq_total:
                 return [], eq_total, False
 

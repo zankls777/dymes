@@ -10,7 +10,7 @@
     <div class="app-tabbar-scroll" id="appTabbarScroll"></div>
     <div class="app-tabbar-menu" id="appTabbarMenu" role="menu" aria-hidden="true"></div>
 </div>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/tabbar.css') }}?v=20261021">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tabbar.css') }}?v={{ asset_v('css/tabbar.css') }}">
 <script>
 /* 标签页路由元数据：URL → 中文标题。用于按路径还原标签标题（刷新/直接访问时）。 */
 window.__TABBAR_ROUTES__ = [
@@ -55,5 +55,10 @@ window.__TABBAR_ROUTES__ = [
     {% for _url, _title in _routes %}{ "url": "{{ _url }}", "title": "{{ _title }}" }{{ "," if not loop.last }}{% endfor %}
 ];
 </script>
-<script src="{{ url_for('static', filename='js/tabbar.js') }}?v=20261107c"></script>
+<script>
+/* 应用内整页刷新兜底：tabbar.js 加载后会覆盖为「带跳转标记」的实现，
+   避免脚本未就绪时业务页面调用 appRefreshPage 报错 */
+window.appRefreshPage = function () { window.location.reload(); };
+</script>
+<script src="{{ url_for('static', filename='js/tabbar.js') }}?v={{ asset_v('js/tabbar.js') }}"></script>
 {% endif %}

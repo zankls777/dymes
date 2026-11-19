@@ -179,6 +179,8 @@ COLUMN_UPGRADES = {
         ('jx_eo', 'VARCHAR(50)'),
         ('vehicle_type', 'VARCHAR(100)'),
         ('created_by_name', 'VARCHAR(80)'),
+        # 备注：同图纸回路扫描不全时自动补录的占位行写入「录入不全」
+        ('remark', 'VARCHAR(200)'),
     ],
     'wire_scan_detail': [
         # 图纸编号 SetCode 快照：用于同图纸兄弟回路兜底查询时按 SetCode 精确过滤，

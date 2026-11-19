@@ -99,7 +99,7 @@ function resolveNoPartConflicts() {
     .then(data => {
         if (data.success) {
             showMessage('无品番冲突处理成功', 'success');
-            location.reload();
+            appRefreshPage();
         } else {
             showMessage('处理失败: ' + data.error, 'danger');
         }

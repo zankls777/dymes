@@ -105,7 +105,7 @@
                             <tr id="resultHeader"></tr>
                         </thead>
                         <tbody id="resultTbody">
-                            <tr><td colspan="17" class="text-center text-muted py-4">数据加载中...</td></tr>
+                            <tr><td colspan="18" class="text-center text-muted py-4">数据加载中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -222,7 +222,7 @@
                 ['回路号', 'circuit_no'], ['线质', 'wire'], ['规格/颜色', 'spec_color'],
                 ['长度', 'length_cut2'], ['数量', 'qty'], ['配线区分', 'div_type'],
                 ['端子名1/2', 'terminal'], ['号机名', 'machine'], ['压高', 'crimp'],
-                ['操作人', 'created_by_name'], ['日期', 'date']
+                ['备注', 'remark'], ['操作人', 'created_by_name'], ['日期', 'date']
             ];
 
             function esc(s) {
@@ -288,11 +288,18 @@
                     rows.forEach(r => {
                         const tr = document.createElement('tr');
                         tr.dataset.id = r._id;
+                        // 「录入不全」自动补录行：浅红底高亮，与 Excel 导出一致
+                        if (String(r.remark || '').indexOf('录入不全') >= 0) {
+                            tr.classList.add('table-danger');
+                        }
                         tr.innerHTML = COLUMNS.map(c => {
                             if (c[1] === '_actions') return actionsCellHtml(r);
                             const v = String(r[c[1]] == null ? '' : r[c[1]]);
                             if (c[1] === 'terminal' || c[1] === 'crimp' || c[1] === 'div_type') {
                                 return `<td>${esc(v).replace(/\n/g, '<br>')}</td>`;
+                            }
+                            if (c[1] === 'remark' && v) {
+                                return `<td><span class="badge bg-danger">${esc(v)}</span></td>`;
                             }
                             return `<td>${esc(v)}</td>`;
                         }).join('');
@@ -318,7 +325,10 @@
                 let no = 0;
                 const seen = new Set();
                 sorted.forEach(r => {
-                    if (!r.machine_no) return;
+                    // 号机为空的记录：仅展示「录入不全」自动补录行（同图纸未扫回路），
+                    // 其余无号机中间态不入库/不展示
+                    const remarkTxt = String(r.remark || '');
+                    if (!r.machine_no && remarkTxt.indexOf('录入不全') < 0) return;
                     const li = (data.lot_info || {})[r.lot_no] || {};
                     const circUp = (r.circuit_no || '').trim().toUpperCase();
                     // 取数优先用「LOT|回路」稳定键（不依赖品番/EO，LOT登录资料删除后仍命中），
@@ -345,6 +355,7 @@
                             terminal: dtl ? `${dtl.tml1 || ''}\n${dtl.tml2 || ''}` : '',
                             machine: machine,
                             crimp: '',
+                            remark: remarkTxt,
                         });
                     });
                 });

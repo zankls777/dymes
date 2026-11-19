@@ -13,7 +13,11 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.text.InputType;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -46,17 +50,29 @@ public class MainActivity extends Activity {
     /** 首次启动的默认地址，可在「菜单键」里修改 */
     private static final String DEFAULT_URL = "http://218.59.244.81:55004/";
     private static final int REQ_FILE = 1001;
+    private static final String TAG = "BOM3";          // adb logcat -s BOM3 过滤
 
-    /** 兼容各固件的扫描广播动作（Intent 输出默认是第一个） */
+    /**
+     * 各固件扫描广播 Action。
+     * 优博讯固件主要是 ACTION_DECODE_DATA；
+     * 新大陆/NLS 是 com.newland.mtscanner.api.action.ACTION_DECODE；
+     * 商米/链想也都在列表里，尽量覆盖。
+     */
     private static final String[] SCAN_ACTIONS = {
             "android.intent.ACTION_DECODE_DATA",
+            "android.intent.action.DECODE_DATA",
+            "com.newland.mtscanner.api.action.ACTION_DECODE",
             "com.urovo.rcv.scanneresult",
             "android.intent.action.SCAN_RESULT",
-            "com.android.server.scannerservice.broadcast"
+            "com.android.server.scannerservice.broadcast",
+            "com.sunmi.SCAN_RESULT",
+            "com.linkscan.ACTION_SCANNER",
+            "ACTION_SCAN"
     };
-    /** 兼容各固件的条码字段名 */
+    /** 各固件条码字段名 */
     private static final String[] SCAN_KEYS = {
-            "barcode_string", "barcode", "SCAN_BARCODE1", "data", "scan_result", "value"
+            "barcode_string", "barcode", "SCAN_BARCODE1", "scanCode",
+            "data", "scan_result", "value", "ScanValue", "EXTRA_DATA"
     };
 
     private WebView webView;
@@ -72,7 +88,13 @@ public class MainActivity extends Activity {
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            deliver(extractCode(intent));
+            String action = intent == null ? "null" : intent.getAction();
+            Bundle ex = intent == null ? null : intent.getExtras();
+            Log.i(TAG, "broadcast received action=" + action
+                    + " extras=" + (ex == null ? "null" : ex.keySet()));
+            String code = extractCode(intent);
+            Log.i(TAG, "broadcast code=" + code);
+            deliver(code);
         }
     };
 
@@ -188,6 +210,27 @@ public class MainActivity extends Activity {
         } else {
             loadUrl(saved);
         }
+
+        // 扫描广播在 Activity 创建时就注册，保持常驻直到销毁。
+        // 某些 PDA 固件的扫描广播只投递到已注册的 Activity receiver，
+        // 若放在 onResume 注册、onPause 注销，Activity 被切后台回来时可能漏收。
+        IntentFilter filter = new IntentFilter();
+        for (String action : SCAN_ACTIONS) {
+            filter.addAction(action);
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(scanReceiver, filter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(scanReceiver, filter);
+            }
+            receiverRegistered = true;
+            Log.i(TAG, "scanReceiver registered, actions=" + SCAN_ACTIONS.length);
+        } catch (Exception e) {
+            Log.e(TAG, "scanReceiver register failed: " + e.getMessage());
+            Toast.makeText(this, "扫描广播注册失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+
         deliver(extractCode(getIntent()));   // 冷启动由「启动 Activity」模式带进来的条码
     }
 
@@ -201,35 +244,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (receiverRegistered) {
-            return;
-        }
-        IntentFilter filter = new IntentFilter();
-        for (String action : SCAN_ACTIONS) {
-            filter.addAction(action);
-        }
-        try {
-            if (Build.VERSION.SDK_INT >= 33) {
-                // Android 13+ 必须显式声明导出，否则收不到扫描服务发的广播
-                registerReceiver(scanReceiver, filter, Context.RECEIVER_EXPORTED);
-            } else {
-                registerReceiver(scanReceiver, filter);
-            }
-            receiverRegistered = true;
-        } catch (Exception e) {
-            Toast.makeText(this, "扫描广播注册失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
+        // receiver 已在 onCreate 常驻注册，这里不再重注册
     }
 
     @Override
     protected void onPause() {
-        if (receiverRegistered) {
-            try {
-                unregisterReceiver(scanReceiver);
-            } catch (Exception ignored) {
-            }
-            receiverRegistered = false;
-        }
         CookieManager.getInstance().flush();   // 持久化登录会话
         super.onPause();
     }
@@ -270,6 +289,13 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (receiverRegistered) {
+            try {
+                unregisterReceiver(scanReceiver);
+            } catch (Exception ignored) {
+            }
+            receiverRegistered = false;
+        }
         if (webView != null) {
             webView.destroy();
             webView = null;
@@ -319,26 +345,66 @@ public class MainActivity extends Activity {
             return;
         }
         final String value = code.trim();
-        if (value.isEmpty() || webView == null) {
+        if (value.isEmpty()) {
             return;
         }
         long now = System.currentTimeMillis();
         if (value.equals(lastCode) && now - lastCodeAt < 800) {
+            Log.d(TAG, "dup scan ignored: " + value);
             return;   // 广播与 Activity 双通道去重
         }
         lastCode = value;
         lastCodeAt = now;
+
+        // 现场反馈：Toast + 震动，让操作员立刻知道壳收到了码
+        Log.i(TAG, "deliver code=" + value + " pageReady=" + pageReady);
+        Toast.makeText(this, "扫码收到：" + value, Toast.LENGTH_SHORT).show();
+        vibrateShort();
+
+        if (webView == null) {
+            Log.w(TAG, "webView null, drop scan");
+            return;
+        }
         if (!pageReady) {
             pendingCode = value;
+            Log.i(TAG, "page not ready, queued: " + value);
             return;
         }
         webView.post(new Runnable() {
             @Override
             public void run() {
-                String js = "window.__bomPdaScan?window.__bomPdaScan(" + JSONObject.quote(value) + "):false;";
-                webView.evaluateJavascript(js, null);
+                String js = "window.__bomPdaScan?window.__bomPdaScan("
+                        + JSONObject.quote(value) + "):'missing';";
+                webView.evaluateJavascript(js, new ValueCallback<String>() {
+                    @Override
+                    public void onReceiveValue(String s) {
+                        Log.i(TAG, "js inject " + value + " => " + s);
+                    }
+                });
             }
         });
+    }
+
+    /** 短震动 50ms，现场提示壳收到扫码 */
+    private void vibrateShort() {
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                VibratorManager vm = (VibratorManager) getSystemService(VIBRATOR_MANAGER_SERVICE);
+                if (vm != null) vm.getDefaultVibrator().vibrate(
+                        VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                @SuppressWarnings("deprecation")
+                Vibrator v = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+                if (v != null) {
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        v.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE));
+                    } else {
+                        v.vibrate(50);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     /** 从扫描 Intent 中取出条码：先按常见键名找，再兜底遍历所有字符串 extra */

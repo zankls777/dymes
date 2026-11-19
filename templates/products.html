@@ -1104,7 +1104,7 @@
             .then(data => {
                 if (data.success) {
                     alert('成品添加成功！');
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     if (data.error.includes('LOT')) {
                         document.getElementById('lotNumberError').style.display = 'block';
@@ -1157,7 +1157,7 @@
                     
                     // 只有在有成功数据时才刷新页面
                     if (data.success_count > 0) {
-                        location.reload();
+                        appRefreshPage();
                     }
                 } else {
                     let errorMessage = '批量添加失败：' + data.error;
@@ -1199,7 +1199,7 @@
             .then(data => {
                 if (data.success) {
                     alert(`Excel导入成功！成功导入 ${data.success_count} 条数据`);
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     // 优先使用后端提供的合并列表
                     if (data.combined_conflicts && data.combined_conflicts.length > 0) {
@@ -1524,7 +1524,7 @@
                     if (data.success) {
                         const modal = bootstrap.Modal.getInstance(document.getElementById('conflictResolutionModal'));
                         modal.hide();
-                        location.reload();
+                        appRefreshPage();
                     } else {
                         alert('导入失败：' + (data.error || '未知错误'));
                         stopLoading();
@@ -1571,7 +1571,7 @@
                     if (data.success) {
                         const modal = bootstrap.Modal.getInstance(document.getElementById('conflictResolutionModal'));
                         modal.hide();
-                        location.reload();
+                        appRefreshPage();
                     } else {
                         alert('导入失败：' + (data.error || '未知错误'));
                         stopLoading();
@@ -1618,7 +1618,7 @@
                 if (data.success) {
                     const modal = bootstrap.Modal.getInstance(document.getElementById('conflictResolutionModal'));
                     modal.hide();
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('导入失败：' + data.error);
                     stopLoading();
@@ -1653,7 +1653,7 @@
                     modal.hide();
                     
                     // 刷新页面
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('导入失败：' + data.error);
                 }
@@ -1733,7 +1733,7 @@
             .then(data => {
                 if (data.success) {
                     alert('成品更新成功！');
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     if (data.error && data.error.includes('LOT')) {
                         document.getElementById('editLotNumberError').style.display = 'block';
@@ -1761,7 +1761,7 @@
                 .then(data => {
                     if (data.success) {
                         alert('删除成功！');
-                        location.reload();
+                        appRefreshPage();
                     } else {
                         alert('删除失败：' + data.error);
                     }
@@ -1830,7 +1830,7 @@
                         }
                     }
                     alert(`成功删除 ${deletedCount} 个成品`);
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('批量删除失败：' + data.error);
                     batchDeleteBtn.innerHTML = originalText;

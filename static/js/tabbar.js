@@ -4,8 +4,9 @@
  *   1) 打开标签：点击左侧栏带 data-tab-title 的菜单链接 → 新增/激活标签（改走 SPA 局部加载）
  *   2) 切换标签：点击标签 → 局部加载目标页面、不整页刷新
  *   3) 关闭标签：× 按钮 / 右键菜单「关闭」「关闭其他」「关闭全部」
- *   4) 持久化：标签列表与当前激活项写入 localStorage；浏览器刷新时按「关闭全部」处理
+ *   4) 持久化：标签列表与当前激活项写入 localStorage；用户主动刷新（F5 / 刷新按钮 / Ctrl+R）时按「关闭全部」处理
  *      ——清空全部标签并回到首页（避免刷新后旧工作区被自动恢复）
+ *      应用内主动导航（表单提交、同址跳转、标签切换）会先打标记，不按刷新处理
  *   5) 拖拽排序：HTML5 拖放调整顺序并持久化
  *   6) 兜底：不做 SPA、Ctrl/Cmd 点击、无 JS 加载能力时一律回退为整页跳转
  *
@@ -16,7 +17,11 @@
     'use strict';
 
     var STORAGE_KEY = 'appTabbarState';
-    var LOAD_MARK_KEY = 'appTabbarLastLoad';   // sessionStorage：本标签页上次加载的地址
+    var LOAD_MARK_KEY = 'appTabbarLastLoad';      // sessionStorage：本标签页上次加载的地址
+    var NAV_MARK_KEY = 'appTabbarNavMark';        // sessionStorage：应用内主动导航的时间戳
+    /* 导航标记有效期要覆盖耗时较长的表单提交（如批量上传大 Excel 后重定向回本页），
+     * 因此不做定时清除，只在下次加载时消费；超期未消费的冗余标记会被忽略。 */
+    var NAV_MARK_TTL = 10 * 60 * 1000;
     var MAX_TABS = 15;            // 标签数量上限，超出时关闭最久未使用的（首页除外）
     var HOME_URL = null;          // 首页路径（不可关闭的兜底标签）
 
@@ -51,22 +56,50 @@
         return titleByUrl[key] || decodeURIComponent(key.split('/').pop() || '页面');
     }
 
-    /* 判断本次页面加载是否属于「刷新」（F5 / 刷新按钮 / Ctrl+R，或同一标签页内重复加载同一地址）。
+    /* 标记「本次加载由应用内主动导航引起」（表单提交 / 同页链接 / 编程跳转）。
+     * 这类跳转常常落回同一地址（如 GET 筛选、POST 后重定向），不能当成刷新。
+     * 只写入时间戳，不清除：服务器处理耗时（大文件入库可达数十秒）期间页面仍存活，
+     * 若用定时器清除会在线程等待中被误删，导致跳转回来又被判为刷新。 */
+    function markNavigation() {
+        try { sessionStorage.setItem(NAV_MARK_KEY, String(Date.now())); } catch (e) { /* 隐私模式忽略 */ }
+    }
+
+    /* 读取并清除指定标记，返回该标记是否在有效期内 */
+    function consumeMark(key, ttl) {
+        try {
+            var raw = sessionStorage.getItem(key);
+            if (!raw) { return false; }
+            sessionStorage.removeItem(key);
+            return (Date.now() - Number(raw)) <= ttl;
+        } catch (e) { return false; }
+    }
+
+    /* 判断本次页面加载是否属于「刷新」（F5 / 刷新按钮 / Ctrl+R）。
      * 主判据用 Navigation Timing（type==='reload'）；
-     * 部分内嵌浏览器/自动化环境会把刷新上报成 'navigate'，因此增加兜底：
-     * 上一次加载记录的地址与本次相同 → 视为刷新。
+     * 部分内嵌浏览器/自动化环境会把刷新上报成 'navigate'，因此保留兜底：
+     * 上一次加载记录的地址与本次相同 → 视为刷新；但应用内主动导航已打标记，优先排除。
      * 产品约定刷新即主动重置工作区，应关闭全部标签。 */
     function isPageReload(currentUrl) {
+        var navType = '';
         try {
             var entries = performance.getEntriesByType('navigation');
-            if (entries.length && entries[0].type === 'reload') { return true; }
+            if (entries.length) { navType = entries[0].type; }
         } catch (e) { /* 不支持时走旧 API 兜底 */ }
-        /* 旧版浏览器（Win7 上的老 Chrome/IE11）兜底：type===1 即 TYPE_RELOAD */
-        if (typeof performance.navigation === 'object' &&
-            performance.navigation !== null &&
-            performance.navigation.type === 1) {
-            return true;
+        if (!navType) {
+            /* 旧版浏览器（Win7 上的老 Chrome/IE11）兜底：type===1 即 TYPE_RELOAD */
+            if (typeof performance.navigation === 'object' && performance.navigation !== null) {
+                navType = performance.navigation.type === 1 ? 'reload' : 'navigate';
+            }
         }
+
+        /* 无论结论如何都先消费标记，避免残留影响下一次判定 */
+        var navMarked = consumeMark(NAV_MARK_KEY, NAV_MARK_TTL);
+
+        /* reload 类型 = 用户主动刷新（脚本 location.reload() 也归此类，浏览器层面无法区分） */
+        if (navType === 'reload') { return true; }
+        /* 应用内主动导航（表单提交 / 同址跳转 / 标签切换）：即使地址相同也不是刷新 */
+        if (navMarked) { return false; }
+
         try {
             var lastUrl = sessionStorage.getItem(LOAD_MARK_KEY);
             if (lastUrl && normalize(lastUrl) === currentUrl) { return true; }
@@ -232,7 +265,21 @@
 
     /* ---------- 页面跳转（整页） ---------- */
     function navigate(url) {
+        markNavigation();   // 标签切换/菜单跳转属应用内主动跳转，不算刷新
         window.location.href = url;
+    }
+
+    /* 应用内整页刷新：先打跳转标记，再用 replace 重新加载当前地址。
+     * 浏览器会把 location.reload() 上报成 reload 类型（与用户 F5 无法区分），
+     * 而整页重定向上报的是普通导航，配合标记即可保留工作区标签。 */
+    function refresh() {
+        markNavigation();
+        var href = window.location.href;
+        try {
+            window.location.replace(href);   // 不留历史记录，语义等同刷新
+        } catch (e) {
+            window.location.href = href;
+        }
     }
 
     /* ---------- 左侧栏联动高亮 ---------- */
@@ -298,7 +345,7 @@
         var sep = document.createElement('div');
         sep.className = 'menu-sep';
         menuEl.appendChild(sep);
-        menuEl.appendChild(menuButton('刷新当前页', function () { window.location.reload(); }, false));
+        menuEl.appendChild(menuButton('刷新当前页', function () { refresh(); }, false));
 
         menuEl.classList.add('show');
         menuEl.setAttribute('aria-hidden', 'false');
@@ -418,14 +465,45 @@
         navigate(url);
     });
 
-    /* 供其它脚本（如侧栏折叠）通知标签栏重新计算布局 */
+    /* ---------- 供其它脚本调用：手动标记一次应用内跳转（下一跳不会被当作刷新） ---------- */
     window.AppTabbar = {
         open: openTab,
         close: closeTab,
         closeOthers: closeOthers,
         closeAll: closeAll,
+        markNav: markNavigation,
+        refresh: refresh,
         getState: function () { return JSON.parse(JSON.stringify(state)); }
     };
+    /* 全局整页刷新入口：业务页面一律用它，不要再用 location.reload() */
+    window.appRefreshPage = refresh;
+
+    /* ---------- 自动打「跳转标记」：应用内的同址跳转不应被误判为刷新 ---------- */
+    /* 1) 常规表单提交：GET 筛选、POST 入库/删除/重新上传（重定向回本页） */
+    document.addEventListener('submit', markNavigation, true);
+    /* 2) 编程式 form.submit()（如 onchange="this.form.submit()"）不触发 submit 事件，需在原型上兜底 */
+    if (window.HTMLFormElement && HTMLFormElement.prototype.submit) {
+        var nativeFormSubmit = HTMLFormElement.prototype.submit;
+        HTMLFormElement.prototype.submit = function () {
+            markNavigation();
+            return nativeFormSubmit.apply(this, arguments);
+        };
+    }
+    /* 3) 同页链接：仅改变查询参数的同一地址（如日历上/下月、分页），归一化后与当前页相同 */
+    document.addEventListener('click', function (e) {
+        var link = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+        if (!link) { return; }
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) { return; }
+        if (link.closest && link.closest('.app-tabbar')) { return; }   // 标签栏自身由 navigate 负责标记
+        if (link.target && link.target !== '_self') { return; }
+        if (link.hasAttribute('download')) { return; }
+        var href = link.getAttribute('href') || '';
+        if (!href || href.charAt(0) === '#' || /^(javascript|mailto|tel):/i.test(href)) { return; }
+        if (link.origin && link.origin !== window.location.origin) { return; }
+        if (link.pathname && normalize(link.pathname) === normalize(window.location.pathname)) {
+            markNavigation();
+        }
+    }, true);
 
     /* ---------- 首屏初始化 ---------- */
     (function init() {

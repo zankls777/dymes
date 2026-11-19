@@ -975,7 +975,7 @@
                     // 关闭模态框并刷新页面
                     const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
                     modal.hide();
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('数据处理失败：' + (data.error || '未知错误'));
                 }
@@ -1036,7 +1036,7 @@
                         alert('有效数据已在Excel上传时自动导入，无需额外处理！');
                         const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
                         modal.hide();
-                        location.reload();
+                        appRefreshPage();
                     } else {
                         console.log('❌ 没有匹配的条件，显示错误提示');
                         alert('没有需要处理的数据！');
@@ -1089,7 +1089,7 @@
                     // 关闭模态框并刷新页面
                     const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
                     modal.hide();
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('有效数据导入失败：' + (data.error || '未知错误'));
                 }
@@ -1136,7 +1136,7 @@
                     alert(data.message || '重复数据处理成功！');
                     const modal = bootstrap.Modal.getInstance(document.getElementById('partNumberConflictModal'));
                     modal.hide();
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     alert('重复数据处理失败：' + (data.error || '未知错误'));
                 }

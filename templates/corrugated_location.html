@@ -149,7 +149,7 @@
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                 body: JSON.stringify({ id, data })
             }).then(r => r.json()).then(res => {
-                if (res.success) { alert(res.message); location.reload(); }
+                if (res.success) { alert(res.message); appRefreshPage(); }
                 else alert(res.error || '编辑失败');
             }).catch(e => alert('请求失败：' + e.message));
         });
@@ -170,7 +170,7 @@
                     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                     body: JSON.stringify({ id })
                 }).then(r => r.json()).then(res => {
-                    if (res.success) { alert(res.message); location.reload(); }
+                    if (res.success) { alert(res.message); appRefreshPage(); }
                     else alert(res.error || '删除失败');
                 }).catch(e => alert('请求失败：' + e.message));
             }
@@ -204,7 +204,7 @@
             method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
             body: JSON.stringify({ columns: uploadingCols || INIT.columns, records: uploading, file_name: '' })
         }).then(r => r.json()).then(res => {
-            if (res.success) { alert(res.message); location.reload(); }
+            if (res.success) { alert(res.message); appRefreshPage(); }
             else alert(res.error || '保存失败');
         }).catch(e => alert('请求失败：' + e.message));
     };
@@ -215,7 +215,7 @@
         fetch('/corrugated_location/clear', {
             method: 'POST', headers: { 'X-CSRFToken': csrfToken }
         }).then(r => r.json()).then(res => {
-            if (res.success) { alert(res.message); location.reload(); }
+            if (res.success) { alert(res.message); appRefreshPage(); }
             else alert(res.error || '清空失败');
         }).catch(e => alert('请求失败：' + e.message));
     };
@@ -248,7 +248,7 @@
             method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
             body: JSON.stringify({ configs })
         }).then(r => r.json()).then(res => {
-            if (res.success) { alert(res.message); location.reload(); }
+            if (res.success) { alert(res.message); appRefreshPage(); }
             else alert(res.error || '保存失败');
         }).catch(e => alert('请求失败：' + e.message));
     });

@@ -2572,7 +2572,7 @@
 
                         // 刷新页面
                         setTimeout(() => {
-                            location.reload();
+                            appRefreshPage();
                         }, 1000);
                     } else {
                         // 显示错误消息
@@ -2663,7 +2663,7 @@
                             alert.className = 'alert alert-success alert-dismissible fade show';
                             alert.innerHTML = `已复用「${sourceName}」的权限到目标用户! <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>`;
                             document.body.prepend(alert);
-                            setTimeout(function() { location.reload(); }, 1000);
+                            setTimeout(function() { appRefreshPage(); }, 1000);
                         } else {
                             throw new Error(data.error || '复用权限失败');
                         }

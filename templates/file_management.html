@@ -752,7 +752,7 @@
             }
             
             // 立即刷新页面，让后端处理flash消息在顶部横幅显示
-            window.location.reload();
+            appRefreshPage();
         });
     })();
     </script>
@@ -1693,7 +1693,7 @@ document.getElementById('confirm-download').addEventListener('click', async func
                         const selfBtn = this;
                         selfBtn.onclick = function() {
                             if (singleModalInstance) singleModalInstance.hide();
-                            location.reload();
+                            appRefreshPage();
                         };
                     } else {
                         return response.json().catch(() => null).then(errData => {
@@ -1919,7 +1919,7 @@ document.getElementById('confirm-download').addEventListener('click', async func
                         const selfBtn = this;
                         selfBtn.onclick = function() {
                             if (modalInstance) modalInstance.hide();
-                            location.reload();
+                            appRefreshPage();
                         };
                         
 
@@ -2184,7 +2184,7 @@ document.getElementById('confirm-download').addEventListener('click', async func
                         const selfBtn = this;
                         selfBtn.onclick = function() {
                             if (modalInstance) modalInstance.hide();
-                            location.reload();
+                            appRefreshPage();
                         };
                     })
                     .catch(error => {
@@ -2874,7 +2874,7 @@ document.getElementById('confirm-download').addEventListener('click', async func
                     // 关闭模态框并刷新页面
                     const modal = bootstrap.Modal.getInstance(document.getElementById('freezeModal'));
                     if (modal) modal.hide();
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     showMessage(data.error || '冻结失败', 'danger');
                     this.disabled = false;
@@ -2912,7 +2912,7 @@ document.getElementById('confirm-download').addEventListener('click', async func
                     // 关闭模态框并刷新页面
                     const modal = bootstrap.Modal.getInstance(document.getElementById('thawModal'));
                     if (modal) modal.hide();
-                    location.reload();
+                    appRefreshPage();
                 } else {
                     showMessage(data.error || '解冻失败', 'danger');
                     this.disabled = false;
@@ -3010,7 +3010,7 @@ document.getElementById('confirm-download').addEventListener('click', async func
                         setTimeout(() => {
                             const modal = bootstrap.Modal.getInstance(document.getElementById('batchFreezeModal'));
                             if (modal) modal.hide();
-                            location.reload();
+                            appRefreshPage();
                         }, 1000);
                     } else {
                         statusEl.innerHTML = `<div class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> ${data.error || '冻结失败'}</div>`;
@@ -3064,7 +3064,7 @@ document.getElementById('confirm-download').addEventListener('click', async func
                         setTimeout(() => {
                             const modal = bootstrap.Modal.getInstance(document.getElementById('batchThawModal'));
                             if (modal) modal.hide();
-                            location.reload();
+                            appRefreshPage();
                         }, 1000);
                     } else {
                         statusEl.innerHTML = `<div class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> ${data.error || '解冻失败'}</div>`;
@@ -3182,7 +3182,7 @@ document.getElementById('confirm-download').addEventListener('click', async func
                         setTimeout(() => {
                             const modal = bootstrap.Modal.getInstance(freezeOldVersionsModal);
                             if (modal) modal.hide();
-                            location.reload();
+                            appRefreshPage();
                         }, 2000);
                     } else {
                         freezeOldVersionsStatus.innerHTML = `<div class="text-danger"><i class="fa fa-exclamation-circle me-1"></i> ${data.error || '冻结失败'}</div>`;

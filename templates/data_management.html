@@ -422,7 +422,7 @@
                             progressBar.classList.add('bg-success');
                             setProgress(100, '恢复完成，请刷新页面后重新查询');
                             alert('数据库已从快照恢复，并已完成结构与默认数据初始化。');
-                            location.reload();
+                            appRefreshPage();
                         } else {
                             progressBar.classList.remove('bg-warning');
                             progressBar.classList.add('bg-danger');
@@ -600,7 +600,7 @@
                 if (btn) { btn.disabled = false; }
                 if (d.success) {
                     alert(okMsg || '操作成功');
-                    location.reload();   // 刷新以展示最新备份历史
+                    appRefreshPage();   // 刷新以展示最新备份历史
                 } else {
                     alert('操作失败：' + (d.error || '未知错误'));
                 }
@@ -662,7 +662,7 @@
                             + '投入明细 新增 ' + s.invest_added + ' / 跳过重复 ' + s.invest_skipped + '\n'
                             + '上传批次 新增 ' + s.batch_added + ' / 跳过重复 ' + s.batch_skipped + '\n'
                             + '数据记录 新增 ' + s.record_added + ' / 跳过重复 ' + s.record_skipped);
-                        location.reload();
+                        appRefreshPage();
                     } else {
                         alert('增量恢复失败：' + (d.error || '未知错误'));
                     }
