@@ -90,11 +90,12 @@
                             <tr>
                                 <th style="width:36px;"><input type="checkbox" id="selectAll" title="全选"></th>
                                 <th>回路号</th><th>号机</th><th>线质</th><th>颜色</th><th>规格</th>
-                                <th>端子1</th><th>端子2</th><th>压高1</th><th>压高2</th><th>登录时间</th>
+                                <th>端子1</th><th>端子2</th><th>压高1</th><th>压高2</th>
+                                <th>修正人员</th><th>登录时间</th>
                             </tr>
                         </thead>
                         <tbody id="crimpBody">
-                            <tr><td colspan="11" class="text-center text-muted py-3">加载中…</td></tr>
+                            <tr><td colspan="12" class="text-center text-muted py-3">加载中…</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -192,19 +193,19 @@
         }
 
         async function loadList() {
-            crimpBody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-3">加载中…</td></tr>';
+            crimpBody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">加载中…</td></tr>';
             if (selectAll) selectAll.checked = false;
             try {
                 const resp = await fetch('/wire/crimp_login/data', { headers: { 'X-CSRFToken': CSRF } });
                 const data = await resp.json();
                 if (!data.success) {
-                    crimpBody.innerHTML = `<tr><td colspan="11" class="text-center text-danger py-3">${data.error || '加载失败'}</td></tr>`;
+                    crimpBody.innerHTML = `<tr><td colspan="12" class="text-center text-danger py-3">${data.error || '加载失败'}</td></tr>`;
                     syncSelState();
                     return;
                 }
                 currentRows = data.rows || [];
                 if (!currentRows.length) {
-                    crimpBody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-3">暂无数据，请先 Excel 导入</td></tr>';
+                    crimpBody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">暂无数据，请先 Excel 导入</td></tr>';
                     syncSelState();
                     return;
                 }
@@ -215,6 +216,7 @@
                     <td>${esc(r.color)}</td><td>${esc(r.sq)}</td>
                     <td>${esc(r.tml1)}</td><td>${esc(r.tml2)}</td>
                     <td>${esc(r.strip1)}</td><td>${esc(r.strip2)}</td>
+                    <td>${esc(r.created_by_name)}</td>
                     <td class="small text-muted">${esc(fmtTime(r.created_at))}</td>
                 </tr>`).join('');
                 // 行内复选框变化实时更新状态
@@ -222,7 +224,7 @@
                     cb.addEventListener('change', syncSelState));
                 syncSelState();
             } catch (e) {
-                crimpBody.innerHTML = '<tr><td colspan="11" class="text-center text-danger py-3">网络错误</td></tr>';
+                crimpBody.innerHTML = '<tr><td colspan="12" class="text-center text-danger py-3">网络错误</td></tr>';
             }
         }
         document.getElementById('refreshBtn').addEventListener('click', loadList);

@@ -38,6 +38,8 @@ class WireCrimpLogin(db.Model):
     # —— 来源 / 审计 ——
     source_file = db.Column(db.String(200), nullable=True)   # 上传文件名
     created_by = db.Column(db.Integer, nullable=True)         # 上传操作人
+    # 修正人员姓名快照：上传/修正该条压高的人（用户删除后仍可显示文本）
+    created_by_name = db.Column(db.String(80), nullable=True)
     created_at = db.Column(db.DateTime, default=get_utc8_time)
     updated_at = db.Column(db.DateTime, default=get_utc8_time, onupdate=get_utc8_time)
 
@@ -59,6 +61,7 @@ class WireCrimpLogin(db.Model):
             'strip2': self.strip2 or '',
             'source_file': self.source_file or '',
             'created_by': self.created_by,
+            'created_by_name': self.created_by_name or '',
             'created_at': self.created_at.isoformat() if self.created_at else '',
             'updated_at': self.updated_at.isoformat() if self.updated_at else '',
         }

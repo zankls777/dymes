@@ -190,6 +190,8 @@ COLUMN_UPGRADES = {
     'wire_crimp_login': [
         # 匹配键扩展：线质（如 AVSS/CIVUS），加入后旧数据将被清空由用户重新上传
         ('wire', 'VARCHAR(50) NOT NULL DEFAULT ""'),
+        # 修正人员姓名快照（上传/修正该条压高的人）
+        ('created_by_name', 'VARCHAR(80)'),
     ],
     'material_inbound_daily': [
         ('inbound_by_name', 'VARCHAR(80)'),

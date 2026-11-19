@@ -5197,6 +5197,46 @@ WIRE_SNAPSHOT_ROW_CAP = 20   # 每回路最多固化的明细行数（与历史�
 WIRE_HEAL_NEG_TTL = 300      # 无资料回路的自愈负缓存秒数（避免每次加载都全表扫描）
 WIRE_INCOMPLETE_REMARK = '录入不全'  # 同图纸回路扫描不全时自动补录行的备注
 _wire_heal_neg_cache = {}    # (lot_no, 回路号大写) -> 负缓存过期时刻
+_wire_remark_col_ok = False  # 进程内标记：wire_scan_record.remark 列已确认存在
+
+
+def _wire_ensure_remark_column():
+    """确保 wire_scan_record.remark 列存在（幂等自愈）。
+
+    背景：若服务在「旧备份恢复 / 旧库副本」上运行且未重跑结构升级，
+    新增的 remark 列会缺失，导致补线扫码与保存整体报
+    「no such column: wire_scan_record.remark」。
+    这里在补线相关请求前做一次轻量检查（成功后进程内缓存），
+    缺失则直接 ALTER TABLE 补齐；失败仅记录日志，交由后续查询暴露。
+    """
+    global _wire_remark_col_ok
+    if _wire_remark_col_ok:
+        return True
+    try:
+        # 仅 SQLite 需要运行期补列（MySQL 由启动时的结构升级负责）
+        if db.engine.dialect.name != 'sqlite':
+            _wire_remark_col_ok = True
+            return True
+        from sqlalchemy import text
+        cols = db.session.execute(text('PRAGMA table_info(wire_scan_record)')).fetchall()
+        if not any((c[1] or '').lower() == 'remark' for c in cols):
+            db.session.execute(text(
+                'ALTER TABLE wire_scan_record ADD COLUMN remark VARCHAR(200)'))
+            db.session.commit()
+            current_app.logger.warning('wire_scan_record.remark 列缺失，已在运行期自动补齐')
+        _wire_remark_col_ok = True
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'wire_scan_record.remark 列自愈失败: {e}')
+        return False
+    return True
+
+
+@main_bp.before_request
+def _wire_schema_guard():
+    """补线模块前置守卫：请求进来前确保 remark 列可用，避免整页保存失败。"""
+    if request.path.startswith('/wire'):
+        _wire_ensure_remark_column()
 
 
 def _wire_sublist_circuit_rows(part, eo, circuit):
@@ -5728,6 +5768,8 @@ def _wire_autofill_incomplete(lot_no, batch_circuits, lot_info_map, now,
     """
     from models.wire_scan_record import WireScanRecord
     from models.wire_scan_detail import WireScanDetail
+    if not _wire_ensure_remark_column():
+        return 0
     lot_no = (lot_no or '').strip()
     if not lot_no:
         return 0
@@ -5764,6 +5806,7 @@ def _wire_autofill_incomplete(lot_no, batch_circuits, lot_info_map, now,
             synchronize_session=False)
         for cup in [c for c in placeholder_map if c in batch_up]:
             placeholder_map.pop(cup, None)
+
     # 本次批次各回路所属图纸编号（来自扫描时固化的快照）
     circuit_codes = {}
     for c, sc in (WireScanDetail.query
@@ -6305,8 +6348,16 @@ def wire_scan_entry_batch_save():
         if lot_circuits:
             op_name = _wire_op_name(session.get('user_id'))
             for lot_no, circs in lot_circuits.items():
-                incomplete += _wire_autofill_incomplete(
-                    lot_no, circs, lot_map, now, session.get('user_id'), op_name)
+                # 自动补录放在 SAVEPOINT 中：即使补录失败也不回滚已录入的主数据
+                sp = db.session.begin_nested()
+                try:
+                    incomplete += _wire_autofill_incomplete(
+                        lot_no, circs, lot_map, now, session.get('user_id'), op_name)
+                    sp.commit()
+                except Exception as fill_err:
+                    sp.rollback()
+                    current_app.logger.warning(
+                        f'扫描不全自动补录失败(已跳过，主数据正常保存) {lot_no}: {fill_err}')
         db.session.commit()
         return jsonify({'success': True, 'saved': saved, 'incomplete': incomplete})
     except Exception as e:
@@ -6776,6 +6827,8 @@ def wire_crimp_login_upload():
                 existing[esig] = er
         skipped = 0
         inserted = 0
+        # 修正人员姓名快照：本次上传人（导入即该批数据的修正人）
+        op_name = _wire_op_name(user_id)
         for r in rows:
             sig = key_sig(r['circuit_no'], r['machine_no'], r['wire'], r['color'], r['sq'], r['tml1'], r['tml2'])
             if sig in existing:
@@ -6787,7 +6840,8 @@ def wire_crimp_login_upload():
                 wire=r['wire'],
                 color=r['color'], sq=r['sq'], tml1=r['tml1'], tml2=r['tml2'],
                 strip1=r['strip1'], strip2=r['strip2'],
-                source_file=source_file, created_by=user_id))
+                source_file=source_file, created_by=user_id,
+                created_by_name=op_name))
             inserted += 1
             # 新键加入 existing 避免同批重复插入
             existing[sig] = WireCrimpLogin()
@@ -6855,8 +6909,22 @@ def wire_crimp_login_data():
                           WireCrimpLogin.color, WireCrimpLogin.sq,
                           WireCrimpLogin.tml1, WireCrimpLogin.tml2)
                 .limit(2000).all())
-        return jsonify({'success': True, 'rows': [r.to_dict() for r in rows],
-                        'total': len(rows)})
+        data = [r.to_dict() for r in rows]
+        # 历史数据无姓名快照：按 created_by 反查用户姓名兜底展示「修正人员」
+        lack_ids = {r.created_by for r in rows
+                    if not (r.created_by_name or '').strip() and r.created_by}
+        if lack_ids:
+            from models.user_info import UserInfo
+            name_map = {}
+            for uid, uname, fname in (UserInfo.query
+                                      .filter(UserInfo.id.in_(lack_ids))
+                                      .with_entities(UserInfo.id, UserInfo.username,
+                                                     UserInfo.full_name).all()):
+                name_map[uid] = (fname or '').strip() or (uname or '').strip()
+            for d, r in zip(data, rows):
+                if not d['created_by_name']:
+                    d['created_by_name'] = name_map.get(r.created_by, '')
+        return jsonify({'success': True, 'rows': data, 'total': len(data)})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -6884,18 +6952,30 @@ def wire_crimp_login_download():
         ws = wb.active
         ws.title = '压高登陆'
         headers = ['回路号', '号机', '线质', '颜色', '规格', '端子1', '端子2',
-                   '压高1', '压高2', 'LOT', '来源文件', '登录时间']
+                   '压高1', '压高2', '修正人员', 'LOT', '来源文件', '登录时间']
         ws.append(headers)
         # 表头样式：加粗 + 浅蓝底 + 居中
         for c in ws[1]:
             c.font = Font(bold=True)
             c.fill = PatternFill('solid', fgColor='D9E1F2')
             c.alignment = Alignment(horizontal='center', vertical='center')
+        # 历史数据无姓名快照：按 created_by 反查用户姓名兜底
+        lack_ids = {r.created_by for r in rows
+                    if not (r.created_by_name or '').strip() and r.created_by}
+        name_map = {}
+        if lack_ids:
+            from models.user_info import UserInfo
+            for uid, uname, fname in (UserInfo.query
+                                      .filter(UserInfo.id.in_(lack_ids))
+                                      .with_entities(UserInfo.id, UserInfo.username,
+                                                     UserInfo.full_name).all()):
+                name_map[uid] = (fname or '').strip() or (uname or '').strip()
         for r in rows:
             ws.append([
                 r.circuit_no or '', r.machine_no or '', r.wire or '',
                 r.color or '', r.sq or '',
                 r.tml1 or '', r.tml2 or '', r.strip1 or '', r.strip2 or '',
+                (r.created_by_name or '').strip() or name_map.get(r.created_by, ''),
                 r.lot_no or '', r.source_file or '',
                 r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else '',
             ])
@@ -6904,7 +6984,7 @@ def wire_crimp_login_download():
             for c in row:
                 c.alignment = Alignment(wrap_text=True, vertical='top')
         # 列宽
-        widths = [12, 10, 10, 10, 8, 20, 20, 14, 14, 18, 28, 20]
+        widths = [12, 10, 10, 10, 8, 20, 20, 14, 14, 14, 18, 28, 20]
         for i, w in enumerate(widths, 1):
             ws.column_dimensions[chr(64 + i) if i <= 26 else 'A' + chr(64 + i - 26)].width = w
         ts = get_utc8_time().strftime('%Y%m%d_%H%M%S')
