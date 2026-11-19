@@ -38,6 +38,13 @@
             background-color: #eef2ff; color: #3858e9; border-radius: 4px;
             padding: 2px 8px; font-size: .8rem; margin: 2px; display: inline-block;
         }
+
+        /* ---------- 表头排序 ---------- */
+        #crimpTable th.sortable { cursor: pointer; user-select: none; }
+        #crimpTable th.sortable:hover { background-color: #eef2ff; }
+        #crimpTable th .sort-ind { font-size: .7rem; color: #adb5bd; margin-left: 2px; }
+        #crimpTable th.sort-asc .sort-ind,
+        #crimpTable th.sort-desc .sort-ind { color: #0d6efd; }
     </style>
 </head>
 <body>
@@ -89,9 +96,17 @@
                         <thead class="table-light position-sticky top-0">
                             <tr>
                                 <th style="width:36px;"><input type="checkbox" id="selectAll" title="全选"></th>
-                                <th>回路号</th><th>号机</th><th>线质</th><th>颜色</th><th>规格</th>
-                                <th>端子1</th><th>端子2</th><th>压高1</th><th>压高2</th>
-                                <th>修正人员</th><th>登录时间</th>
+                                <th class="sortable" data-key="circuit_no">回路号<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="machine_no">号机<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="wire">线质<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="color">颜色<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="sq">规格<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="tml1">端子1<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="tml2">端子2<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="strip1">压高1<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="strip2">压高2<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="created_by_name">修正人员<span class="sort-ind"></span></th>
+                                <th class="sortable" data-key="created_at">登录时间<span class="sort-ind"></span></th>
                             </tr>
                         </thead>
                         <tbody id="crimpBody">
@@ -166,7 +181,9 @@
         const selectAll = document.getElementById('selectAll');
         const deleteSelBtn = document.getElementById('deleteSelBtn');
         const selInfo = document.getElementById('selInfo');
-        let currentRows = [];   // 缓存当前列表，供删除后定位
+        let currentRows = [];   // 缓存当前列表，供删除/排序后重渲染
+        let sortKey = '';       // 当前排序列（'' = 保持接口默认顺序）
+        let sortDir = 1;        // 1 升序，-1 降序
 
         // 格式化登录时间（UTC+8 ISO -> 本地可读，去掉 T/Z）
         function fmtTime(iso) {
@@ -192,6 +209,66 @@
             if (selectAll) selectAll.checked = total > 0 && checked.length === total;
         }
 
+        // 排序：数字列按数值比较，其余按本地化文本比较；空值恒排最后
+        function sortRows(rows) {
+            if (!sortKey) return rows;
+            return rows.slice().sort((x, y) => {
+                const a = String(x[sortKey] == null ? '' : x[sortKey]).trim();
+                const b = String(y[sortKey] == null ? '' : y[sortKey]).trim();
+                if (!a && !b) return 0;
+                if (!a) return 1;
+                if (!b) return -1;
+                const na = parseFloat(a), nb = parseFloat(b);
+                const r = (!isNaN(na) && !isNaN(nb))
+                    ? na - nb
+                    : a.localeCompare(b, 'zh-CN', { numeric: true, sensitivity: 'base' });
+                return r * sortDir;
+            });
+        }
+
+        // 刷新表头排序箭头
+        function updateSortInd() {
+            document.querySelectorAll('#crimpTable th.sortable').forEach(th => {
+                const on = th.dataset.key === sortKey;
+                th.classList.toggle('sort-asc', on && sortDir === 1);
+                th.classList.toggle('sort-desc', on && sortDir === -1);
+                const ind = th.querySelector('.sort-ind');
+                if (ind) ind.textContent = on ? (sortDir === 1 ? '▲' : '▼') : '⇅';
+            });
+        }
+
+        // 渲染列表（保留已勾选行）
+        function renderRows() {
+            const checked = new Set([...crimpBody.querySelectorAll('input.row-check:checked')]
+                .map(cb => cb.value));
+            crimpBody.innerHTML = sortRows(currentRows).map(r => `<tr>
+                    <td class="text-center"><input type="checkbox" class="row-check" value="${esc(r.id)}" data-id="${esc(r.id)}"${checked.has(String(r.id)) ? ' checked' : ''}></td>
+                    <td>${esc(r.circuit_no)}</td><td>${esc(r.machine_no)}</td>
+                    <td>${esc(r.wire)}</td>
+                    <td>${esc(r.color)}</td><td>${esc(r.sq)}</td>
+                    <td>${esc(r.tml1)}</td><td>${esc(r.tml2)}</td>
+                    <td>${esc(r.strip1)}</td><td>${esc(r.strip2)}</td>
+                    <td>${esc(r.created_by_name)}</td>
+                    <td class="small text-muted">${esc(fmtTime(r.created_at))}</td>
+                </tr>`).join('');
+            // 行内复选框变化实时更新状态
+            crimpBody.querySelectorAll('input.row-check').forEach(cb =>
+                cb.addEventListener('change', syncSelState));
+            syncSelState();
+        }
+
+        // 表头点击排序：同列再次点击切换升降序
+        document.querySelectorAll('#crimpTable th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const k = th.dataset.key;
+                if (sortKey === k) sortDir = -sortDir;
+                else { sortKey = k; sortDir = 1; }
+                updateSortInd();
+                renderRows();
+            });
+        });
+        updateSortInd();
+
         async function loadList() {
             crimpBody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">加载中…</td></tr>';
             if (selectAll) selectAll.checked = false;
@@ -209,20 +286,7 @@
                     syncSelState();
                     return;
                 }
-                crimpBody.innerHTML = currentRows.map(r => `<tr>
-                    <td class="text-center"><input type="checkbox" class="row-check" value="${esc(r.id)}" data-id="${esc(r.id)}"></td>
-                    <td>${esc(r.circuit_no)}</td><td>${esc(r.machine_no)}</td>
-                    <td>${esc(r.wire)}</td>
-                    <td>${esc(r.color)}</td><td>${esc(r.sq)}</td>
-                    <td>${esc(r.tml1)}</td><td>${esc(r.tml2)}</td>
-                    <td>${esc(r.strip1)}</td><td>${esc(r.strip2)}</td>
-                    <td>${esc(r.created_by_name)}</td>
-                    <td class="small text-muted">${esc(fmtTime(r.created_at))}</td>
-                </tr>`).join('');
-                // 行内复选框变化实时更新状态
-                crimpBody.querySelectorAll('input.row-check').forEach(cb =>
-                    cb.addEventListener('change', syncSelState));
-                syncSelState();
+                renderRows();
             } catch (e) {
                 crimpBody.innerHTML = '<tr><td colspan="12" class="text-center text-danger py-3">网络错误</td></tr>';
             }

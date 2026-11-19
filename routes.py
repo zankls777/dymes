@@ -6817,14 +6817,20 @@ def wire_crimp_login_upload():
                 for r in rows]
         if sigs:
             from sqlalchemy import or_
-            econds = [(
-                (WireCrimpLogin.circuit_no == s[0]) & (WireCrimpLogin.machine_no == s[1])
-                & (WireCrimpLogin.wire == s[2])
-                & (WireCrimpLogin.color == s[3]) & (WireCrimpLogin.sq == s[4])
-            ) for s in sigs]
-            for er in WireCrimpLogin.query.filter(or_(*econds)).all():
-                esig = key_sig(er.circuit_no, er.machine_no, er.wire, er.color, er.sq, er.tml1, er.tml2)
-                existing[esig] = er
+            # 分批查询：SQLite 对单条 SQL 的表达式深度(1000)与变量数有上限，
+            # 大批量导入时一次性 or_ 数百个条件会直接报 "Expression tree is too large"，
+            # 因此按 120 个匹配键一批（约 600 个绑定变量）分段查询。
+            CHUNK = 120
+            for i in range(0, len(sigs), CHUNK):
+                chunk = sigs[i:i + CHUNK]
+                econds = [(
+                    (WireCrimpLogin.circuit_no == s[0]) & (WireCrimpLogin.machine_no == s[1])
+                    & (WireCrimpLogin.wire == s[2])
+                    & (WireCrimpLogin.color == s[3]) & (WireCrimpLogin.sq == s[4])
+                ) for s in chunk]
+                for er in WireCrimpLogin.query.filter(or_(*econds)).all():
+                    esig = key_sig(er.circuit_no, er.machine_no, er.wire, er.color, er.sq, er.tml1, er.tml2)
+                    existing[esig] = er
         skipped = 0
         inserted = 0
         # 修正人员姓名快照：本次上传人（导入即该批数据的修正人）
