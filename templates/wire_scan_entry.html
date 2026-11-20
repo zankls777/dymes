@@ -1013,6 +1013,16 @@
                     circuitInput.select();
                     return;
                 }
+                // 同一 LOT + 回路号只入库一次：清单中已有该回路的号机行则拦截，避免重复入库
+                const scanCircUp = (p.circuit_no || '').trim().toUpperCase();
+                const dupRow = pending.find(x => x.lot_no === p.lot_no && x.machine_no
+                    && (x.circuit_no || '').trim().toUpperCase() === scanCircUp);
+                if (dupRow) {
+                    showResult(false, `该 LOT + 回路号 <b>${esc(p.circuit_no)}</b> 已录入`
+                        + `（号机 ${esc((dupRow.machine_no || '').split('$')[0])}），不能重复录入`);
+                    circuitInput.select();
+                    return;
+                }
                 currentCircuit = p;
                 showResult(true, `回路号识别成功：LOT <b>${esc(p.lot_no)}</b>，回路号 <b>${esc(p.circuit_no)}</b>，请在②号机框扫描号机`);
                 showPreview(`<i class="fa fa-road me-1"></i>① 回路号已扫：LOT=<b>${esc(p.lot_no)}</b>，回路号=<b>${esc(p.circuit_no)}</b>，请继续②号机扫描`);
@@ -1061,10 +1071,18 @@
                     machineInput.select();
                     return;
                 }
-                // 号机允许重复录入，不做查重限制。
+                // 号机行按 (LOT, 回路号) 唯一：清单中已有该回路的号机行则拦截
                 // 若 pending 已有同 LOT+回路 的无号机占位行（同图纸兄弟回路带入），
                 // 则直接为该占位行配上号机（保留已填数量），避免产生重复行
                 const circUp = (currentCircuit.circuit_no || '').trim().toUpperCase();
+                const dupRow = pending.find(x => x.lot_no === p.lot_no && x.machine_no
+                    && (x.circuit_no || '').trim().toUpperCase() === circUp);
+                if (dupRow) {
+                    showResult(false, `该 LOT + 回路号 <b>${esc(currentCircuit.circuit_no)}</b> 已录入`
+                        + `（号机 ${esc((dupRow.machine_no || '').split('$')[0])}），不能重复录入`);
+                    machineInput.select();
+                    return;
+                }
                 const existRow = pending.find(x => x.lot_no === p.lot_no && !x.machine_no
                     && (x.circuit_no || '').trim().toUpperCase() === circUp);
                 let targetTmpId;
@@ -1186,6 +1204,8 @@
             const BATCH_SIZE = 200;
             // 本次保存由后端自动补录的「录入不全」条数（同图纸未扫回路）
             let lastIncomplete = 0;
+            // 本次保存因「同 LOT + 回路号 已入库」被跳过的条数
+            let lastSkipped = 0;
             function setProgress(done, total) {
                 if (total <= 0) { saveProgressWrap.classList.add('d-none'); return; }
                 saveProgressWrap.classList.remove('d-none');
@@ -1197,6 +1217,7 @@
             async function batchSaveAll(items) {
                 let saved = 0;
                 lastIncomplete = 0;
+                lastSkipped = 0;
                 const total = items.length;
                 setProgress(0, total);
                 for (let i = 0; i < total; i += BATCH_SIZE) {
@@ -1224,6 +1245,7 @@
                     }
                     saved += (data.saved || 0);
                     lastIncomplete += (data.incomplete || 0);
+                    lastSkipped += (data.skipped || 0);
                     setProgress(Math.min(i + chunk.length, total), total);
                 }
                 return saved;
@@ -1280,6 +1302,10 @@
                     if (lastIncomplete) {
                         tip += `<br><span class="text-warning"><i class="fa fa-exclamation-circle me-1"></i>同图纸回路扫描不全：`
                             + `已自动补录 <b>${lastIncomplete}</b> 条未扫回路（备注「录入不全」，数据下载页与 Excel 中已标红）</span>`;
+                    }
+                    if (lastSkipped) {
+                        tip += `<br><span class="text-warning"><i class="fa fa-exclamation-circle me-1"></i>`
+                            + `有 <b>${lastSkipped}</b> 条数据因「同 LOT + 回路号已入库」被跳过（每个 LOT + 回路号只入库一次）</span>`;
                     }
                     if (bothMissing.length) {
                         tip += `<br><span class="text-danger"><i class="fa fa-exclamation-triangle me-1"></i>LOT ${bothMissing.map(esc).join('、')}：<b>品番、京信EO均未登记</b>，请到 <b>LOT登录页</b> 补录后再重新扫描</span>`;

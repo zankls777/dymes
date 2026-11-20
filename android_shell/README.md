@@ -8,8 +8,8 @@
 
 - 包名：`com.bom3.shell`
 - 最低系统：Android 6.0（API 23），目标版本 API 34
-- 当前版本：versionCode 4 / versionName 1.1.2
-- 体积：约 280 KB
+- 当前版本：versionCode 8 / versionName 1.5.0
+- 体积：约 297 KB
 
 ## 2. 功能特性
 
@@ -26,6 +26,7 @@
 | 拍照识别 | `<input type="file">` 走系统图片选择/相机，供无摄像头的 http 环境使用 |
 | 会话保持 | Cookie 持久化，切后台再回来不用重新登录 |
 | 基础交互 | 返回键回退网页，实体菜单键修改服务器地址，作业期间不熄屏 |
+| 底部快捷栏 | 4 个可自定义入口（单击跳转、长按改名改路径）+ 刷新按钮，任何页面都在 |
 
 ## 3. 目录结构
 
@@ -47,7 +48,7 @@ android_shell/
 │     └─ drawable/splash_image.png  # 构建时生成
 ├─ build.ps1                   # 一键构建脚本
 ├─ bom3.keystore               # 签名文件（首次构建生成，务必保留）
-└─ dist/BOM3-PDA-1.1.2.apk     # 产物
+└─ dist/BOM3-PDA-1.5.0.apk     # 产物
 ```
 
 ## 4. 环境依赖
@@ -79,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File f:\TA\bom3\android_shell\build.ps1
 方式二：USB 连接后命令行安装（覆盖安装用 `-r`）：
 
 ```powershell
-& "$env:LOCALAPPDATA\Android\platform-tools\adb.exe" install -r "f:\TA\bom3\android_shell\dist\BOM3-PDA-1.1.2.apk"
+& "$env:LOCALAPPDATA\Android\platform-tools\adb.exe" install -r "f:\TA\bom3\android_shell\dist\BOM3-PDA-1.5.0.apk"
 ```
 
 ## 7. 首次启动与服务器地址
@@ -114,19 +115,61 @@ powershell -ExecutionPolicy Bypass -File f:\TA\bom3\android_shell\build.ps1
 | 启动页配色 | `res/values/colors.xml` |
 | 启动页排版/页脚 | `res/layout/splash.xml` |
 | 默认服务器地址 | `MainActivity.java` 的 `DEFAULT_URL` |
+| 底部快捷入口默认值 | `MainActivity.java` 的 `DEFAULT_SLOTS`（运行时长按按钮也能改） |
 | 版本号 | `AndroidManifest.xml` 的 `versionCode/versionName` + `build.ps1` 顶部同名变量（需同时改，保持一致） |
 
 改完重新执行构建脚本即可。
 
+### 9.1 底部快捷栏
+
+App 底部固定 5 个按钮：前 4 个是自定义入口，最后一个是「刷新」。
+
+| 操作 | 效果 |
+|---|---|
+| 单击自定义按钮 | 跳转到该按钮配置的页面（站内路径自动拼上服务器地址） |
+| 长按自定义按钮 | 弹窗编辑「名称 + 路径」，例如名称「线束扫描」、路径 `/wire/scan_entry` |
+| 单击「刷新」 | 重新加载当前页面（登录态不会丢） |
+| 长按「刷新」 | 修改服务器地址，等价于实体菜单键 |
+
+默认配置：首页 `/`、资材入库 `/material/inbound`、线束扫描 `/wire/scan_entry`、数据下载 `/wire/data_download`。配置保存在 SharedPreferences（`slot0_name`…`slot3_path`），卸载重装才会重置。
+
+路径支持两种写法：站内相对路径（`/wire/scan_entry`，前缀自动取当前服务器地址）或完整 URL（`http://其它地址/...`）。
+
+
 ## 10. 与网页的接口约定
 
-APK 收到条码后执行：
+APK 每加载完一个页面，都会把 `static/js/pda_bridge.js`（构建时同步进 `assets/pda_bridge.js`）注入 WebView，因此**全站页面都支持扫码录入**，不依赖服务端是否已更新。
+
+收到条码后执行：
 
 ```javascript
 window.__bomPdaScan("条码内容")
 ```
 
-网页侧需提供该函数；当前 `templates/material_inbound.html` 已实现（含占位队列，避免页面未加载完时丢码）。若页面未定义该函数，注入会安全失败，不会报错。
+目标输入框的挑选优先级：
+
+| 优先级 | 规则 | 适用场景 |
+|---|---|---|
+| ① | `[data-pda-target="1"]` | 页面显式指定唯一的扫码框 |
+| ② | 最近聚焦的 `.scan-input` | 线束扫描页（回路号 → 号机 自动切换） |
+| ③ | 首个可见的 `.scan-input` | 页面初始未聚焦时 |
+| ④ | 最近聚焦的可编辑框（数量类除外） | 普通表单页 |
+| ⑤ | 首个可见的可编辑框 | 兜底 |
+
+命中后会写入值并派发 `input` / `change` / `Enter(keydown+keyup)`，直接复用页面已有的查询逻辑。
+
+页面也可以注册自定义处理（优先级最高）：
+
+```javascript
+window.bomPdaSetHandler(function (code) {
+    // 自定义：填到指定控件、调接口等
+    return 'ok';
+});
+```
+
+`templates/material_inbound.html` 自带更精细的实现（P/N 截取 + 1.5 秒同码去重），桥检测到页面已定义 `window.__bomPdaScan` 时不会覆盖。
+
+补充：页面若想支持"扫描直接填入某个非标准输入框"，给该框加 `data-pda-target="1"`；数量、金额类输入框加 `class="pda-ignore"` 可避免被命中。
 
 ## 11. 常见问题
 
@@ -166,6 +209,6 @@ http 内网不属于浏览器安全上下文，WebView 不给摄像头权限，�
 
 ## 13. 安全说明
 
-- 应用仅申请 `INTERNET`、`ACCESS_NETWORK_STATE` 两个普通权限。
+- 应用仅申请 `INTERNET`、`ACCESS_NETWORK_STATE`、`VIBRATE` 三个普通权限。
 - 因内网为 http，已开启 `usesCleartextTraffic`；若后续上 https 可关闭。
 - 签名口令为构建期固定值，仅用于内部分发，请勿对外公开 keystore。

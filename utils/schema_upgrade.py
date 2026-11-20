@@ -92,6 +92,9 @@ COLUMN_UPGRADES = {
         ('can_wire_data_download_download', 'BOOLEAN DEFAULT 0'),
         ('can_wire_data_download_edit', 'BOOLEAN DEFAULT 0'),
         ('can_wire_data_download_delete', 'BOOLEAN DEFAULT 0'),
+        # 补线返回确认
+        ('can_wire_return_confirm', 'BOOLEAN DEFAULT 0'),
+        ('can_wire_return_confirm_submit', 'BOOLEAN DEFAULT 0'),
         # 资材入库
         ('can_material_inbound_daily', 'BOOLEAN DEFAULT 0'),
         ('can_material_inbound_daily_upload', 'BOOLEAN DEFAULT 0'),
@@ -232,6 +235,9 @@ COLUMN_UPGRADES = {
 # 索引清单：CREATE INDEX IF NOT EXISTS 语句（幂等）
 # ---------------------------------------------------------------------------
 INDEX_STATEMENTS = [
+    # 补线返回确认：同一 LOT + 回路号唯一（回路号忽略大小写），历史重复先由 _dedupe 清理
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_wrc_lot_circuit "
+    "ON wire_return_confirm(lot_no, circuit_no COLLATE NOCASE)",
     "CREATE INDEX IF NOT EXISTS idx_wire_scan_lot_circuit "
     "ON wire_scan_record(lot_no, circuit_no)",
     "CREATE INDEX IF NOT EXISTS idx_wsd_lot_circuit "
@@ -408,6 +414,7 @@ def _import_all_models():
     from models.wire_scan_detail import WireScanDetail
     from models.wire_crimp_login import WireCrimpLogin
     from models.wire_label_crimp import WireLabelCrimp
+    from models.wire_return_confirm import WireReturnConfirm
     from models.material_inbound import MaterialInboundDaily
     from models.inventory_check import InventoryTeam, InventoryCheck
     from models.inventory_pno_dict import InventoryPnoDict
@@ -429,6 +436,24 @@ def _import_all_models():
         get_finished_product_model()
     except Exception as e:  # 成品模型缺失不阻断其余升级
         logger.warning(f"导入 FinishedProduct 模型失败(非致命): {e}")
+
+
+def _dedupe_wire_return_confirm(stat):
+    """清理补线返回确认的历史重复记录：同一 LOT + 回路号(忽略大小写)仅保留最新一条。"""
+    from sqlalchemy import inspect, text
+    try:
+        if 'wire_return_confirm' not in set(inspect(db.engine).get_table_names()):
+            return
+        db.session.execute(text(
+            "DELETE FROM wire_return_confirm WHERE id NOT IN ("
+            "  SELECT MAX(id) FROM wire_return_confirm"
+            "  GROUP BY lot_no, UPPER(TRIM(circuit_no))"
+            ")"))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        stat['errors'].append(f'补线返回确认去重失败: {e}')
+        logger.warning(f"schema_upgrade 补线返回确认去重失败: {e}")
 
 
 def upgrade_schema():
@@ -475,6 +500,9 @@ def upgrade_schema():
     # 2.6) 压高知识库索引迁移：唯一键由 (LOT,回路,端子对) 改为 (图纸管理编号,端子对)，
     #      支持同图纸跨 LOT 复用历史压高；幂等，新旧库均安全。
     _migrate_wire_label_crimp_indexes(stat)
+
+    # 2.7) 补线返回确认：同一 LOT + 回路号只允许一条，先清理历史重复（保留最新）
+    _dedupe_wire_return_confirm(stat)
 
     # 3) 索引：CREATE INDEX IF NOT EXISTS（部分索引依赖新列，放在补列之后）
     try:

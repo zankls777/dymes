@@ -6077,9 +6077,26 @@ def wire_scan_entry_data():
         # 线束明细：直接读 wire_scan_detail 文本快照；
         # 仅历史缺口（扫码时未固化）惰性实时拉取一次并补固化，新数据零 sub_list 查询
         subl, subl_by_lot = _wire_load_snapshot_map(lot_info, lot_circuit, lazy_heal=True)
+        # 补线返回确认键集合（LOT|回路号大写），供数据下载页「返回确认」列展示
+        return_confirmed = []
+        try:
+            from models.wire_return_confirm import WireReturnConfirm
+            # 分批查询，避免 IN 参数过多触发 SQLite 表达式树/参数上限
+            for i in range(0, len(lot_nos), 500):
+                chunk = lot_nos[i:i + 500]
+                confirm_rows = (WireReturnConfirm.query
+                                .filter(WireReturnConfirm.lot_no.in_(chunk))
+                                .all())
+                return_confirmed.extend(
+                    f'{(c.lot_no or "").strip()}|{(c.circuit_no or "").strip().upper()}'
+                    for c in confirm_rows
+                )
+        except Exception as ce:
+            current_app.logger.warning(f'读取补线返回确认失败(已跳过): {ce}')
         return jsonify({'success': True, 'records': [r.to_dict() for r in records],
                         'lot_info': lot_info, 'sublist': subl,
-                        'sublist_by_lot': subl_by_lot})
+                        'sublist_by_lot': subl_by_lot,
+                        'return_confirmed': return_confirmed})
     except Exception as e:
         current_app.logger.error(f'查询扫描录入列表失败: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -6173,7 +6190,6 @@ def wire_scan_entry_scan_machine():
         except ValueError as e:
             return jsonify({'success': False, 'error': str(e)}), 400
 
-        # 号机允许重复录入，不再查重
         # 合并：号机行继承同 LOT 回路行的回路号（两次扫描合并为一条完整信息）
         from models.lot_login_info import LotLoginInfo
         circuit_row = (WireScanRecord.query
@@ -6183,6 +6199,30 @@ def wire_scan_entry_scan_machine():
                                       WireScanRecord.remark == ''))
                        .order_by(WireScanRecord.id)
                        .first())
+        # 号机行唯一入库：同一 LOT + 回路号已存在号机记录时直接拦截，避免重复入库
+        circuit_up = (circuit_row.circuit_no or '').strip().upper() if circuit_row else ''
+        if circuit_up:
+            dup = (WireScanRecord.query
+                   .filter(WireScanRecord.lot_no == lot_no,
+                           WireScanRecord.machine_no.isnot(None),
+                           db.func.upper(db.func.trim(WireScanRecord.circuit_no)) == circuit_up)
+                   .order_by(WireScanRecord.id)
+                   .first())
+            if dup:
+                return jsonify({
+                    'success': False,
+                    'duplicate': True,
+                    'error': f'该 LOT {lot_no} + 回路号 {dup.circuit_no} '
+                             f'已入库（号机 {(dup.machine_no or "").split("$")[0]}），不能重复录入',
+                    'record': dup.to_dict()
+                })
+            # 真实数据已到：清理同回路历史「录入不全」占位行，避免同回路两行
+            WireScanRecord.query.filter(
+                WireScanRecord.lot_no == lot_no,
+                WireScanRecord.machine_no.is_(None),
+                db.func.upper(db.func.trim(WireScanRecord.circuit_no)) == circuit_up,
+                WireScanRecord.remark == WIRE_INCOMPLETE_REMARK
+            ).delete(synchronize_session=False)
         li_row = LotLoginInfo.query.filter_by(lot_no=lot_no).first()
         uid = session.get('user_id')
         op_name = _wire_op_name(uid)
@@ -6241,8 +6281,8 @@ def wire_scan_entry_batch_save():
     """批量保存扫描录入（回路号+号机配对后，统一提交补线数量）
 
     每项格式：{"lot_no": "...", "circuit_no": "...", "machine_no": "...", "wire_qty": 0}
-    回路行（同 LOT, machine_no=None）若已存在则更新回路号，否则新建；
-    号机行允许重复录入，每次直接新建。
+    唯一入库规则：同一 LOT + 回路号只保留一条号机记录；
+    库内已存在或批次内重复的条目直接跳过，不再新增。
     """
     if 'user_id' not in session:
         return jsonify({'success': False, 'error': '未登录'}), 401
@@ -6294,13 +6334,49 @@ def wire_scan_entry_batch_save():
         if not parsed:
             return jsonify({'success': False, 'error': '没有可保存的数据'}), 400
 
+        # 同一 LOT + 回路号只入库一次：批次内重复时保留最后一条（数量以最终填写为准）
+        deduped, seen_keys, batch_dups = [], set(), []
+        for item in reversed(parsed):
+            circuit_up = (item[1] or '').strip().upper()
+            key = (item[0], circuit_up) if circuit_up else None
+            if key and key in seen_keys:
+                batch_dups.append(f'{item[0]}/{item[1]}')
+                continue
+            if key:
+                seen_keys.add(key)
+            deduped.append(item)
+        parsed = list(reversed(deduped))
+
         # 批量预取 LOT 登录信息（品番/EO/车种别），保存时直接文本快照到每条记录
         lot_map = {}
         lot_nos = list({p[0] for p in parsed})
         for lr in LotLoginInfo.query.filter(LotLoginInfo.lot_no.in_(lot_nos)).all():
             lot_map[lr.lot_no] = {'part_no': lr.part_no, 'jx_eo': lr.jx_eo,
                                   'vehicle_type': lr.vehicle_type}
-        # 号机行允许重复录入，每次直接新建；用 bulk_insert 走 executemany，
+        # 库内已入库的 (LOT, 回路号)：重复扫描不再新增记录
+        existing_keys = set()
+        for lot_no, circuit_no in (WireScanRecord.query
+                                   .filter(WireScanRecord.lot_no.in_(lot_nos),
+                                           WireScanRecord.machine_no.isnot(None),
+                                           WireScanRecord.circuit_no.isnot(None))
+                                   .with_entities(WireScanRecord.lot_no,
+                                                  WireScanRecord.circuit_no).all()):
+            cup = (circuit_no or '').strip().upper()
+            if cup:
+                existing_keys.add((lot_no, cup))
+        skipped_dups = list(batch_dups)
+        # 本次已有真实数据的回路：删除历史「录入不全」占位行，保证同回路只保留一行
+        for lot_no in {p[0] for p in parsed}:
+            cirs = [(p[1] or '').strip().upper() for p in parsed if p[0] == lot_no and p[1]]
+            if not cirs:
+                continue
+            WireScanRecord.query.filter(
+                WireScanRecord.lot_no == lot_no,
+                WireScanRecord.machine_no.is_(None),
+                WireScanRecord.remark == WIRE_INCOMPLETE_REMARK,
+                db.func.upper(db.func.trim(WireScanRecord.circuit_no)).in_(cirs)
+            ).delete(synchronize_session=False)
+        # 号机行按 (LOT, 回路号) 唯一入库；用 bulk_insert 走 executemany，
         # 避免大批量时逐条 ORM add 带来的实例化与 flush 开销
         # 注意：bulk_insert_mappings 不触发 Python 侧 default，需显式写入 created_at
         from utils.time_utils import get_utc8_time
@@ -6308,6 +6384,13 @@ def wire_scan_entry_batch_save():
         saved_pairs = set()
         mappings = []
         for lot_no, circuit_no, machine_no, wire_qty, scan_at in parsed:
+            # 同一 LOT + 回路号已入库：跳过，保证只入库一次
+            circuit_up = (circuit_no or '').strip().upper()
+            if circuit_up and (lot_no, circuit_up) in existing_keys:
+                skipped_dups.append(f'{lot_no}/{circuit_no}')
+                continue
+            if circuit_up:
+                existing_keys.add((lot_no, circuit_up))
             li = lot_map.get(lot_no) or {}
             mappings.append({
                 'lot_no': lot_no,
@@ -6323,7 +6406,8 @@ def wire_scan_entry_batch_save():
                 'created_by': session.get('user_id'),
             })
             saved_pairs.add((lot_no, circuit_no))
-        db.session.bulk_insert_mappings(WireScanRecord, mappings)
+        if mappings:
+            db.session.bulk_insert_mappings(WireScanRecord, mappings)
         saved = len(mappings)
         # 保存即固化：涉及的每个 (LOT,回路) 确保资料文本快照存在，
         # 扫码时已固化的直接命中；缺失的此时实时拉取一次并固化（兜底保证）
@@ -6359,7 +6443,9 @@ def wire_scan_entry_batch_save():
                     current_app.logger.warning(
                         f'扫描不全自动补录失败(已跳过，主数据正常保存) {lot_no}: {fill_err}')
         db.session.commit()
-        return jsonify({'success': True, 'saved': saved, 'incomplete': incomplete})
+        return jsonify({'success': True, 'saved': saved, 'incomplete': incomplete,
+                        'skipped': len(skipped_dups),
+                        'duplicates': skipped_dups[:20]})
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f'批量保存扫描记录失败: {e}')
@@ -7139,7 +7225,7 @@ def wire_scan_entry_download():
         ws.title = '扫描录入'
         headers = ['车种别', '序号', 'EO', '品番', 'LOT/NO', '回路号',
                    '线质', '规格/颜色', '长度', '数量', '配线区分', '端子名1/2', '号机名',
-                   '压高', '备注', '操作人', '日期']
+                   '压高', '备注', '返回确认', '操作人', '日期']
         ws.append(headers)
         for c in ws[1]:
             c.font = Font(bold=True)
@@ -7148,6 +7234,18 @@ def wire_scan_entry_download():
         # 「录入不全」自动补录行统一浅红底+深红字，与页面高亮保持一致
         incomplete_fill = PatternFill('solid', fgColor='FFC7CE')
         incomplete_font = Font(color='9C0006')
+        # 返回确认集合（LOT|回路号大写），分批查询避免 IN 参数过多
+        return_confirmed_set = set()
+        try:
+            from models.wire_return_confirm import WireReturnConfirm
+            for i in range(0, len(lot_nos), 500):
+                chunk = lot_nos[i:i + 500]
+                for c in WireReturnConfirm.query.filter(
+                        WireReturnConfirm.lot_no.in_(chunk)).all():
+                    return_confirmed_set.add(
+                        f'{(c.lot_no or "").strip()}|{(c.circuit_no or "").strip().upper()}')
+        except Exception as ce:
+            current_app.logger.warning(f'导出读取补线返回确认失败(已跳过): {ce}')
         seen_lot_first = set()
         for r in records:
             li = lot_info.get(r.lot_no) or {}
@@ -7205,6 +7303,8 @@ def wire_scan_entry_download():
                     (dtl['length_cut2'] or '') if dtl else '',
                     r.wire_qty if r.machine_no else '', div_type, tml, machine, crimp or '',
                     ' '.join(note_parts),
+                    '已返回' if f'{r.lot_no.strip()}|{(r.circuit_no or "").strip().upper()}'
+                    in return_confirmed_set else '未返回',
                     r.created_by_name or '',
                     r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else ''
                 ])
@@ -7303,6 +7403,23 @@ def wire_scan_entry_update():
                 rec.wire_qty = val
                 changed.append('wire_qty')
 
+        # 唯一性校验：同一 LOT + 回路号只允许一条号机记录
+        if ('lot_no' in changed or 'circuit_no' in changed) and rec.machine_no \
+                and (rec.circuit_no or '').strip():
+            circuit_up = rec.circuit_no.strip().upper()
+            dup = (WireScanRecord.query
+                   .filter(WireScanRecord.id != rec.id,
+                           WireScanRecord.lot_no == rec.lot_no,
+                           WireScanRecord.machine_no.isnot(None),
+                           db.func.upper(db.func.trim(WireScanRecord.circuit_no)) == circuit_up)
+                   .first())
+            if dup:
+                db.session.rollback()
+                return jsonify({
+                    'success': False,
+                    'error': f'该 LOT + 回路号 {rec.circuit_no} 已存在其他记录，不能重复入库'
+                }), 400
+
         # 「录入不全」自动补录行补齐号机后，说明该回路已录入完整，清除备注标记
         if rec.machine_no and (rec.remark or '').strip() == WIRE_INCOMPLETE_REMARK:
             rec.remark = None
@@ -7336,6 +7453,229 @@ def wire_data_download():
     if not check_permission(session.get('user_id'), 'can_wire_data_download'):
         return render_template('error.html', error_code=403, error_message='访问被拒绝'), 403
     return render_template('wire_data_download.html')
+
+
+# ========================================================================
+# 补线返回确认：扫描传票(LOT+两位数+回路号) → 与数据下载数据比对 → 确认返回
+# ========================================================================
+def _parse_wire_return_content(content):
+    """解析传票扫描内容：LOT(固定长度) + 两位数 + 回路号，示例 Q817A03Q01RS122。"""
+    content = str(content or '').strip()
+    if len(content) < WIRE_LOT_LEN + 3:
+        raise ValueError(f'内容过短：应包含 LOT({WIRE_LOT_LEN}位)+两位数+回路号')
+    lot_no = content[:WIRE_LOT_LEN]
+    tail = content[WIRE_LOT_LEN:]
+    if not tail[:2].isdigit():
+        raise ValueError(f'格式错误：LOT后应为两位数，实际为 {tail[:2]}')
+    circuit_no = tail[2:].strip()
+    if not circuit_no:
+        raise ValueError('回路号为空')
+    return lot_no, circuit_no
+
+
+def _wire_return_match(lot_no, circuit_no):
+    """按 LOT + 回路号与「数据下载」页数据比对。
+
+    返回 (matched, lot_info, records, details)：
+    - matched：同 LOT 下存在该回路的号机行（或录入不全占位行）时为 True；
+    - records：匹配到的扫描记录（号机、数量、备注、时间）；
+    - details：该回路已固化的线束明细快照（端子/线质/规格/颜色等）。
+    """
+    from models.wire_scan_record import WireScanRecord
+    lot = (lot_no or '').strip()
+    circ_up = (circuit_no or '').strip().upper()
+    if not lot or not circ_up:
+        return False, {}, [], []
+    rows = (WireScanRecord.query
+            .filter(WireScanRecord.lot_no == lot)
+            .order_by(WireScanRecord.id)
+            .all())
+    matched_rows = [
+        r for r in rows
+        if (r.circuit_no or '').strip().upper() == circ_up
+        and (r.machine_no or WIRE_INCOMPLETE_REMARK in (r.remark or ''))
+    ]
+    lot_info = _wire_build_lot_info(rows, [lot]) if rows else {}
+    details = []
+    if matched_rows:
+        _, subl_by_lot = _wire_load_snapshot_map(
+            lot_info, {lot: {circuit_no.strip()}}, lazy_heal=True)
+        # 按 LOT|回路 稳定键取数（与品番/EO 无关）
+        details = list(subl_by_lot.get(f'{lot}|{circ_up}') or [])
+    return bool(matched_rows), lot_info.get(lot) or {}, matched_rows, details
+
+
+@main_bp.route('/wire/return_confirm')
+@login_required
+def wire_return_confirm():
+    """补线打端子 - 补线返回确认页面"""
+    if 'user_id' not in session:
+        return redirect(url_for('main.login', next=request.url))
+    if not check_permission(session.get('user_id'), 'can_wire_return_confirm'):
+        return render_template('error.html', error_code=403, error_message='访问被拒绝'), 403
+    return render_template('wire_return_confirm.html')
+
+
+@main_bp.route('/wire/return_confirm/scan', methods=['POST'])
+@login_required
+def wire_return_confirm_scan():
+    """扫描传票或手动输入 LOT+回路号，与数据下载数据比对并返回相关信息。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    # 只做比对展示，不写库：页面访问权限即可
+    if not check_permission(session.get('user_id'), 'can_wire_return_confirm'):
+        return jsonify({'success': False, 'error': '无权限操作'}), 403
+    try:
+        data = request.get_json(silent=True) or {}
+        content = str(data.get('content') or '').strip()
+        lot_no = str(data.get('lot_no') or '').strip()
+        circuit_no = str(data.get('circuit_no') or '').strip()
+        if content:
+            try:
+                lot_no, circuit_no = _parse_wire_return_content(content)
+            except ValueError as e:
+                return jsonify({'success': False, 'error': str(e)}), 400
+        if not lot_no or not circuit_no:
+            return jsonify({'success': False, 'error': 'LOT和回路号不能为空'}), 400
+
+        matched, lot_info, rows, details = _wire_return_match(lot_no, circuit_no)
+        # 是否已确认过（同 LOT+回路号只保留一条）
+        from models.wire_return_confirm import WireReturnConfirm
+        confirmed = (WireReturnConfirm.query
+                     .filter(WireReturnConfirm.lot_no == lot_no,
+                             db.func.upper(WireReturnConfirm.circuit_no) == circuit_no.upper())
+                     .first())
+        return jsonify({
+            'success': True,
+            'lot_no': lot_no,
+            'circuit_no': circuit_no,
+            'matched': matched,
+            'lot_info': lot_info,
+            'records': [r.to_dict() for r in rows],
+            'details': details,
+            'confirmed': confirmed.to_dict() if confirmed else None,
+        })
+    except Exception as e:
+        current_app.logger.error(f'补线返回确认扫描失败: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/wire/return_confirm/save', methods=['POST'])
+@login_required
+def wire_return_confirm_save():
+    """保存返回确认：比对数据下载数据后写入（数量选填，重复确认则更新）。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_wire_return_confirm_submit'):
+        return jsonify({'success': False, 'error': '无权限操作'}), 403
+    try:
+        from models.wire_return_confirm import WireReturnConfirm
+        from sqlalchemy.exc import IntegrityError
+        data = request.get_json(silent=True) or {}
+        lot_no = str(data.get('lot_no') or '').strip()
+        circuit_no = str(data.get('circuit_no') or '').strip()
+        if not lot_no or not circuit_no:
+            return jsonify({'success': False, 'error': 'LOT和回路号不能为空'}), 400
+        # 数量选填：留空为 None；填写时必须是大于 0 的整数
+        qty_raw = data.get('wire_qty')
+        qty = None
+        if qty_raw is not None and str(qty_raw).strip() != '':
+            try:
+                qty = int(str(qty_raw).replace(',', '').strip())
+            except (ValueError, TypeError):
+                return jsonify({'success': False, 'error': '数量格式错误'}), 400
+            if qty <= 0:
+                return jsonify({'success': False, 'error': '数量必须大于0'}), 400
+
+        matched, _, _, _ = _wire_return_match(lot_no, circuit_no)
+        uid = session.get('user_id')
+        op_name = _wire_op_name(uid)
+        rec = (WireReturnConfirm.query
+               .filter(WireReturnConfirm.lot_no == lot_no,
+                       db.func.upper(WireReturnConfirm.circuit_no) == circuit_no.upper())
+               .first())
+        updated = bool(rec)
+        if rec:
+            rec.circuit_no = circuit_no
+            rec.wire_qty = qty
+            rec.matched = matched
+            if op_name:
+                rec.created_by_name = op_name
+        else:
+            rec = WireReturnConfirm(lot_no=lot_no, circuit_no=circuit_no,
+                                    wire_qty=qty, matched=matched,
+                                    created_by=uid, created_by_name=op_name)
+            db.session.add(rec)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            # 并发保存触发唯一键(LOT+回路号)：改为更新已存在记录，保证只入库一次
+            db.session.rollback()
+            rec = (WireReturnConfirm.query
+                   .filter(WireReturnConfirm.lot_no == lot_no,
+                           db.func.upper(WireReturnConfirm.circuit_no) == circuit_no.upper())
+                   .first())
+            if not rec:
+                raise
+            rec.wire_qty = qty
+            rec.matched = matched
+            if op_name:
+                rec.created_by_name = op_name
+            db.session.commit()
+            updated = True
+        return jsonify({'success': True, 'updated': updated, 'matched': matched,
+                        'message': '已更新返回确认' if updated else '返回确认已保存',
+                        'record': rec.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'补线返回确认保存失败: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/wire/return_confirm/data')
+@login_required
+def wire_return_confirm_data():
+    """补线返回确认列表（按确认顺序倒序，默认最近500条）。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_wire_return_confirm'):
+        return jsonify({'success': False, 'error': '无权限访问'}), 403
+    try:
+        from models.wire_return_confirm import WireReturnConfirm
+        q = WireReturnConfirm.query
+        kw = (request.args.get('q') or '').strip()
+        if kw:
+            like = f'%{kw}%'
+            q = q.filter(db.or_(WireReturnConfirm.lot_no.ilike(like),
+                                WireReturnConfirm.circuit_no.ilike(like)))
+        records = q.order_by(WireReturnConfirm.id.desc()).limit(500).all()
+        return jsonify({'success': True, 'records': [r.to_dict() for r in records]})
+    except Exception as e:
+        current_app.logger.error(f'查询补线返回确认失败: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/wire/return_confirm/delete', methods=['POST'])
+@login_required
+def wire_return_confirm_delete():
+    """删除补线返回确认记录。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_wire_return_confirm_submit'):
+        return jsonify({'success': False, 'error': '无权限操作'}), 403
+    try:
+        from models.wire_return_confirm import WireReturnConfirm
+        data = request.get_json(silent=True) or {}
+        rec = db.session.get(WireReturnConfirm, data.get('id'))
+        if not rec:
+            return jsonify({'success': False, 'error': '记录不存在'}), 404
+        db.session.delete(rec)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'删除补线返回确认失败: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @main_bp.route('/test_sheet')

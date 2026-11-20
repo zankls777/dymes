@@ -12,8 +12,8 @@ $root       = Split-Path -Parent $MyInvocation.MyCommand.Path
 $sdk        = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $env:LOCALAPPDATA 'Android\sdk' }
 $buildTools = Join-Path $sdk 'build-tools\35.0.0'
 $androidJar = Join-Path $sdk 'platforms\android-34\android.jar'
-$versionCode = 5
-$versionName = '1.2.0'
+$versionCode = 8
+$versionName = '1.5.0'
 
 if (-not $env:JAVA_HOME) { $env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot' }
 if (-not (Test-Path (Join-Path $env:JAVA_HOME 'bin\javac.exe'))) { throw 'javac not found, set JAVA_HOME' }
@@ -35,6 +35,11 @@ New-Item -ItemType Directory -Force -Path $out, "$out\gen", "$out\classes", "$ou
 # ---------- generate launcher icons + splash image from assets ----------
 Write-Host '[0/6] generate icons and splash'
 Add-Type -AssemblyName System.Drawing
+
+# 通用扫码桥：与 Web 工程共用同一份源码，构建时同步进 APK assets
+$bridgeSrc = Join-Path (Split-Path -Parent $root) 'static\js\pda_bridge.js'
+if (-not (Test-Path $bridgeSrc)) { throw "missing $bridgeSrc" }
+Copy-Item $bridgeSrc (Join-Path $assets 'pda_bridge.js') -Force
 
 $logoFile = Join-Path $assets 'logo.png'
 if (-not (Test-Path $logoFile)) { throw "missing assets\logo.png" }
@@ -102,6 +107,8 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [System.IO.Compression.ZipFile]::Open("$out\app-unsigned.apk", 'Update')
 [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
     $zip, "$out\dex\classes.dex", 'classes.dex', [System.IO.Compression.CompressionLevel]::NoCompression) | Out-Null
+[System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+    $zip, (Join-Path $assets 'pda_bridge.js'), 'assets/pda_bridge.js', [System.IO.Compression.CompressionLevel]::NoCompression) | Out-Null
 $zip.Dispose()
 & "$buildTools\zipalign.exe" -f 4 "$out\app-unsigned.apk" "$out\app-aligned.apk"
 if ($LASTEXITCODE -ne 0) { throw 'zipalign failed' }

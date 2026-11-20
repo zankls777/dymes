@@ -141,6 +141,10 @@ class PermissionInfo(db.Model):
     can_wire_data_download_edit = db.Column(db.Boolean, default=False)
     can_wire_data_download_delete = db.Column(db.Boolean, default=False)
 
+    # 补线打端子 - 补线返回确认
+    can_wire_return_confirm = db.Column(db.Boolean, default=False)          # 页面访问
+    can_wire_return_confirm_submit = db.Column(db.Boolean, default=False)   # 扫描确认/删除
+
     # 资材入库 - 页面访问权限
     can_material_inbound_daily = db.Column(db.Boolean, default=False)   # 资材每日入库
     can_material_inbound = db.Column(db.Boolean, default=False)         # 资材入库
@@ -311,6 +315,9 @@ class PermissionInfo(db.Model):
             'can_wire_data_download_download': self.can_wire_data_download_download,
             'can_wire_data_download_edit': self.can_wire_data_download_edit,
             'can_wire_data_download_delete': self.can_wire_data_download_delete,
+            # 补线返回确认权限
+            'can_wire_return_confirm': self.can_wire_return_confirm,
+            'can_wire_return_confirm_submit': self.can_wire_return_confirm_submit,
             # 资材入库权限
             'can_material_inbound_daily': self.can_material_inbound_daily,
             'can_material_inbound': self.can_material_inbound,

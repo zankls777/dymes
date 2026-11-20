@@ -35,6 +35,7 @@ MODULES = [
     ('wire_scan_entry', '补线打端子 - 扫描录入', 200),
     ('wire_crimp_login', '补线打端子 - 压高登陆', 205),
     ('wire_data_download', '补线打端子 - 数据下载', 210),
+    ('wire_return_confirm', '补线打端子 - 补线返回确认', 215),
     ('material_inbound_daily', '资材每日入库', 220),
     ('material_inbound', '资材入库', 230),
     ('inventory_login', '盘点数据登录', 240),
@@ -193,6 +194,10 @@ PERMISSION_CATALOG = [
     _p('can_wire_data_download_download', '下载', 'wire_data_download', 'action', 30),
     _p('can_wire_data_download_edit', '编辑', 'wire_data_download', 'action', 40),
     _p('can_wire_data_download_delete', '删除', 'wire_data_download', 'action', 50),
+
+    # ---------- 补线打端子 - 补线返回确认 ----------
+    _p('can_wire_return_confirm', '补线返回确认页面访问', 'wire_return_confirm', 'page', 10),
+    _p('can_wire_return_confirm_submit', '扫描确认/删除', 'wire_return_confirm', 'action', 20),
 
     # ---------- 资材每日入库 ----------
     _p('can_material_inbound_daily', '每日入库页面访问', 'material_inbound_daily', 'page', 10),

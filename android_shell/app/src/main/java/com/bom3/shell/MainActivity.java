@@ -16,8 +16,11 @@ import android.os.Environment;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
+import android.graphics.Color;
 import android.text.InputType;
 import android.util.Log;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -34,7 +37,12 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 
 import org.json.JSONObject;
 
@@ -84,6 +92,7 @@ public class MainActivity extends Activity {
     private boolean receiverRegistered = false;
     private String lastCode = "";                // 原生侧去重，避免广播+Activity 双通道重复
     private long lastCodeAt = 0;
+    private String bridgeJs;                     // 打包进 assets 的通用扫码桥脚本
 
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override
@@ -104,8 +113,16 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);   // 仓库作业时别熄屏
 
         FrameLayout root = new FrameLayout(this);
+
+        // 垂直容器：上方 WebView（占满剩余空间）+ 下方 4 个自定义快捷入口 + 刷新
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
         webView = new WebView(this);
-        root.addView(webView, new FrameLayout.LayoutParams(
+        container.addView(webView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        container.addView(buildShortcutBar(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
+        root.addView(container, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
 
@@ -140,6 +157,7 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
                 hideSplash();
+                injectBridge(view);                 // 每页注入通用扫码桥，服务端未更新也能用
                 if (pendingCode != null) {          // 补发加载期间扫到的条码
                     String code = pendingCode;
                     pendingCode = null;
@@ -339,6 +357,57 @@ public class MainActivity extends Activity {
 
     // ---------------- 扫码注入 ----------------
 
+    /** 每个页面加载完成后注入通用扫码桥（assets/pda_bridge.js） */
+    private void injectBridge(WebView view) {
+        final String js = loadBridgeJs();
+        if (js.isEmpty()) {
+            return;
+        }
+        view.post(new Runnable() {
+            @Override
+            public void run() {
+                if (webView == null) {
+                    return;
+                }
+                webView.evaluateJavascript(js + "\n;'pda-bridge'", new ValueCallback<String>() {
+                    @Override
+                    public void onReceiveValue(String s) {
+                        Log.i(TAG, "bridge injected => " + s);
+                    }
+                });
+            }
+        });
+    }
+
+    /** 读取打包进 assets 的扫码桥脚本，只读一次并缓存 */
+    private String loadBridgeJs() {
+        if (bridgeJs != null) {
+            return bridgeJs;
+        }
+        InputStream in = null;
+        try {
+            in = getAssets().open("pda_bridge.js");
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+            }
+            bridgeJs = out.toString("UTF-8");
+        } catch (Exception e) {
+            Log.w(TAG, "asset pda_bridge.js missing: " + e.getMessage());
+            bridgeJs = "";
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return bridgeJs;
+    }
+
     /** 把条码注入网页；页面未就绪时先缓存 */
     private void deliver(String code) {
         if (code == null) {
@@ -373,16 +442,46 @@ public class MainActivity extends Activity {
         webView.post(new Runnable() {
             @Override
             public void run() {
-                String js = "window.__bomPdaScan?window.__bomPdaScan("
-                        + JSONObject.quote(value) + "):'missing';";
-                webView.evaluateJavascript(js, new ValueCallback<String>() {
+                webView.evaluateJavascript(buildInjectJs(value), new ValueCallback<String>() {
                     @Override
                     public void onReceiveValue(String s) {
+                        // s 形如 "bridge" / "dom" / "no-input"，用于现场快速判断注入落点
                         Log.i(TAG, "js inject " + value + " => " + s);
+                        if (s != null && s.contains("no-input")) {
+                            Toast.makeText(MainActivity.this,
+                                    "当前页面没有扫码输入框，请先打开「资材入库」页",
+                                    Toast.LENGTH_LONG).show();
+                        }
                     }
                 });
             }
         });
+    }
+
+    /**
+     * 生成注入脚本：优先调用网页桥 window.__bomPdaScan；
+     * 老版本页面没有该桥时，直接写 DOM 并派发 input / Enter 事件触发现有查询逻辑；
+     * 输入框还没渲染出来则每 250ms 重试，最多 5 秒。
+     */
+    private String buildInjectJs(String value) {
+        return "(function(){"
+                + "var v=" + JSONObject.quote(value) + ";"
+                + "function fire(el,t){try{el.dispatchEvent(new Event(t,{bubbles:true}));}"
+                + "catch(e){try{var ev=document.createEvent('Event');ev.initEvent(t,true,true);el.dispatchEvent(ev);}catch(e2){}}}"
+                + "function fill(){"
+                + "if(window.__bomPdaScan){try{window.__bomPdaScan(v);}catch(e){}return 'bridge';}"
+                + "var el=document.getElementById('scanInput');"
+                + "if(!el){return 'no-input';}"
+                + "el.value=v;"
+                + "fire(el,'input');"
+                + "fire(el,'change');"
+                + "try{el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,which:13,bubbles:true}));}catch(e){}"
+                + "var b=document.getElementById('btnQuery');if(b){try{b.click();}catch(e){}}"
+                + "return 'dom';}"
+                + "var r=fill();"
+                + "if(r==='no-input'){var n=0,t=setInterval(function(){n++;var x=fill();"
+                + "if(x!=='no-input'||n>=20){clearInterval(t);}},250);}"
+                + "return r;})()";
     }
 
     /** 短震动 50ms，现场提示壳收到扫码 */
@@ -481,6 +580,180 @@ public class MainActivity extends Activity {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_URL, url).apply();
         pageReady = false;
         webView.loadUrl(url);
+    }
+
+    // ---------------- 底部快捷入口（4 个自定义 + 刷新） ----------------
+
+    /** 4 个快捷入口的默认名称与路径，长按按钮即可自行修改 */
+    private static final String[][] DEFAULT_SLOTS = {
+            {"首页", "/"},
+            {"资材入库", "/material/inbound"},
+            {"线束扫描", "/wire/scan_entry"},
+            {"数据下载", "/wire/data_download"}
+    };
+
+    /** 底部快捷按钮的文本控件（用于改完配置后刷新显示） */
+    private final TextView[] slotViews = new TextView[4];
+
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /** 构建底部按钮栏：4 个自定义入口 + 刷新 */
+    private LinearLayout buildShortcutBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setBackgroundColor(Color.parseColor("#1565C0"));
+
+        for (int i = 0; i < 4; i++) {
+            final int idx = i;
+            TextView tv = new TextView(this);
+            tv.setGravity(Gravity.CENTER);
+            tv.setTextColor(Color.WHITE);
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            tv.setSingleLine(true);
+            tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            tv.setPadding(dp(2), 0, dp(2), 0);
+            tv.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    openSlot(idx);          // 单击：跳转
+                }
+            });
+            tv.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View v) {
+                    editSlot(idx);          // 长按：修改名称与路径
+                    return true;
+                }
+            });
+            slotViews[i] = tv;
+            bar.addView(tv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            bar.addView(buildDivider());
+        }
+
+        // 刷新按钮（长按可修改服务器地址）
+        TextView refresh = new TextView(this);
+        refresh.setText("刷新");
+        refresh.setGravity(Gravity.CENTER);
+        refresh.setTextColor(Color.WHITE);
+        refresh.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (webView != null) {
+                    pageReady = false;
+                    webView.reload();
+                }
+            }
+        });
+        refresh.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                askServerUrl(false);        // 长按：改服务器地址
+                return true;
+            }
+        });
+        bar.addView(refresh, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        refreshSlotLabels();
+        return bar;
+    }
+
+    private View buildDivider() {
+        View div = new View(this);
+        div.setBackgroundColor(Color.parseColor("#42A5F5"));
+        div.setLayoutParams(new LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT));
+        return div;
+    }
+
+    private void refreshSlotLabels() {
+        for (int i = 0; i < slotViews.length; i++) {
+            if (slotViews[i] != null) {
+                slotViews[i].setText(slotValue(i, "_name", DEFAULT_SLOTS[i][0]));
+            }
+        }
+    }
+
+    /** 读取快捷入口配置；suffix 为 _name 或 _path */
+    private String slotValue(int index, String suffix, String fallback) {
+        String v = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("slot" + index + suffix, null);
+        return (v == null || v.trim().isEmpty()) ? fallback : v;
+    }
+
+    /** 单击快捷入口：站内路径拼到服务器地址上加载 */
+    private void openSlot(int index) {
+        String path = slotValue(index, "_path", DEFAULT_SLOTS[index][1]);
+        String target = resolveTarget(path);
+        if (target.isEmpty()) {
+            Toast.makeText(this, "该快捷入口未配置路径，长按可编辑", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (webView != null) {
+            pageReady = false;
+            webView.loadUrl(target);
+        }
+    }
+
+    /** 相对路径补成完整地址；已是 http(s) 开头则原样使用 */
+    private String resolveTarget(String path) {
+        String p = path == null ? "" : path.trim();
+        if (p.isEmpty()) {
+            return "";
+        }
+        if (p.startsWith("http://") || p.startsWith("https://")) {
+            return p;
+        }
+        String base = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_URL, DEFAULT_URL);
+        while (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        if (!p.startsWith("/")) {
+            p = "/" + p;
+        }
+        return base + p;
+    }
+
+    /** 长按快捷入口：编辑名称与路径 */
+    private void editSlot(final int index) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(8), dp(16), 0);
+
+        final EditText nameInput = new EditText(this);
+        nameInput.setHint("按钮名称，如：线束扫描");
+        nameInput.setText(slotValue(index, "_name", DEFAULT_SLOTS[index][0]));
+
+        final EditText pathInput = new EditText(this);
+        pathInput.setHint("页面路径，如：/wire/scan_entry");
+        pathInput.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
+        pathInput.setText(slotValue(index, "_path", DEFAULT_SLOTS[index][1]));
+
+        box.addView(nameInput);
+        box.addView(pathInput);
+
+        new AlertDialog.Builder(this)
+                .setTitle("编辑快捷入口 " + (index + 1))
+                .setView(box)
+                .setPositiveButton("保存", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        String name = nameInput.getText().toString().trim();
+                        String path = pathInput.getText().toString().trim();
+                        if (name.isEmpty()) {
+                            name = DEFAULT_SLOTS[index][0];
+                        }
+                        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                                .putString("slot" + index + "_name", name)
+                                .putString("slot" + index + "_path", path)
+                                .apply();
+                        refreshSlotLabels();
+                        Toast.makeText(MainActivity.this, "已保存，单击即可跳转", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     /** 站内链接留在 WebView，其它协议（tel/mailto 等）交给系统 */

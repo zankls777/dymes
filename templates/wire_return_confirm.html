@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>补线返回确认 - 大焱资料管理系统</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .card { margin-bottom: 20px; }
+        .scan-input {
+            font-size: 1.15rem;
+            letter-spacing: 1px;
+            height: 48px;
+        }
+        .scan-tip { font-size: .85rem; color: #6c757d; }
+        .qty-input { max-width: 160px; }
+        .table th { background-color: #f8f9fa; white-space: nowrap; }
+        .table td { vertical-align: middle; }
+        #detailWrap { max-height: 40vh; overflow: auto; }
+        #detailTable th {
+            position: sticky; top: 0; z-index: 1;
+            background-color: #f8f9fa; white-space: nowrap;
+        }
+        #resultPanel { display: none; }
+        .toast-container { z-index: 1090; }
+        @media (max-width: 767.98px) {
+            .container-fluid { padding-left: 10px; padding-right: 10px; }
+            .card { margin-bottom: 12px; }
+            .card-body { padding: .75rem; }
+            .scan-input { height: 52px; font-size: 1.05rem; }
+            .btn-lg { min-height: 48px; font-size: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    {% set permissions = session.get('user_permissions', {}) %}
+    {% set can_submit = session.get('is_admin') or permissions.get('can_wire_return_confirm_submit') %}
+
+    <div class="container-fluid mt-4">
+        <!-- ============ 传票扫描确认 ============ -->
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+                <h5 class="card-title mb-0 small"><i class="fa fa-barcode me-2"></i>传票扫描 / 返回确认</h5>
+                <span class="badge bg-light text-dark small d-none d-md-inline">
+                    扫描传票自动带出 LOT + 回路号，与数据下载数据比对
+                </span>
+            </div>
+            <div class="card-body py-3">
+                <div class="row g-2 align-items-end">
+                    <div class="col-lg-8">
+                        <label for="scanInput" class="form-label small mb-1">传票扫描（回车自动带入 LOT 与回路号并查询）</label>
+                        <input type="text" class="form-control scan-input" id="scanInput"
+                               data-pda-target="1" placeholder="扫描传票条码，自动识别 LOT + 回路号"
+                               autocomplete="off">
+                    </div>
+                    <div class="col-lg-4 d-flex gap-2">
+                        {% if can_submit %}
+                        <button class="btn btn-success btn-lg flex-fill" id="confirmBtn" type="button">
+                            <i class="fa fa-check me-1"></i>确认返回
+                        </button>
+                        {% endif %}
+                        <button class="btn btn-outline-secondary btn-lg" id="resetBtn" type="button">
+                            <i class="fa fa-eraser me-1"></i>清空
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 备用手输方式：LOT / 回路号（扫描之外的另一种录入方式） -->
+                <div class="mt-2">
+                    <button class="btn btn-link btn-sm p-0 text-decoration-none" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#manualEntry" aria-expanded="false">
+                        <i class="fa fa-keyboard-o me-1"></i>备用手输方式（LOT / 回路号）
+                    </button>
+                    <div class="collapse mt-2" id="manualEntry">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-lg-3 col-6">
+                                <label for="lotNo" class="form-label small mb-1">LOT</label>
+                                <input type="text" class="form-control" id="lotNo" autocomplete="off">
+                            </div>
+                            <div class="col-lg-3 col-6">
+                                <label for="circuitNo" class="form-label small mb-1">回路号</label>
+                                <input type="text" class="form-control" id="circuitNo" autocomplete="off">
+                            </div>
+                            <div class="col-lg-2 col-6">
+                                <label for="wireQty" class="form-label small mb-1">数量<span class="text-muted">(选填)</span></label>
+                                <input type="number" class="form-control pda-ignore" id="wireQty" min="1" placeholder="选填">
+                            </div>
+                            <div class="col-lg-2 col-6">
+                                <button class="btn btn-outline-primary w-100" id="matchBtn" type="button">
+                                    <i class="fa fa-search me-1"></i>查询匹配
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="scan-tip mt-2">
+                    扫描传票后回车：自动识别 LOT 与回路号并查询比对；数据下载中有一致数据即拉出相关信息，无数据时仅保存 LOT、回路号和数量(选填)。
+                </div>
+            </div>
+        </div>
+
+        <!-- ============ 比对结果 ============ -->
+        <div class="card" id="resultPanel">
+            <div class="card-header bg-info text-white py-2">
+                <h5 class="card-title mb-0 small"><i class="fa fa-info-circle me-2"></i>比对结果</h5>
+            </div>
+            <div class="card-body">
+                <div id="matchState" class="alert py-2 small mb-3"></div>
+                <div class="row g-2 mb-3" id="lotInfoRow"></div>
+
+                <h6 class="small text-muted mb-2"><i class="fa fa-list me-1"></i>扫描录入记录（同号机已合并）</h6>
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm table-bordered table-hover mb-0" id="recordTable">
+                        <thead>
+                            <tr><th>号机</th><th>补线数量</th><th>备注</th><th>操作人</th><th>录入时间</th></tr>
+                        </thead>
+                        <tbody id="recordTbody"></tbody>
+                    </table>
+                </div>
+
+                <h6 class="small text-muted mb-2"><i class="fa fa-plug me-1"></i>线束明细</h6>
+                <div class="table-responsive" id="detailWrap">
+                    <table class="table table-sm table-bordered table-hover mb-0" id="detailTable">
+                        <thead>
+                            <tr><th>序号</th><th>回路号</th><th>线质</th><th>规格</th><th>颜色</th>
+                                <th>长度</th><th>端子1</th><th>端子2</th><th>压高</th></tr>
+                        </thead>
+                        <tbody id="detailTbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============ 返回确认记录 ============ -->
+        <div class="card">
+            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+                <h5 class="card-title mb-0 small"><i class="fa fa-check-square-o me-2"></i>返回确认记录
+                    <span class="badge bg-light text-dark ms-1" id="listCount">0</span>
+                </h5>
+                <div class="d-flex gap-2">
+                    <input type="text" class="form-control form-control-sm pda-ignore" id="searchInput"
+                           placeholder="LOT / 回路号" style="width:160px;">
+                    <button class="btn btn-sm btn-light" id="refreshBtn" type="button">
+                        <i class="fa fa-refresh"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered table-hover mb-0">
+                        <thead>
+                            <tr><th>LOT</th><th>回路号</th><th>数量</th><th>比对结果</th>
+                                <th>确认人</th><th>确认时间</th><th style="width:70px;">操作</th></tr>
+                        </thead>
+                        <tbody id="listTbody">
+                            <tr><td colspan="7" class="text-center text-muted py-3">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ Toast ============ -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div class="toast align-items-center text-white border-0" id="appToast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body" id="toastBody"></div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+    <script>
+        (function() {
+            const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+            const canSubmit = {{ 'true' if can_submit else 'false' }};
+
+            const scanInput = document.getElementById('scanInput');
+            const lotNo = document.getElementById('lotNo');
+            const circuitNo = document.getElementById('circuitNo');
+            const wireQty = document.getElementById('wireQty');
+            const resultPanel = document.getElementById('resultPanel');
+            const matchState = document.getElementById('matchState');
+            const lotInfoRow = document.getElementById('lotInfoRow');
+            const recordTbody = document.getElementById('recordTbody');
+            const detailTbody = document.getElementById('detailTbody');
+            const listTbody = document.getElementById('listTbody');
+            const listCount = document.getElementById('listCount');
+
+            const toastEl = document.getElementById('appToast');
+            const toastBody = document.getElementById('toastBody');
+            const toast = new bootstrap.Toast(toastEl, { delay: 3000 });
+
+            function showToast(msg, type) {
+                toastBody.textContent = msg;
+                toastEl.className = 'toast align-items-center text-white border-0 bg-' +
+                    (type === 'error' ? 'danger' : type === 'warn' ? 'warning text-dark' : 'success');
+                toast.show();
+            }
+
+            function esc(s) {
+                return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+                    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                }[c]));
+            }
+
+            // ---- 传票内容本地解析：LOT(8位) + 两位数 + 回路号，扫描后立即带入 ----
+            function parseTicket(txt) {
+                txt = String(txt || '').trim();
+                if (txt.length < 11) return null;
+                const lot = txt.slice(0, 8);
+                const tail = txt.slice(8);
+                if (!/^\d{2}$/.test(tail.slice(0, 2))) return null;
+                const circ = tail.slice(2).trim();
+                if (!circ) return null;
+                return { lot_no: lot, circuit_no: circ };
+            }
+
+            // ---- 查询匹配：传票内容优先，否则用输入的 LOT + 回路号 ----
+            async function doMatch(autoConfirm) {
+                const content = scanInput.value.trim();
+                let payload;
+                if (content) {
+                    // 扫描后先本地识别并带入 LOT / 回路号，再请求比对
+                    const parsed = parseTicket(content);
+                    if (parsed) {
+                        lotNo.value = parsed.lot_no;
+                        circuitNo.value = parsed.circuit_no;
+                        payload = parsed;
+                    } else {
+                        payload = { content: content };   // 交服务端校验并返回具体错误
+                    }
+                } else {
+                    payload = { lot_no: lotNo.value.trim(), circuit_no: circuitNo.value.trim() };
+                }
+                if (!payload.content && (!payload.lot_no || !payload.circuit_no)) {
+                    showToast('请扫描传票或输入 LOT 和回路号', 'warn');
+                    return;
+                }
+                try {
+                    const resp = await fetch('/wire/return_confirm/scan', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await resp.json();
+                    if (!data.success) {
+                        showToast(data.error || '查询失败', 'error');
+                        scanInput.focus();   // 识别失败也回到扫描框，便于重扫
+                        return;
+                    }
+                    lotNo.value = data.lot_no;
+                    circuitNo.value = data.circuit_no;
+                    scanInput.value = '';
+                    renderResult(data);
+                    // 扫描完成（识别并查询结束）后光标回到扫描框，方便连续扫描
+                    scanInput.focus();
+                    // 扫描触发的查询：查询成功后自动确认返回，无需手动点击
+                    if (autoConfirm && canSubmit) {
+                        await doConfirm(true);
+                    }
+                } catch (e) {
+                    showToast('网络错误，查询失败', 'error');
+                }
+            }
+
+            function renderResult(data) {
+                resultPanel.style.display = 'block';
+                const li = data.lot_info || {};
+                // 比对状态条
+                if (data.matched) {
+                    matchState.className = 'alert alert-success py-2 small mb-3';
+                    matchState.innerHTML = '<i class="fa fa-check-circle me-1"></i>数据下载中找到一致数据，已拉出相关信息';
+                } else {
+                    matchState.className = 'alert alert-warning py-2 small mb-3';
+                    matchState.innerHTML = '<i class="fa fa-exclamation-triangle me-1"></i>' +
+                        '数据下载中未找到该 LOT + 回路号，仅保存 LOT、回路号和数量(选填)';
+                }
+                // LOT 关联信息
+                lotInfoRow.innerHTML = [
+                    ['LOT', data.lot_no], ['回路号', data.circuit_no],
+                    ['品番', li.part_no || '-'], ['EO', li.jx_eo || '-'],
+                    ['车种别', li.vehicle_type || '-']
+                ].map(([k, v]) =>
+                    `<div class="col-6 col-md-2"><div class="small text-muted">${k}</div>
+                     <div class="fw-bold text-truncate">${esc(v || '-')}</div></div>`
+                ).join('');
+                // 扫描记录：同一号机可能多次补线录入，按号机合并只显示一行（数量累加，取最近操作人与时间）
+                if ((data.records || []).length) {
+                    const grouped = new Map();
+                    data.records.forEach(r => {
+                        const machine = (r.machine_no || '').split('$')[0] || '-';
+                        const qty = Number(r.wire_qty) || 0;
+                        const prev = grouped.get(machine);
+                        if (prev) {
+                            prev.qty += qty;
+                            prev.operator = r.created_by_name || prev.operator;
+                            prev.time = r.created_at || prev.time;
+                            prev.remark = r.remark || prev.remark;
+                        } else {
+                            grouped.set(machine, {
+                                machine, qty,
+                                operator: r.created_by_name || '',
+                                time: r.created_at || '',
+                                remark: r.remark || ''
+                            });
+                        }
+                    });
+                    recordTbody.innerHTML = [...grouped.values()].map(g => `<tr>
+                        <td>${esc(g.machine)}</td>
+                        <td>${esc(g.qty)}</td>
+                        <td>${esc(g.remark)}</td>
+                        <td>${esc(g.operator)}</td>
+                        <td>${esc(g.time)}</td></tr>`).join('');
+                } else {
+                    recordTbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">无匹配记录</td></tr>';
+                }
+                // 线束明细
+                if ((data.details || []).length) {
+                    detailTbody.innerHTML = data.details.map((d, i) => `<tr>
+                        <td>${i + 1}</td>
+                        <td>${esc(d.circuit || data.circuit_no)}</td>
+                        <td>${esc(d.wire || '')}</td>
+                        <td>${esc(d.sq || '')}</td>
+                        <td>${esc(d.color || '')}</td>
+                        <td>${esc(d.length_cut2 || '')}</td>
+                        <td>${esc(d.tml1 || '')}</td>
+                        <td>${esc(d.tml2 || '')}</td>
+                        <td>${esc((d.strip1 || '') + ' / ' + (d.strip2 || ''))}</td></tr>`).join('');
+                } else {
+                    detailTbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">无线束明细</td></tr>';
+                }
+                // 已确认过则回填数量提示
+                if (data.confirmed) {
+                    wireQty.value = data.confirmed.wire_qty == null ? '' : data.confirmed.wire_qty;
+                    showToast('该 LOT + 回路号已返回确认，可修改后再次保存', 'warn');
+                }
+            }
+
+            // ---- 确认返回 ----
+            // auto=true：扫描后自动确认，保留比对结果供查看，仅清空数量
+            async function doConfirm(auto) {
+                const payload = {
+                    lot_no: lotNo.value.trim(),
+                    circuit_no: circuitNo.value.trim(),
+                    wire_qty: wireQty.value.trim()
+                };
+                if (!payload.lot_no || !payload.circuit_no) {
+                    showToast('请先扫描传票或输入 LOT 和回路号', 'warn');
+                    return;
+                }
+                const btn = document.getElementById('confirmBtn');
+                if (btn) { btn.disabled = true; }
+                try {
+                    const resp = await fetch('/wire/return_confirm/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await resp.json();
+                    if (!data.success) {
+                        showToast(data.error || '保存失败', 'error');
+                        return;
+                    }
+                    if (auto) {
+                        // 自动确认：结果区保留，清空数量，直接等待下一张传票
+                        showToast(`已自动确认返回：${payload.lot_no} / ${payload.circuit_no}`, 'success');
+                        wireQty.value = '';
+                        scanInput.focus();
+                        await loadList();
+                        return;
+                    }
+                    showToast(data.message || '返回确认已保存', 'success');
+                    // 连续作业：清空当前票面并回到扫描框，便于扫下一张
+                    scanInput.value = '';
+                    lotNo.value = '';
+                    circuitNo.value = '';
+                    wireQty.value = '';
+                    resultPanel.style.display = 'none';
+                    scanInput.focus();
+                    await loadList();
+                } catch (e) {
+                    showToast('网络错误，保存失败', 'error');
+                } finally {
+                    if (btn) { btn.disabled = false; }
+                }
+            }
+
+            // ---- 返回确认记录列表 ----
+            async function loadList() {
+                try {
+                    const q = document.getElementById('searchInput').value.trim();
+                    const resp = await fetch('/wire/return_confirm/data?q=' + encodeURIComponent(q), {
+                        headers: { 'X-CSRFToken': CSRF }
+                    });
+                    const data = await resp.json();
+                    if (!data.success) throw new Error(data.error || '加载失败');
+                    const rows = data.records || [];
+                    listCount.textContent = `${rows.length} 条`;
+                    if (!rows.length) {
+                        listTbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">暂无返回确认记录</td></tr>';
+                        return;
+                    }
+                    listTbody.innerHTML = rows.map(r => {
+                        const badge = r.matched
+                            ? '<span class="badge bg-success">有数据</span>'
+                            : '<span class="badge bg-secondary">无数据</span>';
+                        const delBtn = canSubmit
+                            ? `<button class="btn btn-outline-danger btn-sm py-0 px-1 js-del" data-id="${r.id}" title="删除"><i class="fa fa-trash"></i></button>`
+                            : '';
+                        return `<tr>
+                            <td>${esc(r.lot_no)}</td>
+                            <td>${esc(r.circuit_no)}</td>
+                            <td>${esc(r.wire_qty == null ? '' : r.wire_qty)}</td>
+                            <td>${badge}</td>
+                            <td>${esc(r.created_by_name || '')}</td>
+                            <td>${esc(r.created_at || '')}</td>
+                            <td class="text-center">${delBtn}</td></tr>`;
+                    }).join('');
+                } catch (e) {
+                    listTbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-3">${esc(e.message)}</td></tr>`;
+                }
+            }
+
+            // ---- 事件绑定 ----
+            scanInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); clearTimeout(autoTimer); doMatch(true); }
+            });
+            // 无回车输出的扫码枪兜底：输入完整票面后短暂静默即自动识别查询
+            let autoTimer = null;
+            scanInput.addEventListener('input', function() {
+                clearTimeout(autoTimer);
+                if (!parseTicket(scanInput.value)) return;
+                autoTimer = setTimeout(function() {
+                    if (parseTicket(scanInput.value)) doMatch(true);
+                }, 350);
+            });
+            [lotNo, circuitNo].forEach(el => el.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); doMatch(false); }
+            }));
+            // 备用手输：手动查询后由用户点「确认返回」
+            document.getElementById('matchBtn').addEventListener('click', function() { doMatch(false); });
+            document.getElementById('resetBtn').addEventListener('click', function() {
+                scanInput.value = ''; lotNo.value = ''; circuitNo.value = '';
+                wireQty.value = ''; resultPanel.style.display = 'none';
+                scanInput.focus();
+            });
+            const confirmBtn = document.getElementById('confirmBtn');
+            if (confirmBtn) confirmBtn.addEventListener('click', doConfirm);
+            document.getElementById('refreshBtn').addEventListener('click', loadList);
+            document.getElementById('searchInput').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); loadList(); }
+            });
+            listTbody.addEventListener('click', async function(e) {
+                const btn = e.target.closest('.js-del');
+                if (!btn) return;
+                if (!confirm('确定删除该返回确认记录吗？')) return;
+                try {
+                    const resp = await fetch('/wire/return_confirm/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                        body: JSON.stringify({ id: parseInt(btn.dataset.id, 10) })
+                    });
+                    const data = await resp.json();
+                    if (!data.success) throw new Error(data.error || '删除失败');
+                    showToast('删除成功', 'success');
+                    await loadList();
+                } catch (err) {
+                    showToast(err.message || '删除失败', 'error');
+                }
+            });
+
+            // 页面加载：拉取确认记录，焦点定位到扫描框
+            loadList();
+            scanInput.focus();
+        })();
+    </script>
+</body>
+</html>

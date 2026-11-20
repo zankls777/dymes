@@ -105,7 +105,7 @@
                             <tr id="resultHeader"></tr>
                         </thead>
                         <tbody id="resultTbody">
-                            <tr><td colspan="18" class="text-center text-muted py-4">数据加载中...</td></tr>
+                            <tr><td colspan="19" class="text-center text-muted py-4">数据加载中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -222,7 +222,8 @@
                 ['回路号', 'circuit_no'], ['线质', 'wire'], ['规格/颜色', 'spec_color'],
                 ['长度', 'length_cut2'], ['数量', 'qty'], ['配线区分', 'div_type'],
                 ['端子名1/2', 'terminal'], ['号机名', 'machine'], ['压高', 'crimp'],
-                ['备注', 'remark'], ['操作人', 'created_by_name'], ['日期', 'date']
+                ['备注', 'remark'], ['返回确认', 'return_status'],
+                ['操作人', 'created_by_name'], ['日期', 'date']
             ];
 
             function esc(s) {
@@ -301,6 +302,11 @@
                             if (c[1] === 'remark' && v) {
                                 return `<td><span class="badge bg-danger">${esc(v)}</span></td>`;
                             }
+                            if (c[1] === 'return_status') {
+                                return v === '已返回'
+                                    ? '<td class="text-center"><span class="badge bg-success">已返回</span></td>'
+                                    : '<td class="text-center"><span class="badge bg-secondary">未返回</span></td>';
+                            }
                             return `<td>${esc(v)}</td>`;
                         }).join('');
                         frag.appendChild(tr);
@@ -324,6 +330,8 @@
                 const rows = [];
                 let no = 0;
                 const seen = new Set();
+                // 补线返回确认集合（LOT|回路号大写），由接口随数据返回
+                const confirmedSet = new Set(data.return_confirmed || []);
                 sorted.forEach(r => {
                     // 号机为空的记录：仅展示「录入不全」自动补录行（同图纸未扫回路），
                     // 其余无号机中间态不入库/不展示
@@ -356,6 +364,9 @@
                             machine: machine,
                             crimp: '',
                             remark: remarkTxt,
+                            return_status: confirmedSet.has(
+                                `${String(r.lot_no).trim()}|${String(r.circuit_no || '').trim().toUpperCase()}`)
+                                ? '已返回' : '未返回',
                         });
                     });
                 });
