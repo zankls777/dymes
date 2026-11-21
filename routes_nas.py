@@ -50,7 +50,7 @@ def _current_user():
 
 
 def _has_perm(user, perm_code):
-    """管理员恒有权限；否则查询 PermissionInfo 对应字段（走统一短 TTL 缓存）。"""
+    """管理员恒有权限；否则查询 RBAC 有效权限（走统一短 TTL 缓存）。"""
     if user is None:
         return False
     if getattr(user, 'is_admin', False):

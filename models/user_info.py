@@ -2,8 +2,6 @@ from db import db
 from datetime import datetime
 from flask_login import UserMixin
 
-from models.permission_info import PermissionInfo
-
 
 class UserInfo(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
@@ -28,125 +26,20 @@ class UserInfo(db.Model, UserMixin):
     modifier = db.relationship('UserInfo', foreign_keys=[updated_by], remote_side=[id], backref=db.backref('modified_users', lazy='dynamic'))
 
     def has_permission(self, permission_name):
+        """判断用户是否拥有指定权限（RBAC 唯一来源）。
+
+        参数兼容历史写法：可传 'upload' 或 'can_upload'，统一按 can_* 编码解析。
+        """
         if self.is_admin:
             return True
 
-        permission = PermissionInfo.query.filter_by(user_id=self.id).first()
-        if not permission:
+        if not getattr(self, 'is_active', True):
             return False
 
-        if permission_name == 'upload':
-            return permission.can_upload
-        elif permission_name == 'delete':
-            return permission.can_delete
-        elif permission_name == 'batch_delete':
-            return permission.can_batch_delete
-        elif permission_name == 'page':
-            return permission.can_page
-        elif permission_name == 'vehicle_types':
-            return permission.can_vehicle_types
-        elif permission_name == 'products':
-            return permission.can_products
-        elif permission_name == 'material_download':
-            return permission.can_material_download
-        elif permission_name == 'file_management':
-            return permission.can_file_management
-        elif permission_name == 'file_management_upload':
-            return permission.can_file_management_upload
-        elif permission_name == 'file_management_delete':
-            return permission.can_file_management_delete
-        elif permission_name == 'file_management_download':
-            return permission.can_file_management_download
-        elif permission_name == 'file_management_freeze':
-            return permission.can_file_management_freeze
-        elif permission_name == 'file_management_export_file_list':
-            return permission.can_file_management_export_file_list
-        elif permission_name == 'file_comparison':
-            return permission.can_file_comparison
-        elif permission_name == 'sub_list':
-            return permission.can_sub_list
-        elif permission_name == 'usage_list':
-            return permission.can_usage_list
-        elif permission_name == 'delete':
-            return permission.can_file_management_delete
-
-        # 补线打端子权限
-        elif permission_name == 'wire_lot_login':
-            return permission.can_wire_lot_login
-        elif permission_name == 'wire_scan_entry':
-            return permission.can_wire_scan_entry
-        elif permission_name == 'wire_data_download':
-            return permission.can_wire_data_download
-        elif permission_name == 'wire_lot_login_add':
-            return permission.can_wire_lot_login_add
-        elif permission_name == 'wire_lot_login_upload':
-            return permission.can_wire_lot_login_upload
-        elif permission_name == 'wire_lot_login_clear':
-            return permission.can_wire_lot_login_clear
-        elif permission_name == 'wire_lot_login_download':
-            return permission.can_wire_lot_login_download
-        elif permission_name == 'wire_scan_entry_scan':
-            return permission.can_wire_scan_entry_scan
-        elif permission_name == 'wire_scan_entry_save':
-            return permission.can_wire_scan_entry_save
-        elif permission_name == 'wire_scan_entry_edit':
-            return permission.can_wire_scan_entry_edit
-        elif permission_name == 'wire_scan_entry_delete':
-            return permission.can_wire_scan_entry_delete
-        elif permission_name == 'wire_scan_entry_download':
-            return permission.can_wire_scan_entry_download
-        elif permission_name == 'wire_crimp_login':
-            return permission.can_wire_crimp_login
-        elif permission_name == 'wire_crimp_login_upload':
-            return permission.can_wire_crimp_login_upload
-        elif permission_name == 'wire_data_download_query':
-            return permission.can_wire_data_download_query
-        elif permission_name == 'wire_data_download_download':
-            return permission.can_wire_data_download_download
-        elif permission_name == 'wire_data_download_edit':
-            return permission.can_wire_data_download_edit
-        elif permission_name == 'wire_data_download_delete':
-            return permission.can_wire_data_download_delete
-
-        # 资材入库权限
-        elif permission_name == 'material_inbound_daily':
-            return permission.can_material_inbound_daily
-        elif permission_name == 'material_inbound':
-            return permission.can_material_inbound
-        elif permission_name == 'material_inbound_daily_upload':
-            return permission.can_material_inbound_daily_upload
-        elif permission_name == 'material_inbound_daily_add':
-            return permission.can_material_inbound_daily_add
-        elif permission_name == 'material_inbound_daily_edit':
-            return permission.can_material_inbound_daily_edit
-        elif permission_name == 'material_inbound_daily_delete':
-            return permission.can_material_inbound_daily_delete
-        elif permission_name == 'material_inbound_daily_download':
-            return permission.can_material_inbound_daily_download
-        elif permission_name == 'material_inbound_scan':
-            return permission.can_material_inbound_scan
-        elif permission_name == 'material_inbound_submit':
-            return permission.can_material_inbound_submit
-        elif permission_name == 'material_inbound_revoke':
-            return permission.can_material_inbound_revoke
-
-        # 其他页面访问权限
-        elif permission_name == 'material_calculator':
-            return permission.can_material_calculator
-        elif permission_name == 'invest_tidy':
-            return permission.can_invest_tidy
-        elif permission_name == 'invest_summary':
-            return permission.can_invest_summary
-        elif permission_name == 'data_management':
-            return permission.can_data_management
-        elif permission_name == 'corrugated_location':
-            return permission.can_corrugated_location
-        elif permission_name == 'test_sheet':
-            return permission.can_test_sheet
-        elif permission_name == 'index':
-            return permission.can_index
-
-        return False
+        code = permission_name if permission_name.startswith('can_') \
+            else f'can_{permission_name}'
+        from utils.permission_utils import check_permission
+        return check_permission(self.id, code)
 
     def __repr__(self):
         return f'<UserInfo {self.username}>'

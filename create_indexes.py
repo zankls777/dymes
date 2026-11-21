@@ -64,8 +64,8 @@ def create_indexes():
         "CREATE INDEX IF NOT EXISTS idx_operation_log_created_at ON operation_log(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_operation_log_target_type ON operation_log(target_type)",
         
-        # PermissionInfo 表索引
-        "CREATE INDEX IF NOT EXISTS idx_permission_info_user_id ON permission_info(user_id)",
+        # 用户级权限覆盖表索引
+        "CREATE INDEX IF NOT EXISTS idx_user_permission_override_user_id ON user_permission_override(user_id)",
         
         # MaterialSummary 表索引（H-13：列名与模型对齐，原 part_no/vehicle_type/update_time 均不存在）
         "CREATE INDEX IF NOT EXISTS idx_material_summary_part_number ON material_summary(part_number)",

@@ -335,6 +335,14 @@
                         <div class="feature-link-row text-warning">进入 <i class="fa fa-arrow-right ms-1"></i></div>
                     </a>
                     {% endif %}
+                    {% if session.get('is_admin') or permissions.get('can_wire_return_confirm') %}
+                    <a class="feature-card" href="{{ url_for('main.wire_return_confirm') }}">
+                        <div class="feature-icon bg-green"><i class="fa fa-check-square-o"></i></div>
+                        <div class="feature-title">补线返回确认</div>
+                        <div class="feature-desc">传票扫描核对并登记返回</div>
+                        <div class="feature-link-row text-success">进入 <i class="fa fa-arrow-right ms-1"></i></div>
+                    </a>
+                    {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_auto_loading') %}
                     <a class="feature-card" href="{{ url_for('main.auto_loading') }}">

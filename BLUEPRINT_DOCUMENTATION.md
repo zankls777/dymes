@@ -79,7 +79,7 @@
 
 ### 3.1 权限模型
 
-权限信息存储在 `PermissionInfo` 模型中，与用户为一对一关系。主要权限字段包括：
+权限采用 RBAC 模型，由 `Permission`（权限项）、`PermissionGroup`（权限组）、`GroupPermission`（组-权限绑定）、`UserGroup`（用户-组绑定）、`UserPermissionOverride`（用户级覆盖）五张表构成。有效权限由权限组与用户级覆盖（allow / deny）共同计算，管理员恒为全部权限。下列 `can_*` 编码用于兼容历史调用：
 
 | 权限字段 | 描述 | 默认值 |
 |----------|------|--------|

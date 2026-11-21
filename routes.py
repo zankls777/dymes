@@ -5,7 +5,12 @@ from flask import (
 )
 import traceback
 from urllib.parse import urlparse
-from utils.permission_utils import check_permission, check_multiple_permissions, invalidate_legacy_permission_cache
+from utils.permission_utils import (
+    check_permission,
+    check_multiple_permissions,
+    get_effective_permission_view,
+    get_user_permissions as get_effective_permissions,
+)
 from query_cache import query_cache_manager
 
 # 数据库错误处理装饰器
@@ -83,7 +88,7 @@ from models.file_info import FileInfo
 from models.sub_list import SubList
 from models.usage_list import UsageList
 from models.user_info import UserInfo
-from models.permission_info import PermissionInfo
+from models.rbac import UserPermissionOverride
 from models.material_inbound import MaterialInboundDaily
 from models.inventory_check import InventoryTeam, InventoryCheck
 from models.inventory_pno_dict import InventoryPnoDict
@@ -334,11 +339,11 @@ def get_cached_user_permission(user_id):
     if user is None:
         return None
 
-    permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+    # RBAC 为唯一权限来源：一次性取回全部 can_* 字段后整体缓存
+    perms = get_effective_permissions(user_id)
     data = {'is_admin': bool(user.is_admin)}
-    for field in PermissionInfo.__table__.columns.keys():
-        if field.startswith('can_'):
-            data[field] = True if user.is_admin else bool(getattr(permission, field, False))
+    data.update({code: bool(value) for code, value in perms.items()
+                 if code.startswith('can_')})
     query_cache_manager.set_permission(user_id, data)
     return data
 
@@ -962,7 +967,7 @@ def api_freeze_file(file_id):
     user_id = session['user_id']
     user = db.session.get(UserInfo, user_id)
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+        permission = get_effective_permission_view(user_id)
         if not permission or not permission.can_file_management_freeze:
             return jsonify({'success': False, 'error': '您没有冻结文件的权限'}), 403
     
@@ -1025,7 +1030,7 @@ def api_thaw_file(file_id):
     user_id = session['user_id']
     user = db.session.get(UserInfo, user_id)
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+        permission = get_effective_permission_view(user_id)
         if not permission or not permission.can_file_management_freeze:
             return jsonify({'success': False, 'error': '您没有解冻文件的权限'}), 403
     
@@ -1085,7 +1090,7 @@ def api_list_frozen_files():
     user_id = session['user_id']
     user = db.session.get(UserInfo, user_id)
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+        permission = get_effective_permission_view(user_id)
         if not permission or not permission.can_file_management:
             return jsonify({'success': False, 'error': '您没有查看文件的权限'}), 403
     
@@ -1127,7 +1132,7 @@ def api_batch_freeze_files():
     user_id = session['user_id']
     user = db.session.get(UserInfo, user_id)
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+        permission = get_effective_permission_view(user_id)
         if not permission or not permission.can_file_management_freeze:
             return jsonify({'success': False, 'error': '您没有批量冻结文件的权限'}), 403
     
@@ -1196,7 +1201,7 @@ def api_batch_thaw_files():
     user_id = session['user_id']
     user = db.session.get(UserInfo, user_id)
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+        permission = get_effective_permission_view(user_id)
         if not permission or not permission.can_file_management_freeze:
             return jsonify({'success': False, 'error': '您没有批量解冻文件的权限'}), 403
     
@@ -1265,7 +1270,7 @@ def api_freeze_old_versions():
     user_id = session['user_id']
     user = db.session.get(UserInfo, user_id)
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+        permission = get_effective_permission_view(user_id)
         if not permission or not permission.can_file_management_freeze:
             return jsonify({'success': False, 'error': '您没有冻结文件的权限'}), 403
 
@@ -1381,7 +1386,7 @@ def api_freeze_old_versions_preview():
     user_id = session['user_id']
     user = db.session.get(UserInfo, user_id)
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+        permission = get_effective_permission_view(user_id)
         if not permission or not permission.can_file_management_freeze:
             return jsonify({'success': False, 'error': '您没有查看权限'}), 403
 
@@ -1461,7 +1466,7 @@ def api_get_file_detail(file_id):
     user_id = session['user_id']
     user = db.session.get(UserInfo, user_id)
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+        permission = get_effective_permission_view(user_id)
         if not permission or not permission.can_file_management:
             return jsonify({'success': False, 'error': '您没有查看文件的权限'}), 403
     
@@ -1662,7 +1667,7 @@ def file_comparison():
     # 页面访问权限控制
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_file_comparison:
             flash('您没有数据对比页面的访问权限', 'error')
             return forbidden_page('您没有数据对比页面的访问权限')
@@ -1676,7 +1681,7 @@ def rw_comparison():
     # 页面访问权限控制
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_file_comparison:
             flash('您没有RW核对页面的访问权限', 'error')
             return forbidden_page('您没有RW核对页面的访问权限')
@@ -2591,7 +2596,7 @@ def vehicle_types():
     
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_vehicle_types:
             flash('您没有车种管理权限', 'error')
             return forbidden_page('您没有车种管理页面的访问权限')
@@ -2625,7 +2630,7 @@ def products():
     
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_products:
             flash('您没有成品管理权限', 'error')
             return forbidden_page('您没有成品管理页面的访问权限')
@@ -2728,7 +2733,7 @@ def material_download():
     
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_material_download:
             flash('您没有资材量下载权限', 'error')
             return forbidden_page('您没有资材量下载页面的访问权限')
@@ -6023,6 +6028,24 @@ def _wire_load_snapshot_map(lot_info, lot_circuit, lazy_heal=True):
     return subl, subl_by_lot
 
 
+def _wire_circuit_filter(keyword):
+    """构造回路号模糊查询条件（不区分大小写，忽略空白与常见分隔符）。
+
+    返回 None 表示关键字为空、无需过滤，调用方可直接跳过。
+    """
+    # 与前端 normCircuit 保持一致：先去掉分隔符再匹配，使「RS-122」也能命中「RS122」
+    kw = re.sub(r'[\s\-_/.\\·:：]+', '', (keyword or '').strip()).upper()
+    if not kw:
+        return None
+    from models.wire_scan_record import WireScanRecord
+    col = func.upper(WireScanRecord.circuit_no)
+    for ch in (' ', '-', '_', '/', '.', '\\', '·', ':', '：'):
+        col = func.replace(col, ch, '')
+    # 转义 % 和 _，让用户输入按字面量匹配，避免被当成通配符
+    escaped = kw.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return col.like(f'%{escaped}%', escape='\\')
+
+
 @main_bp.route('/wire/scan_entry/data')
 @login_required
 def wire_scan_entry_data():
@@ -6058,6 +6081,10 @@ def wire_scan_entry_data():
         elif not start:
             # 未指定日期时默认最近 3 天
             q = q.filter(WireScanRecord.created_at >= datetime.utcnow() - timedelta(days=3))
+        # 回路号模糊过滤（页面搜索框回库查询时传入），在取行数上限前生效
+        circuit_filter = _wire_circuit_filter(request.args.get('circuit'))
+        if circuit_filter is not None:
+            q = q.filter(circuit_filter)
         # 行数上限：默认窗口大时只取近期数据，防止全量查询拖慢接口
         #（上限 2000 行足够覆盖日扫码量；历史数据通过数据下载页按日期查询）
         # 排序按 id 倒序取最近 2000 条后再反转为升序，保证最终为「扫描进入顺序」
@@ -7165,6 +7192,10 @@ def wire_scan_entry_download():
         elif not start:
             # 未指定日期范围默认最近7天
             q = q.filter(WireScanRecord.created_at >= datetime.utcnow() - timedelta(days=7))
+        # 回路号模糊过滤：与页面搜索框保持一致，导出内容即当前搜索结果
+        circuit_filter = _wire_circuit_filter(request.args.get('circuit'))
+        if circuit_filter is not None:
+            q = q.filter(circuit_filter)
         # 排序：按记录 id 升序 = 扫描进入的先后顺序（与下载页面展示顺序一致）
         records = (q
                    .order_by(WireScanRecord.id)
@@ -7505,6 +7536,143 @@ def _wire_return_match(lot_no, circuit_no):
     return bool(matched_rows), lot_info.get(lot) or {}, matched_rows, details
 
 
+def _wire_return_sync_fields(lot_info, rows, details):
+    """从比对数据提取需同步到返回确认记录的字段（品番/规格/颜色/长度/数量）。
+
+    同一回路可能对应多条线束明细，多值去重后用 "/" 连接；
+    数量取匹配到的补线记录 wire_qty 合计（未匹配时为 None）。
+    """
+    def _join_unique(values):
+        seen = []
+        for v in values:
+            s = str(v or '').strip()
+            if s and s not in seen:
+                seen.append(s)
+        return '/'.join(seen) or None
+
+    def _div_type(d):
+        # 配线区分与数据下载页同规则：Remark1 以 TW 开头取 TW，否则取 Rel2（空则 Rel1）
+        rk = (d.get('remark1') or '').strip()
+        if rk.upper().startswith('TW'):
+            return 'TW'
+        return (d.get('rel2') or '') or (d.get('rel1') or '')
+
+    parts = lot_info or {}
+    detail_rows = details or []
+    qty = sum(int(getattr(r, 'wire_qty', 0) or 0) for r in (rows or []))
+    return {
+        'part_no': (parts.get('part_no') or '').strip() or None,
+        'spec': _join_unique([d.get('sq') for d in detail_rows]),
+        'color': _join_unique([d.get('color') for d in detail_rows]),
+        'length': _join_unique([d.get('length_cut2') for d in detail_rows]),
+        'div_type': _join_unique([_div_type(d) for d in detail_rows]),
+        'wire_qty': qty or None,
+    }
+
+
+def _wire_same_drawing_circuits(part_no, eo, circuit):
+    """取与指定回路同图纸管理编号(SetCode)的全部回路（不含 deleted，回路名大写）。
+
+    与 _wire_drawing_circuits（取整个品番冻结分组，含其他图纸）不同：
+    只取当前回路命中的 SetCode 集合（冻结分组优先），避免扩大到其他图纸。
+    SetCode 全空时回退 MC 前缀同图纸规则；当前回路无 SetCode 时仅返回自身。
+    """
+    circuit = (circuit or '').strip().upper()
+    if not circuit:
+        return []
+    rows = (SubList.query
+            .filter(SubList.SubPno == part_no, SubList.EoKsc == eo, SubList.deleted == 0)
+            .with_entities(SubList.Circuit, SubList.SetCode, SubList.is_frozen).all())
+    if not rows:
+        return []
+    circuits, setcodes, is_frozen = [], [], []
+    for row in rows:
+        if not row.Circuit:
+            continue
+        circuits.append(row.Circuit.strip().upper())
+        setcodes.append((row.SetCode or '').strip().upper())
+        is_frozen.append(row.is_frozen or 0)
+    # 当前回路命中的 SetCode：冻结分组优先，冻结没有再取未冻结
+    current_codes = {code for c, code, fr in zip(circuits, setcodes, is_frozen)
+                     if c == circuit and code and fr == 1}
+    if not current_codes:
+        current_codes = {code for c, code in zip(circuits, setcodes)
+                         if c == circuit and code}
+    if current_codes:
+        return sorted({c for c, code in zip(circuits, setcodes) if code in current_codes})
+    if not any(setcodes):
+        # SetCode 全空：MC 前缀视为同图纸（与扫描不全补录同规则）
+        if circuit.startswith('MC'):
+            out = sorted({c for c in circuits if c.startswith('MC')})
+            if circuit not in out:
+                out.append(circuit)
+            return out
+        return [circuit]
+    return [circuit]
+
+
+def _wire_return_cascade_siblings(lot_no, circuit_no, uid, op_name, lot_info=None):
+    """同图纸管理编号(SetCode)级联返回：只扫描一个回路时，同图纸其他回路默认也返回。
+
+    - 同图纸回路以 sub_list 的 SetCode 为准（快照 set_code 大量缺失，不能单独依赖），
+      快照兄弟回路作为补充，两者取并集；
+    - 仅级联本 LOT 已录入或已快照的回路（数据下载页可见行），不为完全未录入回路建档；
+    - 已确认过的兄弟回路保留原数据（数量可能为手填），不覆盖；
+    - 品番/规格/颜色/长度/配线区分/数量按各兄弟回路自身比对数据同步。
+    """
+    from models.wire_return_confirm import WireReturnConfirm
+    from models.wire_scan_record import WireScanRecord
+    from models.wire_scan_detail import WireScanDetail
+    added = 0
+    current = (circuit_no or '').strip().upper()
+    part_no = ((lot_info or {}).get('part_no') or '').strip()
+    eo = ((lot_info or {}).get('jx_eo') or '').strip()
+
+    # 同图纸回路集合：sub_list SetCode 精确判定 + 快照兄弟回路补充
+    circuits = set()
+    if part_no and eo:
+        for c in (_wire_same_drawing_circuits(part_no, eo, current) or []):
+            if c and c.strip():
+                circuits.add(c.strip().upper())
+    for s in (_wire_snapshot_sibling_circuits(lot_no, current) or []):
+        sc = (s.get('circuit') or '').strip().upper()
+        if sc:
+            circuits.add(sc)
+    circuits.discard(current)
+    if not circuits:
+        return 0
+
+    # 本 LOT 可见回路（已录入号机行或已固化快照）
+    visible = set()
+    for (c,) in db.session.query(WireScanRecord.circuit_no).filter(WireScanRecord.lot_no == lot_no):
+        if c and c.strip():
+            visible.add(c.strip().upper())
+    for (c,) in db.session.query(WireScanDetail.circuit_no).filter(WireScanDetail.lot_no == lot_no):
+        if c and c.strip():
+            visible.add(c.strip().upper())
+
+    for s_circ in sorted(circuits & visible):
+        exists = (WireReturnConfirm.query
+                  .filter(WireReturnConfirm.lot_no == lot_no,
+                          db.func.upper(WireReturnConfirm.circuit_no) == s_circ)
+                  .first())
+        if exists:
+            continue
+        s_matched, s_lot_info, s_rows, s_details = _wire_return_match(lot_no, s_circ)
+        s_sync = _wire_return_sync_fields(s_lot_info, s_rows, s_details)
+        db.session.add(WireReturnConfirm(
+            lot_no=lot_no, circuit_no=s_circ,
+            part_no=s_sync['part_no'], spec=s_sync['spec'],
+            color=s_sync['color'], length=s_sync['length'],
+            div_type=s_sync['div_type'],
+            wire_qty=s_sync['wire_qty'], matched=s_matched,
+            created_by=uid, created_by_name=op_name))
+        added += 1
+    if added:
+        db.session.commit()
+    return added
+
+
 @main_bp.route('/wire/return_confirm')
 @login_required
 def wire_return_confirm():
@@ -7587,7 +7755,11 @@ def wire_return_confirm_save():
             if qty <= 0:
                 return jsonify({'success': False, 'error': '数量必须大于0'}), 400
 
-        matched, _, _, _ = _wire_return_match(lot_no, circuit_no)
+        matched, lot_info, rows, details = _wire_return_match(lot_no, circuit_no)
+        # 同步拉取品番/规格/颜色/长度/数量；数量未手填时取补线记录合计
+        sync = _wire_return_sync_fields(lot_info, rows, details)
+        if qty is None:
+            qty = sync['wire_qty']
         uid = session.get('user_id')
         op_name = _wire_op_name(uid)
         rec = (WireReturnConfirm.query
@@ -7597,12 +7769,20 @@ def wire_return_confirm_save():
         updated = bool(rec)
         if rec:
             rec.circuit_no = circuit_no
+            rec.part_no = sync['part_no']
+            rec.spec = sync['spec']
+            rec.color = sync['color']
+            rec.length = sync['length']
+            rec.div_type = sync['div_type']
             rec.wire_qty = qty
             rec.matched = matched
             if op_name:
                 rec.created_by_name = op_name
         else:
             rec = WireReturnConfirm(lot_no=lot_no, circuit_no=circuit_no,
+                                    part_no=sync['part_no'], spec=sync['spec'],
+                                    color=sync['color'], length=sync['length'],
+                                    div_type=sync['div_type'],
                                     wire_qty=qty, matched=matched,
                                     created_by=uid, created_by_name=op_name)
             db.session.add(rec)
@@ -7617,14 +7797,29 @@ def wire_return_confirm_save():
                    .first())
             if not rec:
                 raise
+            rec.part_no = sync['part_no']
+            rec.spec = sync['spec']
+            rec.color = sync['color']
+            rec.length = sync['length']
+            rec.div_type = sync['div_type']
             rec.wire_qty = qty
             rec.matched = matched
             if op_name:
                 rec.created_by_name = op_name
             db.session.commit()
             updated = True
+        # 同图纸管理编号级联：只扫一个回路时，其他回路默认也返回（失败不影响本次确认）
+        siblings = 0
+        try:
+            siblings = _wire_return_cascade_siblings(lot_no, circuit_no, uid, op_name, lot_info)
+        except Exception as cascade_err:
+            db.session.rollback()
+            current_app.logger.warning(f'同图纸回路级联返回失败(已跳过): {cascade_err}')
+        msg = '已更新返回确认' if updated else '返回确认已保存'
+        if siblings:
+            msg += f'，同图纸其他 {siblings} 个回路已默认返回'
         return jsonify({'success': True, 'updated': updated, 'matched': matched,
-                        'message': '已更新返回确认' if updated else '返回确认已保存',
+                        'siblings': siblings, 'message': msg,
                         'record': rec.to_dict()})
     except Exception as e:
         db.session.rollback()
@@ -10683,50 +10878,12 @@ def login():
             else:
                 session.permanent = request.form.get('remember') in ('1', 'true', 'on')
             
-            # 获取用户权限信息并存储到session
-            if not user.is_admin:
-                permission = PermissionInfo.query.filter_by(user_id=user.id).first()
-                if permission:
-                    # 动态获取所有权限字段
-                    user_permissions = {}
-                    for field in permission.__table__.columns:
-                        if field.name.startswith('can_') and field.name != 'id' and field.name != 'user_id':
-                            user_permissions[field.name] = getattr(permission, field.name)
-                    session['user_permissions'] = user_permissions
-                    # 记录权限会话版本
-                    # 取消基于会话版本的强制下线逻辑
-                else:
-                    # 默认权限（全部为False）
-                    session['user_permissions'] = {
-                        'can_upload': False, 'can_delete': False, 'can_batch_delete': False, 'can_page': False,
-                        'can_vehicle_types': False, 'can_products': False, 'can_material_download': False,
-                        'can_file_management': False, 'can_file_comparison': False, 'can_sub_list': False, 'can_usage_list': False,
-                        'can_products_add': False, 'can_products_edit': False, 'can_products_delete': False, 'can_products_download': False, 'can_products_import': False,
-                        'can_vehicle_types_add': False, 'can_vehicle_types_edit': False, 'can_vehicle_types_delete': False, 'can_vehicle_types_download': False,
-                        'can_material_download_download': False, 'can_material_download_update': False,
-                        'can_file_management_upload': False, 'can_file_management_delete': False, 'can_file_management_download': False, 'can_file_management_export_file_list': False,
-                        'can_file_management_freeze': False,
-                        'can_file_comparison_compare': False, 'can_file_comparison_download': False,
-                        'can_sub_list_add': False, 'can_sub_list_edit': False, 'can_sub_list_delete': False, 'can_sub_list_download': False,
-                        'can_usage_list_add': False, 'can_usage_list_edit': False, 'can_usage_list_delete': False, 'can_usage_list_download': False,
-                        'can_nas_file_search': False, 'can_nas_file_search_config': False, 'can_nas_file_search_search': False, 'can_nas_file_search_import': False
-                    }
-            else:
-                # 管理员拥有所有权限
-                session['user_permissions'] = {
-                    'can_upload': True, 'can_delete': True, 'can_batch_delete': True, 'can_page': True,
-                    'can_vehicle_types': True, 'can_products': True, 'can_material_download': True,
-                    'can_file_management': True, 'can_file_comparison': True, 'can_sub_list': True, 'can_usage_list': True,
-                    'can_products_add': True, 'can_products_edit': True, 'can_products_delete': True, 'can_products_download': True, 'can_products_import': True,
-                    'can_vehicle_types_add': True, 'can_vehicle_types_edit': True, 'can_vehicle_types_delete': True, 'can_vehicle_types_download': True,
-                    'can_material_download_download': True, 'can_material_download_update': True,
-                    'can_file_management_upload': True, 'can_file_management_delete': True, 'can_file_management_download': True, 'can_file_management_export_file_list': True,
-                    'can_file_management_freeze': True,
-                    'can_file_comparison_compare': True, 'can_file_comparison_download': True,
-                    'can_sub_list_add': True, 'can_sub_list_edit': True, 'can_sub_list_delete': True, 'can_sub_list_download': True,
-                    'can_usage_list_add': True, 'can_usage_list_edit': True, 'can_usage_list_delete': True, 'can_usage_list_download': True,
-                    'can_nas_file_search': True, 'can_nas_file_search_config': True, 'can_nas_file_search_search': True, 'can_nas_file_search_import': True
-                }
+            # 获取用户权限信息并存储到session（RBAC 为唯一来源，管理员恒为全部权限）
+            session['user_permissions'] = {
+                code: bool(value)
+                for code, value in get_effective_permissions(user.id).items()
+                if code.startswith('can_')
+            }
             # 计算登录后落地页：优先回到未登录前访问的原始地址（需有权限），否则按权限落首页/首个可访问页面
             is_admin = bool(user.is_admin)
             permissions = session.get('user_permissions')
@@ -10841,47 +10998,13 @@ def user_management():
 
                 db.session.commit()
 
-                # 为新用户分配默认权限
-                permission = PermissionInfo(
-                    user_id=new_user.id, 
-                    can_upload=False, 
-                    can_delete=False, 
-                    can_batch_delete=False, 
-                    can_page=False,
-                    can_vehicle_types=False,
-                    can_products=False,
-                    can_material_download=False,
-                    can_file_management=True,
-                    can_file_comparison=False,
-                    can_sub_list=False,
-                    can_usage_list=False,
-                    can_products_add=False,
-                    can_products_edit=False,
-                    can_products_delete=False,
-                    can_products_download=False,
-                    can_products_import=False,
-                    can_vehicle_types_add=False,
-                    can_vehicle_types_edit=False,
-                    can_vehicle_types_delete=False,
-                    can_vehicle_types_download=False,
-                    can_material_download_download=False,
-                    can_material_download_update=False,
-                    can_file_management_upload=False,
-                    can_file_management_delete=False,
-                    can_file_management_download=False,
-                    can_file_comparison_compare=False,
-                    can_file_comparison_download=False,
-                    can_sub_list_add=False,
-                    can_sub_list_edit=False,
-                    can_sub_list_delete=False,
-                    can_sub_list_download=False,
-                    can_usage_list_add=False,
-                    can_usage_list_edit=False,
-                    can_usage_list_delete=False,
-                    can_usage_list_download=False
-                )
-
-                db.session.add(permission)
+                # 为新用户分配默认权限（RBAC 用户覆盖：仅文件管理可见）
+                db.session.add(UserPermissionOverride(
+                    user_id=new_user.id,
+                    permission_code='can_file_management',
+                    effect='allow',
+                    updated_by=current_user_id,
+                ))
 
                 db.session.commit()
 
@@ -10947,8 +11070,7 @@ def user_management():
                         "UPDATE operation_logs SET user_id = NULL, "
                         "username = COALESCE(username, :uname) WHERE user_id = :uid"
                     ), {'uid': user_id, 'uname': deleted_username})
-                    # 私有权限数据直接清除
-                    PermissionInfo.query.filter_by(user_id=user_id).delete()
+                    # 私有权限数据直接清除（RBAC 权限组绑定 + 用户级覆盖）
                     db.session.execute(text("DELETE FROM user_group WHERE user_id = :uid"), {'uid': user_id})
                     db.session.execute(text("DELETE FROM user_permission_override WHERE user_id = :uid"), {'uid': user_id})
 
@@ -10976,7 +11098,11 @@ def user_management():
                     db.session.commit()
                     # 用户及其权限已删除，清除相关缓存
                     query_cache_manager.invalidate_user_cache(user_id)
-                    invalidate_legacy_permission_cache(user_id)
+                    try:
+                        from utils.rbac_service import invalidate_user_permission_cache
+                        invalidate_user_permission_cache(user_id)
+                    except Exception:
+                        pass
                     try:
                         from utils.operation_logger import log_action
                         from models.operation_log import OperationType, TargetType
@@ -11010,7 +11136,11 @@ def user_management():
                 db.session.commit()
                 # 权限缓存与账号状态相关，禁用后立即失效
                 query_cache_manager.invalidate_user_cache(user_id)
-                invalidate_legacy_permission_cache(user_id)
+                try:
+                    from utils.rbac_service import invalidate_user_permission_cache
+                    invalidate_user_permission_cache(user_id)
+                except Exception:
+                    pass
                 try:
                     from utils.operation_logger import log_action
                     from models.operation_log import OperationType, TargetType
@@ -11054,24 +11184,29 @@ def user_management():
             user_id = request.form.get('user_id')
             user = db.session.get(UserInfo, user_id)
             if user:
-                # 删除用户的权限记录
-                permission = PermissionInfo.query.filter_by(user_id=user_id).first()
-                if permission:
-                    db.session.delete(permission)
-                    db.session.commit()
-                    # 记录操作日志
-                    admin_user = db.session.get(UserInfo, session['user_id'])
-                    current_app.logger.info(f"用户 {admin_user.username} 删除了用户 {user.username} 的所有权限")
-                    try:
-                        from utils.operation_logger import log_action
-                        from models.operation_log import OperationType, TargetType
-                        log_action(OperationType.DELETE_PERMISSION, f"删除权限记录: {user.username}",
-                                   TargetType.PERMISSION, user.id, user.username)
-                    except Exception as e:
-                        current_app.logger.warning(f"记录删除权限日志失败: {e}")
-                    flash('用户权限删除成功', 'success')
-                else:
-                    flash('用户无权限记录', 'error')
+                # 清除该用户的 RBAC 配置（权限组绑定 + 用户级覆盖）
+                from sqlalchemy import text as _sql_text
+                db.session.execute(_sql_text("DELETE FROM user_group WHERE user_id = :uid"),
+                                   {'uid': user_id})
+                db.session.execute(_sql_text("DELETE FROM user_permission_override WHERE user_id = :uid"),
+                                   {'uid': user_id})
+                db.session.commit()
+                query_cache_manager.invalidate_user_cache(user_id)
+                try:
+                    from utils.rbac_service import invalidate_user_permission_cache
+                    invalidate_user_permission_cache(user_id)
+                except Exception:
+                    pass
+                admin_user = db.session.get(UserInfo, session['user_id'])
+                current_app.logger.info(f"用户 {admin_user.username} 清除了用户 {user.username} 的所有权限")
+                try:
+                    from utils.operation_logger import log_action
+                    from models.operation_log import OperationType, TargetType
+                    log_action(OperationType.DELETE_PERMISSION, f"删除权限记录: {user.username}",
+                               TargetType.PERMISSION, user.id, user.username)
+                except Exception as e:
+                    current_app.logger.warning(f"记录删除权限日志失败: {e}")
+                flash('用户权限删除成功', 'success')
             else:
                 flash('用户不存在', 'error')
         elif action == 'permission_management':
@@ -11082,84 +11217,42 @@ def user_management():
                 'can_vehicle_types_import': 'can_vehicle_types_import_excel'
             }
             permissions = [alias_map.get(p, p) for p in permissions]
-            
-            # 获取或创建权限记录
-            permission = PermissionInfo.query.filter_by(user_id=user_id).first()
-            if not permission:
-                permission = PermissionInfo(user_id=user_id)
-                # 设置创建人信息
-                current_user_id = session.get('user_id')
-                if hasattr(permission, 'created_by'):
-                    permission.created_by = current_user_id
-                if hasattr(permission, 'updated_by'):
-                    permission.updated_by = current_user_id
-                if hasattr(permission, 'create_time'):
-                    permission.create_time = datetime.now()
-                if hasattr(permission, 'update_time'):
-                    permission.update_time = datetime.now()
-                db.session.add(permission)
-            
-            # 重置所有权限为False
-            for field in permission.__table__.columns:
-                if field.name.startswith('can_') and field.name != 'id' and field.name != 'user_id':
-                    try:
-                        setattr(permission, field.name, False)
-                    except AttributeError:
-                        # 忽略不存在的字段
-                        pass
-            
-            # 设置选中的权限为True
-            for perm in permissions:
-                if hasattr(permission, perm):
-                    try:
-                        setattr(permission, perm, True)
-                    except AttributeError:
-                        # 忽略不存在的字段
-                        pass
-            
-            # 记录操作人信息
-            current_user_id = session.get('user_id')
-            
-            # 更新PermissionInfo的操作人信息
-            if hasattr(permission, 'updated_by'):
-                permission.updated_by = current_user_id
-            if hasattr(permission, 'update_time'):
-                permission.update_time = datetime.now()
-            
-            # 更新对应的UserInfo的操作人信息
+
             user = db.session.get(UserInfo, user_id)
-            if user:
+            if not user:
+                flash('用户不存在', 'error')
+            else:
+                current_user_id = session.get('user_id')
                 user.updated_by = current_user_id
                 user.update_time = datetime.now()
-            
-            db.session.commit()
-            # 同步写入 RBAC 覆盖表，使 RBAC 成为唯一权威来源
-            try:
-                from utils.rbac_service import sync_overrides_from_selected, invalidate_user_permission_cache
-                sync_overrides_from_selected(user_id, set(permissions),
-                                             operator_id=session.get('user_id'))
-                invalidate_user_permission_cache(user_id)
-            except Exception as e:
-                current_app.logger.warning(f"同步 RBAC 权限覆盖异常: {e}")
-            # 权限已变更，清除该用户的权限缓存，避免中间件读到旧权限
-            query_cache_manager.invalidate_user_cache(user_id)
-            invalidate_legacy_permission_cache(user_id)
-            try:
-                from utils.operation_logger import log_action
-                from models.operation_log import OperationType, TargetType
-                target_name = user.username if user else str(user_id)
-                log_action(OperationType.UPDATE_PERMISSIONS,
-                           f"更新权限: {target_name}（{len(permissions)} 项）",
-                           TargetType.PERMISSION, user_id, target_name)
-            except Exception as e:
-                current_app.logger.warning(f"记录权限更新日志失败: {e}")
-            flash('权限更新成功', 'success')
+                db.session.commit()
+                # RBAC 为唯一权威来源：勾选的置 allow，未勾选的置 deny
+                try:
+                    from utils.rbac_service import (sync_overrides_from_selected,
+                                                    invalidate_user_permission_cache)
+                    ok, msg = sync_overrides_from_selected(
+                        user_id, set(permissions), operator_id=current_user_id)
+                    if not ok:
+                        current_app.logger.warning(f"同步 RBAC 权限覆盖失败: {msg}")
+                    invalidate_user_permission_cache(user_id)
+                except Exception as e:
+                    current_app.logger.warning(f"同步 RBAC 权限覆盖异常: {e}")
+                # 权限已变更，清除该用户的权限缓存，避免中间件读到旧权限
+                query_cache_manager.invalidate_user_cache(user_id)
+                try:
+                    from utils.operation_logger import log_action
+                    from models.operation_log import OperationType, TargetType
+                    log_action(OperationType.UPDATE_PERMISSIONS,
+                               f"更新权限: {user.username}（{len(permissions)} 项）",
+                               TargetType.PERMISSION, user_id, user.username)
+                except Exception as e:
+                    current_app.logger.warning(f"记录权限更新日志失败: {e}")
+                flash('权限更新成功', 'success')
 
     from sqlalchemy.orm import joinedload
     users = UserInfo.query.options(
         joinedload(UserInfo.modifier),
-        joinedload(UserInfo.creator),
-        joinedload(UserInfo.permission)
+        joinedload(UserInfo.creator)
     ).all()
     # 当前登录用户信息，用于前端按钮级权限控制
     current_user = db.session.get(UserInfo, session['user_id'])
@@ -11174,32 +11267,12 @@ def get_user_permissions(user_id):
         return jsonify({'error': 'Forbidden'}), 403
 
     try:
-        # 首先检查用户是否是管理员
         user = db.session.get(UserInfo, user_id)
-        if user and user.is_admin:
-            # 管理员拥有所有权限
-            permissions = []
-            # 获取所有权限字段
-            for field in PermissionInfo.__table__.columns:
-                if field.name.startswith('can_') and field.name != 'id' and field.name != 'user_id':
-                    permissions.append(field.name)
-            return jsonify({'permissions': permissions})
-        
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
-        if permission:
-            permissions = []
-            # 动态获取所有权限字段
-            for field in permission.__table__.columns:
-                if field.name.startswith('can_') and field.name != 'id' and field.name != 'user_id':
-                    try:
-                        if getattr(permission, field.name):
-                            permissions.append(field.name)
-                    except AttributeError:
-                        # 忽略不存在的字段
-                        pass
-            return jsonify({'permissions': permissions})
-        else:
+        if not user:
             return jsonify({'permissions': []})
+        # RBAC 有效权限（管理员自动返回全部权限）
+        perms = get_effective_permissions(user_id)
+        return jsonify({'permissions': [code for code, ok in perms.items() if ok]})
     except Exception as e:
         current_app.logger.error(f"获取用户权限失败: {str(e)}")
         return jsonify({'error': '获取权限失败'}), 500
@@ -11210,28 +11283,16 @@ def update_user_permissions(user_id):
     # 检查用户是否登录且为管理员
     if 'user_id' not in session or not session['is_admin']:
         return jsonify({'success': False, 'error': '权限不足'}), 403
-    
+
     try:
-        permission = PermissionInfo.query.filter_by(user_id=user_id).first()
-        if not permission:
-            permission = PermissionInfo(user_id=user_id)
-            # 设置创建人信息
-            current_user_id = session.get('user_id')
-            if hasattr(permission, 'created_by'):
-                permission.created_by = current_user_id
-            if hasattr(permission, 'updated_by'):
-                permission.updated_by = current_user_id
-            if hasattr(permission, 'create_time'):
-                permission.create_time = datetime.now()
-            if hasattr(permission, 'update_time'):
-                permission.update_time = datetime.now()
-
-            db.session.add(permission)
-
         data = request.get_json()
         if not data:
             return jsonify({'success': False, 'error': '无效的请求数据'}), 400
-            
+
+        user = db.session.get(UserInfo, user_id)
+        if not user:
+            return jsonify({'success': False, 'error': '用户不存在'}), 404
+
         permissions = data.get('permissions', [])
         # 规范化前端权限键名到模型字段（别名映射）
         alias_map = {
@@ -11239,108 +11300,41 @@ def update_user_permissions(user_id):
         }
         permissions = [alias_map.get(p, p) for p in permissions]
 
-        # 重置所有权限为False
-        for field in permission.__table__.columns:
-            if field.name.startswith('can_') and field.name != 'id' and field.name != 'user_id':
-                try:
-                    setattr(permission, field.name, False)
-                except AttributeError:
-                    # 忽略不存在的字段
-                    pass
-        
-        # 设置选中的权限为True
-        for perm in permissions:
-            if hasattr(permission, perm):
-                try:
-                    setattr(permission, perm, True)
-                except AttributeError:
-                    # 忽略不存在的字段
-                    pass
-
-
-        # 记录操作人信息
         current_user_id = session.get('user_id')
-        
-        # 更新PermissionInfo的操作人信息
-        if hasattr(permission, 'updated_by'):
-            permission.updated_by = current_user_id
-        if hasattr(permission, 'update_time'):
-            permission.update_time = datetime.now()
-        
-        # 更新对应的UserInfo的操作人信息
-        user = db.session.get(UserInfo, user_id)
-        if user:
-            user.updated_by = current_user_id
-            user.update_time = datetime.now()
+        user.updated_by = current_user_id
+        user.update_time = datetime.now()
 
-        try:
-            # bump 版本，使已登录会话失效
-            # 不再维护会话版本
-            db.session.commit()
-        except Exception as e:
-            # 如果因为缺少列导致失败，尝试自动补齐列后重试（MySQL）
-            if False and 'session_version' in str(e):
-                try:
-                    from sqlalchemy import text
-                    db.session.rollback()
-                    pass
-                    db.session.commit()
-                    # 重新设置并提交
-                    pass
-                    db.session.commit()
-                except Exception:
-                    db.session.rollback()
-                    raise
-            else:
-                db.session.rollback()
-                raise
-        
-        # 同步写入新 RBAC 用户覆盖表：勾选的置 allow，未勾选的置 deny。
-        # 保证以 RBAC 为唯一权威来源后，权限变更立即对 check_permission 等读取路径生效。
-        try:
-            from utils.rbac_service import sync_overrides_from_selected
-            ok_rbac, msg_rbac = sync_overrides_from_selected(
-                user_id, set(permissions), operator_id=session.get('user_id'))
-            if not ok_rbac:
-                current_app.logger.warning(f"同步 RBAC 权限覆盖失败: {msg_rbac}")
-        except Exception as e:
-            current_app.logger.warning(f"同步 RBAC 权限覆盖异常: {e}")
-
-        # 记录权限变更日志
-        # 权限已变更，清除该用户的权限缓存，避免中间件读到旧权限
+        # RBAC 为唯一权威来源：勾选的置 allow，未勾选的置 deny
+        from utils.rbac_service import (sync_overrides_from_selected,
+                                        invalidate_user_permission_cache)
+        ok_rbac, msg_rbac = sync_overrides_from_selected(
+            user_id, set(permissions), operator_id=current_user_id)
+        if not ok_rbac:
+            return jsonify({'success': False, 'error': msg_rbac}), 400
+        invalidate_user_permission_cache(user_id)
         query_cache_manager.invalidate_user_cache(user_id)
-        invalidate_legacy_permission_cache(user_id)
+
+        admin_user = db.session.get(UserInfo, current_user_id)
+        current_app.logger.info(f"用户 {admin_user.username} 修改了用户 {user.username} 的权限")
         try:
-            from utils.rbac_service import invalidate_user_permission_cache
-            invalidate_user_permission_cache(user_id)
-        except Exception:
-            pass
-        user = db.session.get(UserInfo, user_id)
-        if user:
-            admin_user = db.session.get(UserInfo, session['user_id'])
-            current_app.logger.info(f"用户 {admin_user.username} 修改了用户 {user.username} 的权限")
-            try:
-                from utils.operation_logger import log_action
-                from models.operation_log import OperationType, TargetType
-                log_action(OperationType.UPDATE_PERMISSIONS,
-                           f"更新权限: {user.username}（{len(permissions)} 项）",
-                           TargetType.PERMISSION, user_id, user.username)
-            except Exception as e:
-                current_app.logger.warning(f"记录权限更新日志失败: {e}")
-        # 如果更新的是当前登录用户的权限，刷新session中的权限信息
-        if user_id == session.get('user_id'):
-            if not user.is_admin:
-                # 动态获取所有权限字段
-                user_permissions = {}
-                for field in permission.__table__.columns:
-                    if field.name.startswith('can_') and field.name != 'id' and field.name != 'user_id':
-                        user_permissions[field.name] = getattr(permission, field.name)
-                session['user_permissions'] = user_permissions
-                # 不再把会话版本写入 session
-        
+            from utils.operation_logger import log_action
+            from models.operation_log import OperationType, TargetType
+            log_action(OperationType.UPDATE_PERMISSIONS,
+                       f"更新权限: {user.username}（{len(permissions)} 项）",
+                       TargetType.PERMISSION, user_id, user.username)
+        except Exception as e:
+            current_app.logger.warning(f"记录权限更新日志失败: {e}")
+
+        # 如果更新的是当前登录用户，刷新 session 中的权限快照
+        if user_id == current_user_id and not user.is_admin:
+            session['user_permissions'] = {
+                code: bool(value)
+                for code, value in get_effective_permissions(user_id).items()
+                if code.startswith('can_')
+            }
+
         return jsonify({'success': True})
     except Exception as e:
-
         db.session.rollback()
         current_app.logger.error(f"更新用户权限失败: {str(e)}")
         return jsonify({'success': False, 'error': '更新权限失败'}), 500
@@ -11396,7 +11390,7 @@ def refresh_session_permissions():
 #         if not user:
 #             return jsonify({'success': False, 'error': '用户不存在'}), 404
 # 
-#         permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+#         permission = get_effective_permission_view(user_id)
 #         db_true = []
 #         if permission:
 #             for field in permission.__table__.columns:
@@ -11446,10 +11440,7 @@ def require_permission(permission_name):
             if user and user.is_admin:
                 return f(*args, **kwargs)
 
-            permission = PermissionInfo.query.filter_by(user_id=user_id).first()
-            if not permission:
-                flash('权限配置错误，请联系管理员', 'error')
-                return forbidden_page('权限配置错误，请联系管理员')
+            permission = get_effective_permission_view(user_id)
 
             # 检查所需权限
             if permission_name == 'upload' and not permission.can_upload:
@@ -11483,7 +11474,7 @@ def menu_management():
     
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_page:
             flash('您没有菜单管理权限', 'error')
             return forbidden_page('您没有菜单管理权限')
@@ -11498,7 +11489,7 @@ def _can_edit_sidebar_menu():
         return False
     if user.is_admin:
         return True
-    permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+    permission = get_effective_permission_view(session['user_id'])
     return bool(permission and permission.can_page)
 
 
@@ -11568,15 +11559,13 @@ def index():
     """网站主页（仪表盘）：登录用户均可访问，无权限的功能入口不展示"""
     if 'user_id' not in session:
         return redirect(url_for('main.login', next=request.url))
-    # 实时刷新权限，避免 session 中为旧快照（新增权限列后无需重新登录）
+    # 实时刷新权限，避免 session 中为旧快照（新增权限后无需重新登录）
     if not session.get('is_admin'):
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
-        if permission:
-            user_permissions = {}
-            for field in permission.__table__.columns:
-                if field.name.startswith('can_') and field.name not in ('id', 'user_id'):
-                    user_permissions[field.name] = getattr(permission, field.name)
-            session['user_permissions'] = user_permissions
+        session['user_permissions'] = {
+            code: bool(value)
+            for code, value in get_effective_permissions(session['user_id']).items()
+            if code.startswith('can_')
+        }
     return render_template('index.html', developer_info=get_developer_info())
 
 
@@ -11814,7 +11803,7 @@ def file_management():
     # 页面访问权限控制
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_file_management:
             flash('您没有文件管理页面的访问权限', 'error')
             return forbidden_page('您没有文件管理页面的访问权限')
@@ -11873,7 +11862,7 @@ def file_management():
 
             # 管理员拥有所有权限
             if not user.is_admin:
-                permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+                permission = get_effective_permission_view(user_id)
                 if not permission or not permission.can_file_management_upload:
                     flash('你没有上传文件的权限', 'error')
                     return redirect(request.url)
@@ -12198,13 +12187,7 @@ def file_management():
         current_user_obj = db.session.get(UserInfo, user_id)
         permissions = {}
         if current_user_obj and not current_user_obj.is_admin:
-            perm_obj = PermissionInfo.query.filter_by(user_id=user_id).first()
-            if perm_obj:
-                # 获取所有权限字段
-                from sqlalchemy import inspect as sa_inspect
-                mapper = sa_inspect(PermissionInfo)
-                for col in mapper.columns:
-                    permissions[col.key] = getattr(perm_obj, col.key, False)
+            permissions = get_effective_permissions(user_id)
 
         # 传递参数到模板
         db_uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
@@ -12234,12 +12217,7 @@ def file_management():
         if user_id:
             current_user_obj = db.session.get(UserInfo, user_id)
             if current_user_obj and not current_user_obj.is_admin:
-                perm_obj = PermissionInfo.query.filter_by(user_id=user_id).first()
-                if perm_obj:
-                    from sqlalchemy import inspect as sa_inspect
-                    mapper = sa_inspect(PermissionInfo)
-                    for col in mapper.columns:
-                        permissions[col.key] = getattr(perm_obj, col.key, False)
+                permissions = get_effective_permissions(user_id)
         
         return render_template(
             'file_management.html',
@@ -12262,7 +12240,7 @@ def download_file(filename):
         return redirect(url_for('main.login', next=request.url))
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_file_management_download:
             flash('你没有下载文件的权限', 'error')
             return redirect(url_for('main.file_management'))
@@ -12310,7 +12288,7 @@ def file_list_download():
             return jsonify({'error': '未登录'}), 401
         user = db.session.get(UserInfo, session['user_id'])
         if not user.is_admin:
-            permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+            permission = get_effective_permission_view(session['user_id'])
             if not permission or not permission.can_file_management_export_file_list:
                 return jsonify({'error': '权限不足'}), 403
 
@@ -13658,7 +13636,7 @@ def sublist_download():
             return jsonify({'error': '未登录'}), 401
         user = db.session.get(UserInfo, session['user_id'])
         if not user.is_admin:
-            permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+            permission = get_effective_permission_view(session['user_id'])
             if not permission or not permission.can_sub_list_download:
                 return jsonify({'error': '权限不足'}), 403
         data = request.get_json()
@@ -14008,7 +13986,7 @@ def usagelist_download():
             return jsonify({'error': '未登录'}), 401
         user = db.session.get(UserInfo, session['user_id'])
         if not user.is_admin:
-            permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+            permission = get_effective_permission_view(session['user_id'])
             if not permission or not permission.can_usage_list_download:
                 return jsonify({'error': '权限不足'}), 403
         data = request.get_json()
@@ -16934,7 +16912,7 @@ def update_material_summary():
     # 权限：需具备资材量页面更新权限
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_material_download_update:
             return jsonify({'success': False, 'error': '权限不足'}), 403
     
@@ -17337,7 +17315,7 @@ def get_material_summary_list():
     # 访问权限：需具备资材量页面访问权限
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_material_download:
             return jsonify({'success': False, 'error': '权限不足'}), 403
     
@@ -17418,7 +17396,7 @@ def get_material_summary_quantity_sum():
         return jsonify({'success': False, 'error': '未登录'}), 401
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_material_download:
             return jsonify({'success': False, 'error': '权限不足'}), 403
 
@@ -17463,7 +17441,7 @@ def get_material_summary_statistics():
     # 访问权限：需具备资材量页面访问权限
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_material_download:
             return jsonify({'success': False, 'error': '权限不足'}), 403
     
@@ -17556,7 +17534,7 @@ def download_material_summary():
     # 权限：需具备下载权限
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_material_download_download:
             return jsonify({'success': False, 'error': '权限不足'}), 403
     
@@ -17669,7 +17647,7 @@ def download_vehicle_details():
     # 权限：需具备下载权限
     user = db.session.get(UserInfo, session['user_id'])
     if not user.is_admin:
-        permission = PermissionInfo.query.filter_by(user_id=session['user_id']).first()
+        permission = get_effective_permission_view(session['user_id'])
         if not permission or not permission.can_material_download_download:
             return jsonify({'success': False, 'error': '权限不足'}), 403
     

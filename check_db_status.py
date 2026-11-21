@@ -29,18 +29,18 @@ def check_database_status():
             db.session.execute(text("SELECT 1"))
             print("✅ 数据库连接成功")
             
-            # 检查权限表
+            # 检查权限表（RBAC 用户级覆盖表）
             if db_type == 'sqlite':
-                result = db.session.execute(text("PRAGMA table_info(permission_info)"))
+                result = db.session.execute(text("PRAGMA table_info(user_permission_override)"))
                 columns = [row[1] for row in result.fetchall()]
             else:
-                result = db.session.execute(text("DESCRIBE permission_info"))
+                result = db.session.execute(text("DESCRIBE user_permission_override"))
                 columns = [row[0] for row in result.fetchall()]
             
             print(f"📊 权限表字段数量: {len(columns)}")
             
             # 检查关键字段
-            key_fields = ['can_file_management', 'can_file_management_delete']
+            key_fields = ['user_id', 'permission_code', 'effect']
             missing_fields = [field for field in key_fields if field not in columns]
             
             if missing_fields:

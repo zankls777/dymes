@@ -209,6 +209,7 @@ def create_cache_examples():
 # 缓存使用示例
 
 from utils.cache_helpers import query_cache, user_cache, file_cache, invalidate_cache
+from utils.permission_utils import get_effective_permission_view
 
 # 1. 查询缓存示例
 @query_cache(timeout=600)  # 缓存10分钟
@@ -224,8 +225,8 @@ def get_file_list():
 # 2. 用户缓存示例
 @user_cache(timeout=1800)  # 缓存30分钟
 def get_user_permissions(user_id):
-    """获取用户权限"""
-    return PermissionInfo.query.filter_by(user_id=user_id).first()
+    """获取用户权限（RBAC 有效权限）"""
+    return get_effective_permission_view(user_id)
 
 # 3. 文件缓存示例
 @file_cache(timeout=3600)  # 缓存1小时
@@ -246,11 +247,12 @@ def add_vehicle_type(vehicle_data):
 @invalidate_cache('user:*')
 def update_user_permissions(user_id, permissions):
     """更新用户权限（使用户缓存失效）"""
-    permission = PermissionInfo.query.filter_by(user_id=user_id).first()
-    if permission:
-        for key, value in permissions.items():
-            setattr(permission, key, value)
-        db.session.commit()
+    from utils.rbac_service import sync_overrides_from_selected
+    # 勾选的权限置 allow，未勾选的置 deny
+    selected = {code for code, enabled in permissions.items() if enabled}
+    ok, msg = sync_overrides_from_selected(user_id, selected)
+    if not ok:
+        raise RuntimeError(msg)
 
 # 5. 手动缓存管理示例
 from utils.cache_helpers import cache_manager

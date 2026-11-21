@@ -2,7 +2,7 @@
 RBAC 权限模型（权限组-权限-用户）
 
 设计说明：
-- Permission       : 权限项元数据（code 与现有 permission_info.can_* 字段同名，便于兼容）
+- Permission       : 权限项元数据（code 沿用历史 can_* 命名，便于兼容）
 - PermissionGroup  : 权限组（权限包），一个权限组打包若干权限项，用户直接分配到组
 - GroupPermission  : 权限组-权限关联，effect 取值 allow / deny
 - UserGroup        : 用户-权限组关联，一个用户可绑定多个权限组，权限取并集

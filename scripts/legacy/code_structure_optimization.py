@@ -50,7 +50,7 @@ def create_auth_blueprint():
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session, jsonify
 from flask_login import login_user, logout_user, login_required, current_user
 from models.user_info import UserInfo
-from models.permission_info import PermissionInfo
+from utils.permission_utils import get_effective_permission_view
 from utils.operation_logger import log_login
 from app_factory import current_app
 
@@ -183,8 +183,8 @@ def get_admin_permissions():
     }
 
 def get_user_permissions(user_id):
-    """获取用户权限"""
-    permission = PermissionInfo.query.filter_by(user_id=user_id).first()
+    """获取用户权限（RBAC 有效权限）"""
+    permission = get_effective_permission_view(user_id)
     if permission:
         return {
             'can_upload': permission.can_upload,

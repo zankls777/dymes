@@ -21,7 +21,12 @@ class WireReturnConfirm(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     lot_no = db.Column(db.String(100), nullable=False)       # LOT
     circuit_no = db.Column(db.String(100, collation='NOCASE'), nullable=False)  # 回路号（忽略大小写）
-    wire_qty = db.Column(db.Integer, nullable=True)          # 返回数量（选填）
+    part_no = db.Column(db.String(100), nullable=True)       # 品番（扫描比对时同步）
+    spec = db.Column(db.String(200), nullable=True)          # 规格（线束明细 sq）
+    color = db.Column(db.String(200), nullable=True)         # 颜色
+    length = db.Column(db.String(200), nullable=True)        # 长度
+    div_type = db.Column(db.String(200), nullable=True)      # 配线区分（线束明细 remark1）
+    wire_qty = db.Column(db.Integer, nullable=True)          # 返回数量（未手填时取补线记录合计）
     matched = db.Column(db.Boolean, default=False)           # 是否与扫描录入数据匹配
     created_at = db.Column(db.DateTime, default=get_utc8_time)
     updated_at = db.Column(db.DateTime, default=get_utc8_time, onupdate=get_utc8_time)
@@ -36,6 +41,11 @@ class WireReturnConfirm(db.Model):
             'id': self.id,
             'lot_no': self.lot_no or '',
             'circuit_no': self.circuit_no or '',
+            'part_no': self.part_no or '',
+            'spec': self.spec or '',
+            'color': self.color or '',
+            'length': self.length or '',
+            'div_type': self.div_type or '',
             'wire_qty': self.wire_qty,
             'matched': bool(self.matched),
             'created_at': format_utc8_time(self.created_at) if self.created_at else '',

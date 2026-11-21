@@ -407,7 +407,7 @@ def backup_mysql(app) -> dict:
 def import_all_models():
     """导入全部模型，确保 db.metadata 覆盖所有表（含动态生成的 finished_product）。"""
     modules = [
-        'models.user_info', 'models.permission_info', 'models.vehicle_type',
+        'models.user_info', 'models.vehicle_type',
         'models.file_info', 'models.data_management', 'models.corrugated_location',
         'models.sub_list', 'models.usage_list', 'models.material_summary',
         'models.sheet_calculation_result', 'models.tape_calculation_result',

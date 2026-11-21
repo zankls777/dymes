@@ -64,7 +64,7 @@ with app.app_context():
     inspector = inspect(db.engine)
 
     # 1) 原有三张小表的索引明细打印
-    for table in ('operation_logs', 'user_info', 'permission_info'):
+    for table in ('operation_logs', 'user_info', 'user_permission_override'):
         print(f"检查操作记录/用户/权限表 ({table}) 的索引:")
         try:
             for index in inspector.get_indexes(table):

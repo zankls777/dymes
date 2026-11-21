@@ -2,11 +2,11 @@
 权限项目录（Permission Catalog）
 
 作用：
-    将现有 PermissionInfo 中的 can_* 字段，映射为带「模块 / 页面 / 操作」语义的权限项元数据，
+    定义带「模块 / 页面 / 操作」语义的权限项元数据（can_* 编码），
     并在应用启动时可重复执行地同步进 permission 表。
 
 约定：
-    - code 与 PermissionInfo 的 can_* 列名严格一致，保证兼容旧数据与旧调用。
+    - code 沿用历史 can_* 命名，保证兼容现有调用。
     - permission_type 为 page 时表示页面访问权限，action 表示按钮/操作权限。
     - 同一 module_key 的权限项聚合成一个模块卡片，供管理界面分组展示。
 """
@@ -68,7 +68,7 @@ def _p(code, name, module_key, permission_type, sort_order, remark=None):
     }
 
 
-# 权限项清单：与 PermissionInfo 的 can_* 字段一一对应
+# 权限项清单：can_* 编码（历史命名保持兼容）
 PERMISSION_CATALOG = [
     # ---------- 首页 ----------
     _p('can_index', '首页访问', 'index', 'page', 10),

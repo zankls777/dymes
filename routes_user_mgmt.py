@@ -26,7 +26,6 @@ from sqlalchemy import or_, func
 
 from db import db
 from models.user_info import UserInfo
-from models.permission_info import PermissionInfo
 from models.rbac import UserGroup, UserPermissionOverride
 from utils.permission_utils import check_permission
 from utils import rbac_service
@@ -400,9 +399,13 @@ def api_import_users():
             db.session.add(new_user)
             db.session.flush()  # 获取 id
 
-            # 默认权限记录（与既有 add_user 行为保持一致）
-            perm = PermissionInfo(user_id=new_user.id, can_file_management=True)
-            db.session.add(perm)
+            # 默认权限（RBAC 用户覆盖：仅文件管理可见，与既有 add_user 行为一致）
+            db.session.add(UserPermissionOverride(
+                user_id=new_user.id,
+                permission_code='can_file_management',
+                effect='allow',
+                updated_by=operator_id,
+            ))
 
             # 权限组绑定
             for gid in group_ids:

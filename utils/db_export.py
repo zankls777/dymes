@@ -40,7 +40,7 @@ MAX_CELL_CHARS = 32000        # Excel 单元格上限 32767，留出余量
 
 # ---------------------------------------------------------------------------
 # 功能模块 ↔ 数据表映射
-# 说明：仅列出该功能产生的「业务数据表」，系统表(user_info/permission_info/
+# 说明：仅列出该功能产生的「业务数据表」，系统表(user_info/
 #       operation_logs 等)不放入功能模块，可通过「指定表导出」单独选择。
 # ---------------------------------------------------------------------------
 FUNCTION_TABLES = {
@@ -95,7 +95,9 @@ FUNCTION_TABLES = {
     },
     '系统设置与用户': {
         'desc': '系统设置、用户与权限、车辆类型等基础配置',
-        'tables': ['system_setting', 'user_info', 'permission_info'],
+        'tables': ['system_setting', 'user_info', 'permission',
+                   'permission_group', 'group_permission', 'user_group',
+                   'user_permission_override'],
     },
     '操作日志': {
         'desc': '系统操作审计日志',

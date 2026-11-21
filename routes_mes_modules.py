@@ -10,7 +10,7 @@
 当前阶段：基础框架 + 占位页面（数据模型 / 权限 / 菜单已就绪，
 业务逻辑后续按需补充）。字段为通用命名，业务细化时再调整。
 
-权限编码（与 utils/permission_catalog.py、models/permission_info.py 一致）：
+权限编码（与 utils/permission_catalog.py 一致）：
     页面访问 can_{key}；操作 can_{key}_add / _edit / _delete / _download
 """
 import csv
@@ -183,7 +183,7 @@ def _current_user():
 
 
 def _has_perm(user, perm_code):
-    """管理员恒有权限；否则查询 PermissionInfo 对应字段（走统一短 TTL 缓存）。"""
+    """管理员恒有权限；否则查询 RBAC 有效权限（走统一短 TTL 缓存）。"""
     if user is None:
         return False
     if getattr(user, 'is_admin', False):

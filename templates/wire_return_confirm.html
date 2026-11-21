@@ -154,11 +154,12 @@
                 <div class="table-responsive">
                     <table class="table table-sm table-bordered table-hover mb-0">
                         <thead>
-                            <tr><th>LOT</th><th>回路号</th><th>数量</th><th>比对结果</th>
+                            <tr><th>LOT</th><th>回路号</th><th>品番</th><th>规格</th><th>颜色</th>
+                                <th>长度</th><th>配线区分</th><th>数量</th><th>比对结果</th>
                                 <th>确认人</th><th>确认时间</th><th style="width:70px;">操作</th></tr>
                         </thead>
                         <tbody id="listTbody">
-                            <tr><td colspan="7" class="text-center text-muted py-3">加载中...</td></tr>
+                            <tr><td colspan="12" class="text-center text-muted py-3">加载中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -283,10 +284,25 @@
                     matchState.innerHTML = '<i class="fa fa-exclamation-triangle me-1"></i>' +
                         '数据下载中未找到该 LOT + 回路号，仅保存 LOT、回路号和数量(选填)';
                 }
-                // LOT 关联信息
+                // LOT 关联信息（品番/规格/颜色/长度/数量 与返回确认记录保持同步）
+                const detailRows = data.details || [];
+                // 配线区分与数据下载页同规则：Remark1 以 TW 开头取 TW，否则取 Rel2（空则 Rel1）
+                const divType = d => {
+                    const rk = String(d.remark1 || '').trim();
+                    if (/^TW-?/i.test(rk)) return 'TW';
+                    return String(d.rel2 || '') || String(d.rel1 || '');
+                };
+                const joinUnique = key => [...new Set(detailRows
+                    .map(d => String((typeof key === 'function' ? key(d) : d[key]) || '').trim())
+                    .filter(Boolean))].join('/') || '-';
+                const qtySum = (data.records || [])
+                    .reduce((s, r) => s + (Number(r.wire_qty) || 0), 0);
                 lotInfoRow.innerHTML = [
                     ['LOT', data.lot_no], ['回路号', data.circuit_no],
-                    ['品番', li.part_no || '-'], ['EO', li.jx_eo || '-'],
+                    ['品番', li.part_no || '-'], ['规格', joinUnique('sq')],
+                    ['颜色', joinUnique('color')], ['长度', joinUnique('length_cut2')],
+                    ['配线区分', joinUnique(divType)],
+                    ['数量', qtySum || '-'], ['EO', li.jx_eo || '-'],
                     ['车种别', li.vehicle_type || '-']
                 ].map(([k, v]) =>
                     `<div class="col-6 col-md-2"><div class="small text-muted">${k}</div>
@@ -371,7 +387,9 @@
                     }
                     if (auto) {
                         // 自动确认：结果区保留，清空数量，直接等待下一张传票
-                        showToast(`已自动确认返回：${payload.lot_no} / ${payload.circuit_no}`, 'success');
+                        showToast(`已自动确认返回：${payload.lot_no} / ${payload.circuit_no}` +
+                            (data.siblings ? `，同图纸其他 ${data.siblings} 个回路已默认返回` : ''),
+                            'success');
                         wireQty.value = '';
                         scanInput.focus();
                         await loadList();
@@ -405,7 +423,7 @@
                     const rows = data.records || [];
                     listCount.textContent = `${rows.length} 条`;
                     if (!rows.length) {
-                        listTbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">暂无返回确认记录</td></tr>';
+                        listTbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">暂无返回确认记录</td></tr>';
                         return;
                     }
                     listTbody.innerHTML = rows.map(r => {
@@ -418,6 +436,11 @@
                         return `<tr>
                             <td>${esc(r.lot_no)}</td>
                             <td>${esc(r.circuit_no)}</td>
+                            <td>${esc(r.part_no || '')}</td>
+                            <td>${esc(r.spec || '')}</td>
+                            <td>${esc(r.color || '')}</td>
+                            <td>${esc(r.length || '')}</td>
+                            <td>${esc(r.div_type || '')}</td>
                             <td>${esc(r.wire_qty == null ? '' : r.wire_qty)}</td>
                             <td>${badge}</td>
                             <td>${esc(r.created_by_name || '')}</td>
@@ -425,7 +448,7 @@
                             <td class="text-center">${delBtn}</td></tr>`;
                     }).join('');
                 } catch (e) {
-                    listTbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-3">${esc(e.message)}</td></tr>`;
+                    listTbody.innerHTML = `<tr><td colspan="12" class="text-center text-danger py-3">${esc(e.message)}</td></tr>`;
                 }
             }
 

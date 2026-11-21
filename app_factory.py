@@ -19,7 +19,6 @@ from flask_caching import Cache
 from sqlalchemy import event
 
 from models.user_info import UserInfo
-from models.permission_info import PermissionInfo
 from models.vehicle_type import VehicleType
 
 csrf = CSRFProtect()
@@ -442,7 +441,7 @@ def create_app():
             except Exception as _ce:
                 app.logger.warning(f"兜底建表失败: {_ce}")
 
-        # 说明：user_info / file_info / permission_info / usage_list / sub_list /
+        # 说明：user_info / file_info / usage_list / sub_list /
         # plan_login / production_inbound / wire_scan_record / finished_product
         # 的新增字段与索引，均已集中到 utils.schema_upgrade 统一处理（含恢复后重放）。
 
@@ -524,54 +523,9 @@ def create_app():
             admin = UserInfo(username=_admin_user, password=generate_password_hash(_init_pass), is_admin=True)
             db.session.add(admin)
             db.session.commit()
-
-            permission = PermissionInfo(
-                user_id=admin.id,
-                can_upload=True,
-                can_delete=True,
-                can_batch_delete=True,
-                can_page=True,
-                can_vehicle_types=True,
-                can_products=True,
-                can_material_download=True,
-                can_file_management=True,
-                can_file_comparison=True,
-                can_sub_list=True,
-                can_usage_list=True,
-                can_rw_comparison=True,
-                can_rw_comparison_compare=True,
-                can_rw_comparison_download=True,
-                can_products_add=True,
-                can_products_edit=True,
-                can_products_delete=True,
-                can_products_download=True,
-                can_products_import=True,
-                can_vehicle_types_add=True,
-                can_vehicle_types_edit=True,
-                can_vehicle_types_delete=True,
-                can_vehicle_types_download=True,
-                can_material_download_download=True,
-                can_material_download_update=True,
-                can_file_management_upload=True,
-                can_file_management_delete=True,
-                can_file_management_download=True,
-                can_file_management_export_file_list=True,
-                can_file_comparison_compare=True,
-                can_file_comparison_download=True,
-                can_sub_list_add=True,
-                can_sub_list_edit=True,
-                can_sub_list_delete=True,
-                can_sub_list_download=True,
-                can_usage_list_add=True,
-                can_usage_list_edit=True,
-                can_usage_list_delete=True,
-                can_usage_list_download=True
-            )
-            db.session.add(permission)
-            db.session.commit()
         else:
             # 账号已存在：同步更新密码与管理员标记，保证 app.py 中的配置修改即时生效；
-            # 权限记录在首次创建时已分配，此处不再重复插入（避免唯一约束冲突）
+            # 管理员权限由 is_admin 直接放行，无需权限记录。
 
             # 启动期强制重置历史遗留的已知弱口令（如旧版默认 admin123!、123456 等）。
             # 必须在覆盖 admin.password 之前检测旧哈希，否则无法判断是否需要强制重置。

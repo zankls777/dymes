@@ -10,9 +10,8 @@ RBAC 权限服务（权限组模型）
 生效优先级（高 → 低）：
     用户覆盖(user_permission_override) > 用户权限组(user_group) > 无权限(False)
 
-兼容策略：
-    当某用户尚无任何权限组、也无任何覆盖记录时，回退读取旧表 PermissionInfo 的
-    布尔字段，保证升级后老用户权限不丢失。
+说明：
+    旧权限表 permission_info 已在升级时备份并删除，RBAC 为唯一权威来源。
 """
 
 from flask import current_app
@@ -22,7 +21,6 @@ from models.rbac import (
     PermissionGroup, GroupPermission, UserGroup, UserPermissionOverride, Permission,
     EFFECT_ALLOW, EFFECT_DENY,
 )
-from models.permission_info import PermissionInfo
 from models.user_info import UserInfo
 from utils.permission_catalog import (
     PERMISSION_CATALOG, PERMISSION_CODES, PAGE_PERMISSION_CODES,
@@ -121,59 +119,14 @@ def _ensure_builtin_groups():
     db.session.commit()
 
 
-def migrate_legacy_user_permissions():
-    """
-    将旧表 PermissionInfo 中显式为 True 的字段迁移为「用户级覆盖 allow」。
-
-    采用「按需惰性」策略：仅在用户尚无任何权限组与覆盖记录时迁移其一次性快照，
-    已是标准 RBAC 用户的记录不重复导入，避免覆盖管理员后续的可视化调整。
-    幂等：已迁移用户会被跳过。
-    """
-    migrated = 0
-    try:
-        standard_users = set()
-        standard_users.update(ug.user_id for ug in UserGroup.query.all())
-        standard_users.update(ov.user_id for ov in UserPermissionOverride.query.all())
-
-        legacy_rows = PermissionInfo.query.all()
-        for row in legacy_rows:
-            if row.user_id in standard_users:
-                continue
-            overrides = []
-            for code in PERMISSION_CODES:
-                if bool(getattr(row, code, False)):
-                    overrides.append(UserPermissionOverride(
-                        user_id=row.user_id, permission_code=code,
-                        effect=EFFECT_ALLOW,
-                    ))
-            if overrides:
-                db.session.add_all(overrides)
-                migrated += 1
-
-        if migrated:
-            db.session.commit()
-            invalidate_user_permission_cache()
-            current_app.logger.info(f"旧权限数据迁移完成: {migrated} 个用户")
-        return migrated
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"旧权限数据迁移失败: {e}")
-        return 0
-
-
 def init_rbac_defaults():
-    """启动时初始化：同步权限目录 → 创建内置权限组 → 迁移旧权限数据"""
+    """启动时初始化：同步权限目录 → 创建内置权限组"""
     sync_permission_catalog()
     try:
         _ensure_builtin_groups()
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"创建内置权限组失败: {e}")
-    try:
-        migrate_legacy_user_permissions()
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"迁移旧权限失败: {e}")
     return True
 
 
@@ -214,22 +167,6 @@ def _collect_group_permissions_batch(group_ids):
     rows = GroupPermission.query.filter(GroupPermission.group_id.in_(active_ids)).all()
     for gp in rows:
         result.setdefault(gp.group_id, {})[gp.permission_code] = gp.effect
-    return result
-
-
-def _load_legacy_permissions(user_id):
-    """回退读取旧表 PermissionInfo，返回 {code: bool}"""
-    from utils.permission_utils import _get_legacy_permission_row
-    permission = _get_legacy_permission_row(user_id)
-    if not permission:
-        return {}
-    result = {}
-    for item in PERMISSION_CATALOG:
-        code = item['code']
-        try:
-            result[code] = bool(getattr(permission, code, False))
-        except Exception:
-            result[code] = False
     return result
 
 
@@ -281,14 +218,6 @@ def compute_effective_permissions(user_id, use_cache=True):
             else:
                 result[code] = False
 
-        # 4) 兼容回退：该用户既无权限组也无覆盖时，读取旧表 PermissionInfo。
-        #    仅在 RBAC 尚未建立任何记录（全新/未迁移用户）时生效，避免老用户失权；
-        #    已迁移用户在启动时会被写入覆盖记录，因此不会走到此分支。
-        if not user_groups and not overrides:
-            legacy = _load_legacy_permissions(user_id)
-            if legacy:
-                result = legacy
-
         _write_cache(user_id, result)
         return dict(result)
 
@@ -309,91 +238,6 @@ def invalidate_user_permission_cache(user_id=None):
         cache.invalidate_all()
     else:
         cache.invalidate_user_cache(user_id)
-    # 同步失效旧权限表查询缓存，保证权限组/覆盖变更后立即生效
-    try:
-        from utils.permission_utils import invalidate_legacy_permission_cache
-        invalidate_legacy_permission_cache(user_id)
-    except Exception:
-        pass
-
-
-def _compute_effective_permissions_batch(user_ids):
-    """
-    批量计算多个用户的有效权限（替代循环调 compute_effective_permissions 的 N+1 版本）。
-
-    一次 IN 查询取回所有相关数据（UserGroup / PermissionGroup / GroupPermission /
-    UserPermissionOverride / UserInfo），在内存中按 user_id 归并计算，避免逐用户
-    6+ 次 DB 查询。
-
-    Returns:
-        dict: {user_id: {permission_code: bool}}
-    """
-    if not user_ids:
-        return {}
-
-    # 1) 批量查用户，过滤管理员与活跃状态
-    users = {u.id: u for u in UserInfo.query.filter(UserInfo.id.in_(user_ids)).all()}
-
-    # 2) 批量查用户-权限组绑定
-    user_groups = {}  # {user_id: [group_id, ...]}
-    for ug in UserGroup.query.filter(UserGroup.user_id.in_(user_ids)).all():
-        user_groups.setdefault(ug.user_id, []).append(ug.group_id)
-
-    # 3) 批量查权限组（只关心 active 的）
-    all_group_ids = set()
-    for gids in user_groups.values():
-        all_group_ids.update(gids)
-    active_groups = {g.id for g in PermissionGroup.query.filter(
-        PermissionGroup.id.in_(list(all_group_ids)) if all_group_ids else False,
-        PermissionGroup.is_active.is_(True)
-    ).all()} if all_group_ids else set()
-
-    # 4) 批量查组-权限明细，内存归并 {group_id: {code: effect}}
-    group_perms_map = {}
-    if active_groups:
-        for gp in GroupPermission.query.filter(GroupPermission.group_id.in_(active_groups)).all():
-            group_perms_map.setdefault(gp.group_id, {})[gp.permission_code] = gp.effect
-
-    # 5) 批量查用户覆盖 {user_id: {code: effect}}
-    user_overrides = {}
-    for ov in UserPermissionOverride.query.filter(UserPermissionOverride.user_id.in_(user_ids)).all():
-        user_overrides.setdefault(ov.user_id, {})[ov.permission_code] = ov.effect
-
-    # 6) 逐个用户合并计算（无管理员/无回退分支，因为调用方已处理）
-    result = {}
-    for uid in user_ids:
-        user = users.get(uid)
-        if user is None:
-            result[uid] = {code: False for code in PERMISSION_CODES}
-            continue
-
-        if user.is_admin:
-            result[uid] = {code: True for code in PERMISSION_CODES}
-            continue
-
-        # 合并所有关联组的权限（多组并集）
-        merged = {}
-        for gid in user_groups.get(uid, []):
-            if gid not in active_groups:
-                continue
-            for code, effect in group_perms_map.get(gid, {}).items():
-                if code not in merged or effect == EFFECT_ALLOW:
-                    merged[code] = effect
-
-        # 用户覆盖优先
-        overrides = user_overrides.get(uid, {})
-        perms = {}
-        for code in PERMISSION_CODES:
-            if code in overrides:
-                perms[code] = (overrides[code] == EFFECT_ALLOW)
-            elif code in merged:
-                perms[code] = (merged[code] == EFFECT_ALLOW)
-            else:
-                perms[code] = False
-
-        result[uid] = perms
-
-    return result
 
 
 def invalidate_group_permission_cache(group_id):
@@ -406,102 +250,8 @@ def invalidate_group_permission_cache(group_id):
         cache = _get_perm_cache()
         for uid in user_ids:
             cache.invalidate_user_cache(uid)
-        try:
-            from utils.permission_utils import invalidate_legacy_permission_cache
-            for uid in user_ids:
-                invalidate_legacy_permission_cache(uid)
-        except Exception:
-            pass
-        # 同步刷新旧表镜像，保证直查 PermissionInfo 的页面一致（后台执行）
-        import threading
-        threading.Thread(
-            target=_bg_sync_legacy_rows,
-            args=(list(user_ids),),
-            daemon=True,
-        ).start()
     except Exception as e:
         current_app.logger.warning(f"失效权限组缓存失败 - 权限组ID {group_id}: {e}")
-
-
-def _bg_sync_legacy_rows(user_ids):
-    """后台线程：批量镜像旧表（不阻塞 API 响应）。"""
-    try:
-        # 新建独立应用上下文与 DB session，避免跨线程 session 问题
-        with current_app.app_context():
-            sync_legacy_rows_from_rbac(user_ids)
-    except Exception as e:
-        current_app.logger.warning(f"后台镜像旧表失败: {e}")
-
-
-def sync_legacy_rows_from_rbac(user_ids):
-    """批量将多个用户的有效权限回写到旧表 PermissionInfo（M-9：单次提交）。"""
-    if not user_ids:
-        return
-    try:
-        # 批量计算所有用户的有效权限（一次归并，N 次 DB 查询总量 ~10）
-        batch_perms = _compute_effective_permissions_batch(user_ids)
-
-        # 批量读取已存在的旧表行，避免逐用户查询
-        existing = {row.user_id: row for row in
-                    PermissionInfo.query.filter(PermissionInfo.user_id.in_(user_ids)).all()}
-
-        # 统一写入
-        for user_id, perms in batch_perms.items():
-            row = existing.get(user_id)
-            if row is None:
-                row = PermissionInfo(user_id=user_id)
-                db.session.add(row)
-                existing[user_id] = row
-            for code, allowed in perms.items():
-                if hasattr(row, code):
-                    setattr(row, code, bool(allowed))
-        db.session.commit()
-
-        # 失效缓存
-        cache = _get_perm_cache()
-        for uid in user_ids:
-            cache.invalidate_user_cache(uid)
-        try:
-            from utils.permission_utils import invalidate_legacy_permission_cache
-            for uid in user_ids:
-                invalidate_legacy_permission_cache(uid)
-        except Exception:
-            pass
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.warning(f"批量镜像旧表权限失败: {e}")
-
-
-def sync_legacy_row_from_rbac(user_id):
-    """
-    将用户在 RBAC 中的有效权限回写到旧表 PermissionInfo（镜像）。
-
-    背景：项目仍有 40+ 处页面校验直接读取旧表 PermissionInfo。为使「以 RBAC 为
-    唯一权威来源」的决策在全局一致，RBAC 权限变更后将有效权限镜像到旧表，
-    这些旧表直查点无需改造即可读到最新权限。
-
-    注意：不回写 None 值以外的语义——仅同步 can_* 布尔字段。
-    """
-    try:
-        perms = compute_effective_permissions(user_id, use_cache=False)
-        if not perms:
-            return
-        row = PermissionInfo.query.filter_by(user_id=user_id).first()
-        if row is None:
-            row = PermissionInfo(user_id=user_id)
-            db.session.add(row)
-        for code, allowed in perms.items():
-            if hasattr(row, code):
-                setattr(row, code, bool(allowed))
-        db.session.commit()
-        try:
-            from utils.permission_utils import invalidate_legacy_permission_cache
-            invalidate_legacy_permission_cache(user_id)
-        except Exception:
-            pass
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.warning(f"镜像旧表权限失败 - 用户ID {user_id}: {e}")
 
 
 # ============================================================
@@ -684,12 +434,6 @@ def set_group_members(group_id, user_ids, operator_id=None):
         db.session.commit()
         for uid in user_ids:
             invalidate_user_permission_cache(uid)
-        # 批量镜像旧表（后台）
-        if user_ids:
-            import threading
-            threading.Thread(
-                target=_bg_sync_legacy_rows, args=(list(user_ids),), daemon=True,
-            ).start()
         return True, '权限组成员保存成功'
     except Exception as e:
         db.session.rollback()
@@ -714,18 +458,13 @@ def set_user_groups(user_id, group_ids, operator_id=None):
             db.session.add(UserGroup(user_id=user_id, group_id=gid, created_by=operator_id))
 
         # 分配权限组即视为以权限组为准：清除该用户的历史覆盖记录
-        # （含旧表迁移生成的覆盖快照），避免覆盖项压过权限组导致分组不生效。
+        # （避免历史覆盖项压过权限组导致分组不生效）。
         # 如需个性化微调，请在「批量分配权限」中重新设置覆盖。
         if group_ids:
             UserPermissionOverride.query.filter_by(user_id=user_id).delete()
 
         db.session.commit()
         invalidate_user_permission_cache(user_id)
-        # 单用户也改为后台，避免偶发阻塞
-        import threading
-        threading.Thread(
-            target=_bg_sync_legacy_rows, args=([user_id],), daemon=True,
-        ).start()
         return True, '用户权限组保存成功'
     except Exception as e:
         db.session.rollback()
@@ -743,8 +482,8 @@ def sync_overrides_from_selected(user_id, selected_codes, operator_id=None):
     """
     以「勾选集合」为准全量同步用户 RBAC 覆盖。
 
-    旧权限设置接口（勾选框模式）只维护 PermissionInfo；本函数将其结果同步到
-    RBAC 覆盖表：勾选的置 allow、未勾选的置 deny，使 RBAC 成为唯一权威来源，
+    旧权限设置接口（勾选框模式）的结果写入 RBAC 覆盖表：
+    勾选的置 allow、未勾选的置 deny，使 RBAC 成为唯一权威来源，
     保证 check_permission 等读取路径立即与设置界面一致。
 
     Args:
@@ -787,11 +526,6 @@ def set_user_overrides(user_id, overrides, operator_id=None):
 
         db.session.commit()
         invalidate_user_permission_cache(user_id)
-        # 用户覆盖变更也后台镜像旧表
-        import threading
-        threading.Thread(
-            target=_bg_sync_legacy_rows, args=([user_id],), daemon=True,
-        ).start()
         return True, '用户权限覆盖保存成功'
     except Exception as e:
         db.session.rollback()

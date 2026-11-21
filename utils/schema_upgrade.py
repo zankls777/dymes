@@ -28,103 +28,6 @@ logger = logging.getLogger('schema_upgrade')
 # 新功能新增字段时，只需在此登记即可在恢复后自动补齐。
 # ---------------------------------------------------------------------------
 COLUMN_UPGRADES = {
-    'permission_info': [
-        # MES 分组
-        ('can_mes_group', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_group_add', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_group_edit', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_group_delete', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_group_download', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_group_unmask', 'BOOLEAN DEFAULT 0'),
-        # MES 模块（计划登录 / 生产入库 / 品质检查 / 单价登陆）
-        ('can_mes_plan', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_plan_add', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_plan_edit', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_plan_delete', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_plan_download', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_production', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_production_add', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_production_edit', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_production_delete', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_production_download', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_production_unmask', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_quality', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_quality_add', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_quality_edit', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_quality_delete', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_quality_download', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_price', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_price_add', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_price_edit', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_price_delete', 'BOOLEAN DEFAULT 0'),
-        ('can_mes_price_download', 'BOOLEAN DEFAULT 0'),
-        # 文件管理 / 其他页面访问权限
-        ('can_file_management_export_file_list', 'BOOLEAN DEFAULT 0'),
-        ('can_file_management_freeze', 'BOOLEAN DEFAULT 0'),
-        ('can_material_calculator', 'BOOLEAN DEFAULT 0'),
-        ('can_invest_tidy', 'BOOLEAN DEFAULT 0'),
-        ('can_invest_summary', 'BOOLEAN DEFAULT 0'),
-        ('can_auto_loading', 'BOOLEAN DEFAULT 0'),
-        ('can_auto_loading_upload', 'BOOLEAN DEFAULT 0'),
-        ('can_auto_loading_delete', 'BOOLEAN DEFAULT 0'),
-        ('can_auto_loading_export', 'BOOLEAN DEFAULT 0'),
-        ('can_data_management', 'BOOLEAN DEFAULT 0'),
-        ('can_corrugated_location', 'BOOLEAN DEFAULT 0'),
-        ('can_test_sheet', 'BOOLEAN DEFAULT 0'),
-        ('can_index', 'BOOLEAN DEFAULT 0'),
-        # 补线打端子
-        ('can_wire_lot_login', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_lot_login_add', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_lot_login_upload', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_lot_login_clear', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_lot_login_download', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_scan_entry', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_scan_entry_scan', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_scan_entry_save', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_scan_entry_edit', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_scan_entry_delete', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_scan_entry_download', 'BOOLEAN DEFAULT 0'),
-        # 压高登陆：页面访问 + Excel 导入/删除
-        ('can_wire_crimp_login', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_crimp_login_upload', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_data_download', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_data_download_query', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_data_download_download', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_data_download_edit', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_data_download_delete', 'BOOLEAN DEFAULT 0'),
-        # 补线返回确认
-        ('can_wire_return_confirm', 'BOOLEAN DEFAULT 0'),
-        ('can_wire_return_confirm_submit', 'BOOLEAN DEFAULT 0'),
-        # 资材入库
-        ('can_material_inbound_daily', 'BOOLEAN DEFAULT 0'),
-        ('can_material_inbound_daily_upload', 'BOOLEAN DEFAULT 0'),
-        ('can_material_inbound_daily_add', 'BOOLEAN DEFAULT 0'),
-        ('can_material_inbound_daily_edit', 'BOOLEAN DEFAULT 0'),
-        ('can_material_inbound_daily_delete', 'BOOLEAN DEFAULT 0'),
-        ('can_material_inbound_daily_download', 'BOOLEAN DEFAULT 0'),
-        ('can_material_inbound', 'BOOLEAN DEFAULT 0'),
-        ('can_material_inbound_scan', 'BOOLEAN DEFAULT 0'),
-        ('can_material_inbound_submit', 'BOOLEAN DEFAULT 0'),
-        ('can_material_inbound_revoke', 'BOOLEAN DEFAULT 0'),
-        # 盘点管理
-        ('can_inventory_login', 'BOOLEAN DEFAULT 0'),
-        ('can_inventory_login_edit', 'BOOLEAN DEFAULT 0'),
-        ('can_inventory_check', 'BOOLEAN DEFAULT 0'),
-        ('can_inventory_check_submit', 'BOOLEAN DEFAULT 0'),
-        ('can_inventory_summary', 'BOOLEAN DEFAULT 0'),
-        ('can_inventory_summary_delete', 'BOOLEAN DEFAULT 0'),
-        # 不良品登录 / 导出
-        ('can_defective_login', 'BOOLEAN DEFAULT 0'),
-        ('can_defective_login_submit', 'BOOLEAN DEFAULT 0'),
-        ('can_defective_login_delete', 'BOOLEAN DEFAULT 0'),
-        ('can_defective_export', 'BOOLEAN DEFAULT 0'),
-        ('can_defective_export_download', 'BOOLEAN DEFAULT 0'),
-        # NAS 文件搜索
-        ('can_nas_file_search', 'BOOLEAN DEFAULT 0'),
-        ('can_nas_file_search_config', 'BOOLEAN DEFAULT 0'),
-        ('can_nas_file_search_search', 'BOOLEAN DEFAULT 0'),
-        ('can_nas_file_search_import', 'BOOLEAN DEFAULT 0'),
-    ],
     'user_info': [
         ('is_active', 'BOOLEAN NOT NULL DEFAULT 1'),
         # 用户基本信息扩展
@@ -189,6 +92,14 @@ COLUMN_UPGRADES = {
         # 图纸编号 SetCode 快照：用于同图纸兄弟回路兜底查询时按 SetCode 精确过滤，
         # 避免返回同 LOT 下不同图纸的无关回路
         ('set_code', 'VARCHAR(50)'),
+    ],
+    'wire_return_confirm': [
+        # 扫描比对时同步拉取的展示字段（品番/规格/颜色/长度/配线区分）
+        ('part_no', 'VARCHAR(100)'),
+        ('spec', 'VARCHAR(200)'),
+        ('color', 'VARCHAR(200)'),
+        ('length', 'VARCHAR(200)'),
+        ('div_type', 'VARCHAR(200)'),
     ],
     'wire_crimp_login': [
         # 匹配键扩展：线质（如 AVSS/CIVUS），加入后旧数据将被清空由用户重新上传
@@ -394,6 +305,73 @@ def _drop_legacy_columns(stat):
     stat['legacy_columns'] = removed
 
 
+def _drop_legacy_permission_table(stat):
+    """一次性迁移并删除旧权限表 permission_info（幂等，失败不致命）。
+
+    步骤：
+        1. 备份旧表为 permission_info_backup_YYYYMMDD（当日备份已存在则跳过）
+        2. 把旧表中显式为 True 的权限迁移为 RBAC 用户覆盖 allow；
+           仅处理「既无权限组、也无覆盖记录」的用户，避免覆盖已配置的 RBAC 用户
+        3. DROP 旧表，RBAC 成为唯一权限来源
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(db.engine)
+        existing_tables = set(inspector.get_table_names())
+        if 'permission_info' not in existing_tables:
+            return
+
+        from utils.permission_catalog import PERMISSION_CODES
+        from datetime import datetime as _dt
+
+        # 1) 备份（按日期命名，同日重复启动不重复备份）
+        backup = f"permission_info_backup_{_dt.now().strftime('%Y%m%d')}"
+        if backup not in existing_tables:
+            db.session.execute(text(
+                f'CREATE TABLE "{backup}" AS SELECT * FROM permission_info'))
+            db.session.commit()
+
+        # 2) 旧权限 → RBAC 用户覆盖（仅迁移尚无 RBAC 配置的用户）
+        rows = db.session.execute(text('SELECT * FROM permission_info')).mappings().all()
+        migrated = 0
+        if rows:
+            cols = set(rows[0].keys())
+            configured = set(
+                r[0] for r in db.session.execute(text('SELECT user_id FROM user_group')).fetchall())
+            configured.update(
+                r[0] for r in db.session.execute(
+                    text('SELECT user_id FROM user_permission_override')).fetchall())
+
+            for row in rows:
+                uid = row.get('user_id')
+                if uid is None or uid in configured:
+                    continue
+                allow_codes = [c for c in PERMISSION_CODES
+                               if c in cols and bool(row.get(c))]
+                for code in allow_codes:
+                    db.session.execute(text(
+                        'INSERT INTO user_permission_override '
+                        '(user_id, permission_code, effect) '
+                        "VALUES (:uid, :code, 'allow')"
+                    ), {'uid': uid, 'code': code})
+                if allow_codes:
+                    migrated += 1
+            db.session.commit()
+
+        # 3) 删除旧表
+        db.session.execute(text('DROP TABLE IF EXISTS permission_info'))
+        db.session.commit()
+
+        stat['legacy_permission_table'] = (
+            f'dropped (backup={backup}, migrated_users={migrated})')
+        logger.info(f"旧权限表已删除: 备份 {backup}, 迁移用户 {migrated} 个")
+    except Exception as e:
+        db.session.rollback()
+        stat['errors'].append(f'旧权限表迁移删除失败: {e}')
+        logger.warning(f"旧权限表迁移删除失败: {e}")
+
+
 def _import_all_models():
     """导入全部模型，确保 db.create_all() 能建出完整表结构。"""
     # noqa: F401 仅用于触发模型注册
@@ -544,6 +522,9 @@ def upgrade_schema():
         except Exception as e:
             db.session.rollback()
             logger.warning(f"删除废弃角色表失败 {legacy_table}: {e}")
+
+    # 4.5) 备份并删除旧权限表（RBAC 为唯一权限来源）
+    _drop_legacy_permission_table(stat)
 
     # 5) 回填操作人姓名快照：把「当前仍存在的用户」的姓名写入历史记录的
     #    *_name 快照列，确保日后删除该用户时历史文本不丢失。幂等：仅补空值。

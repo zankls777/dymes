@@ -14,7 +14,7 @@
 币种处理：unit_price 存在 CNY/JPY/USD 多币种，按币种分组汇总金额，
           不做汇率换算，避免引入不准确的换算结果。
 
-权限编码（与 utils/permission_catalog.py、models/permission_info.py 一致）：
+权限编码（与 utils/permission_catalog.py 一致）：
     页面访问 can_mes_group；导出 can_mes_group_download
 """
 import csv
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 mes_bp = Blueprint('mes', __name__, url_prefix='/mes')
 
-# 权限编码（与 utils/permission_catalog.py、models/permission_info.py 保持一致）
+# 权限编码（与 utils/permission_catalog.py 保持一致）
 PERM_PAGE = 'can_mes_group'
 PERM_DOWNLOAD = 'can_mes_group_download'
 PERM_UNMASK = 'can_mes_group_unmask'   # 查看结算单价/金额（未授权则脱敏）
@@ -51,7 +51,7 @@ def _current_user():
 
 
 def _has_perm(user, perm_code):
-    """管理员恒有权限；否则查询 PermissionInfo 对应字段（走统一短 TTL 缓存）。"""
+    """管理员恒有权限；否则查询 RBAC 有效权限（走统一短 TTL 缓存）。"""
     if user is None:
         return False
     if getattr(user, 'is_admin', False):

@@ -283,7 +283,7 @@
                         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="card-title mb-0"><i class="fa fa-users mr-1"></i> 用户与权限管理</h5>
                             <div class="d-flex gap-2 flex-wrap">
-                                {% if current_user and (current_user.is_admin or (current_user.permission and current_user.permission.can_user_mgmt_add_user)) %}
+                                {% if current_user and (current_user.is_admin or (current_user.has_permission('can_user_mgmt_add_user'))) %}
                                     <button type="button" class="btn btn-primary" id="addUserBtn" data-bs-toggle="modal" data-bs-target="#addUserModal">
                                         <i class="fa fa-plus mr-1"></i> 添加用户
                                     </button>
@@ -291,7 +291,7 @@
                                         <i class="fa fa-file-excel-o mr-1"></i> 批量导入
                                     </button>
                                 {% endif %}
-                                {% if current_user and (current_user.is_admin or (current_user.permission and current_user.permission.can_user_mgmt_manage_permissions)) %}
+                                {% if current_user and (current_user.is_admin or (current_user.has_permission('can_user_mgmt_manage_permissions'))) %}
                                     <button type="button" class="btn btn-outline-info" id="batchPermissionBtn" disabled data-bs-toggle="modal" data-bs-target="#batchPermissionModal">
                                         <i class="fa fa-object-group mr-1"></i> 批量权限 <span class="badge bg-secondary" id="batchSelectedCount">0</span>
                                     </button>
@@ -1913,13 +1913,15 @@
     <script src="../static/js/bootstrap.bundle.min.js"></script>
     <script>
         // 供外部模块使用的权限/身份标记
-        window.UM_CAN_ADD_USER = {{ 'true' if current_user and (current_user.is_admin or (current_user.permission and current_user.permission.can_user_mgmt_add_user)) else 'false' }};
-        window.UM_CAN_MANAGE_PERM = {{ 'true' if current_user and (current_user.is_admin or (current_user.permission and current_user.permission.can_user_mgmt_manage_permissions)) else 'false' }};
+        window.UM_CAN_ADD_USER = {{ 'true' if current_user and (current_user.is_admin or (current_user.has_permission('can_user_mgmt_add_user'))) else 'false' }};
+        window.UM_CAN_MANAGE_PERM = {{ 'true' if current_user and (current_user.is_admin or (current_user.has_permission('can_user_mgmt_manage_permissions'))) else 'false' }};
         window.UM_SELF_ID = {{ current_user.id if current_user else 'null' }};
     </script>
     <script src="{{ url_for('static', filename='js/user-management.js') }}"></script>
     <script>
         // 全局变量，存储所有权限信息
+        // 打开弹窗时从服务端加载的权限集合（用于保存时保留页面上无复选框的权限）
+        let loadedPermissions = [];
         const allPermissions = {
             // 基础权限
             'can_upload': { id: 'can_upload', name: '上传权限' },
@@ -2303,6 +2305,7 @@
                         console.log('权限数据:', data);
                         // 处理返回的权限数据
                         if (data.permissions) {
+                            loadedPermissions = data.permissions.slice();
                             const normalize = (perm) => (perm === 'can_vehicle_types_import_excel' ? 'can_vehicle_types_import' : perm);
                             data.permissions.forEach(rawPerm => {
                                 const perm = normalize(rawPerm);
@@ -2546,6 +2549,18 @@
                     const element = document.getElementById(perm.id);
                     if (element && element.checked) {
                         checkedPermissions.push(key);
+                    }
+                });
+
+                // 保留页面上没有对应复选框的权限（如权限组授予的权限、系统管理等），
+                // 避免保存时被静默清空，造成「先增加的权限不显示」
+                const normalizePerm = (p) => (p === 'can_vehicle_types_import_excel' ? 'can_vehicle_types_import' : p);
+                loadedPermissions.forEach(raw => {
+                    const perm = normalizePerm(raw);
+                    const meta = allPermissions[perm];
+                    const element = document.getElementById(meta ? meta.id : perm);
+                    if (!element && !checkedPermissions.includes(raw)) {
+                        checkedPermissions.push(raw);
                     }
                 });
 

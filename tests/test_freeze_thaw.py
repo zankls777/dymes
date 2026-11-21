@@ -31,7 +31,7 @@ os.environ['DATABASE_TYPE'] = 'sqlite'
 
 from app_factory import create_app, db
 from models.user_info import UserInfo
-from models.permission_info import PermissionInfo
+from models.rbac import UserPermissionOverride
 from models.file_info import FileInfo
 from werkzeug.security import generate_password_hash
 
@@ -59,15 +59,23 @@ class FreezeThawTestBase(unittest.TestCase):
             db.session.remove()
             db.drop_all()
 
+    @staticmethod
+    def _grant(user_id, *codes):
+        """为测试用户写入 RBAC 允许覆盖（allow）"""
+        for code in codes:
+            db.session.add(UserPermissionOverride(
+                user_id=user_id, permission_code=code, effect='allow'))
+        db.session.commit()
+
     def _seed_test_data(self):
         """创建测试数据：3种角色用户 + 测试文件"""
         # 清理 create_app() 自动创建的默认数据，确保测试环境干净
         FileInfo.query.delete()
-        PermissionInfo.query.delete()
+        UserPermissionOverride.query.delete()
         UserInfo.query.delete()
         db.session.commit()
 
-        # 1. 管理员
+        # 1. 管理员（is_admin 直接放行，无需权限记录）
         admin = UserInfo(
             username='admin',
             password=generate_password_hash('admin123!'),
@@ -75,15 +83,6 @@ class FreezeThawTestBase(unittest.TestCase):
         )
         db.session.add(admin)
         db.session.commit()
-
-        admin_perm = PermissionInfo(
-            user_id=admin.id,
-            can_file_management=True,
-            can_file_management_freeze=True,
-            can_file_management_download=True,
-            can_file_management_delete=True,
-        )
-        db.session.add(admin_perm)
 
         # 2. 有冻结权限的普通用户
         freeze_user = UserInfo(
@@ -94,13 +93,9 @@ class FreezeThawTestBase(unittest.TestCase):
         db.session.add(freeze_user)
         db.session.commit()
 
-        freeze_perm = PermissionInfo(
-            user_id=freeze_user.id,
-            can_file_management=True,
-            can_file_management_freeze=True,
-            can_file_management_download=True,
-        )
-        db.session.add(freeze_perm)
+        self._grant(freeze_user.id, 'can_file_management',
+                    'can_file_management_freeze',
+                    'can_file_management_download')
 
         # 3. 无冻结权限的普通用户
         no_freeze_user = UserInfo(
@@ -111,13 +106,14 @@ class FreezeThawTestBase(unittest.TestCase):
         db.session.add(no_freeze_user)
         db.session.commit()
 
-        no_freeze_perm = PermissionInfo(
-            user_id=no_freeze_user.id,
-            can_file_management=True,
-            can_file_management_freeze=False,
-            can_file_management_download=True,
-        )
-        db.session.add(no_freeze_perm)
+        self._grant(no_freeze_user.id, 'can_file_management',
+                    'can_file_management_download')
+        # 权限已写入，清空 RBAC 有效权限缓存，避免测试间串数据
+        try:
+            from utils.rbac_service import invalidate_user_permission_cache
+            invalidate_user_permission_cache()
+        except Exception:
+            pass
 
         # 4. 创建测试文件
         # 活跃文件（未冻结）
