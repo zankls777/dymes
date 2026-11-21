@@ -94,16 +94,23 @@
                 <h5 class="card-title mb-0"><i class="fa fa-table me-2"></i>查询结果
                     <span class="badge bg-light text-dark ms-2" id="resultCount">0</span>
                 </h5>
-                <!-- 回路号搜索：输入即时模糊过滤已加载结果；点击放大镜/回车按日期范围回库模糊查询 -->
-                <div class="input-group input-group-sm circuit-search">
-                    <button class="btn btn-light" id="circuitSearchBtn" type="button" title="按当前日期范围查询回路号">
-                        <i class="fa fa-search"></i>
+                <!-- 筛选：补线未返回；回路号搜索：输入即时模糊过滤已加载结果，回车/放大镜按日期范围回库查询 -->
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <button class="btn btn-light btn-sm text-nowrap" id="unreturnedBtn" type="button"
+                            aria-pressed="false" title="仅显示补线未返回的记录">
+                        <i class="fa fa-filter me-1"></i>补线未返回
+                        <span class="badge bg-secondary ms-1" id="unreturnedCount">0</span>
                     </button>
-                    <input type="text" class="form-control" id="circuitSearch"
-                           placeholder="搜索回路号" autocomplete="off" aria-label="搜索回路号">
-                    <button class="btn btn-light" id="circuitSearchClear" type="button" title="清空" style="display:none;">
-                        <i class="fa fa-times"></i>
-                    </button>
+                    <div class="input-group input-group-sm circuit-search">
+                        <button class="btn btn-light" id="circuitSearchBtn" type="button" title="按当前日期范围查询回路号">
+                            <i class="fa fa-search"></i>
+                        </button>
+                        <input type="text" class="form-control" id="circuitSearch"
+                               placeholder="搜索回路号" autocomplete="off" aria-label="搜索回路号">
+                        <button class="btn btn-light" id="circuitSearchClear" type="button" title="清空" style="display:none;">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
             <div class="card-body position-relative" id="resultCardBody">
@@ -372,11 +379,35 @@
                 circuitKeyword = circuitSearch.value.trim();
                 circuitSearchClear.style.display = circuitKeyword ? '' : 'none';
                 // 空关键字显示全部；否则按回路号模糊匹配（不分大小写、忽略分隔符）
-                const rows = circuitKeyword
-                    ? currentRows.filter(r => fuzzyCircuitMatch(r.circuit_no, circuitKeyword))
-                    : currentRows;
+                // 「补线未返回」筛选与回路号搜索叠加生效
+                const rows = currentRows.filter(r => {
+                    if (onlyUnreturned && r.return_status !== '未返回') return false;
+                    return circuitKeyword ? fuzzyCircuitMatch(r.circuit_no, circuitKeyword) : true;
+                });
                 renderRows(rows, currentRows.length);
+                updateUnreturnedCount();
             }
+
+            // 「补线未返回」筛选按钮：切换后仅显示返回状态为未返回的记录
+            const unreturnedBtn = document.getElementById('unreturnedBtn');
+            const unreturnedCount = document.getElementById('unreturnedCount');
+            let onlyUnreturned = false;
+
+            function updateUnreturnedCount() {
+                const n = currentRows.filter(r => r.return_status === '未返回').length;
+                unreturnedCount.textContent = n;
+                unreturnedCount.className = onlyUnreturned
+                    ? 'badge bg-danger ms-1' : 'badge bg-secondary ms-1';
+            }
+
+            unreturnedBtn.addEventListener('click', function() {
+                onlyUnreturned = !onlyUnreturned;
+                unreturnedBtn.setAttribute('aria-pressed', onlyUnreturned ? 'true' : 'false');
+                unreturnedBtn.classList.toggle('btn-warning', onlyUnreturned);
+                unreturnedBtn.classList.toggle('text-dark', onlyUnreturned);
+                unreturnedBtn.classList.toggle('btn-light', !onlyUnreturned);
+                applyCircuitFilter();
+            });
             const CACHE_KEY = 'wire_data_dl_v1';
             let abortCtrl = null;
 
