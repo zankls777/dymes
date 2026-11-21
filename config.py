@@ -106,9 +106,9 @@ class Config:
     SESSION_COOKIE_SAMESITE = 'Lax'
     # Secure：仅 HTTPS 传输（内网若未上 TLS，设为 False；HTTP 部署建议前置反向代理开启 TLS）
     SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
-    # 会话有效期：12 小时无操作即失效，降低失窃会话被长期滥用的风险
-    PERMANENT_SESSION_LIFETIME = int(os.environ.get('SESSION_LIFETIME', '43200'))
-    # 登录后 session 标记为 permanent，使上述过期策略生效
+    # 「记住登录状态」有效期：默认 30 天，可通过 SESSION_LIFETIME（秒）调整。
+    # 勾选后使用持久 Cookie，且每次请求自动续期；未勾选仍为浏览器会话级 Cookie。
+    PERMANENT_SESSION_LIFETIME = int(os.environ.get('SESSION_LIFETIME', '2592000'))
     SESSION_REFRESH_EACH_REQUEST = True
     
     # Excel导入配置

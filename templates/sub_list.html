@@ -79,7 +79,7 @@
                         <!-- 列选择器 -->
                         <div class="column-selector">
                             <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h6>选择要显示的列</h6>
+                                <h6>选择要显示的搜索框</h6>
                                 <div>
                                     <button type="button" id="select-all-columns" class="btn btn-sm btn-outline-primary">全选</button>
                                     <button type="button" id="deselect-all-columns" class="btn btn-sm btn-outline-secondary">取消全选</button>
@@ -392,11 +392,15 @@
             return subListCtrl ? subListCtrl.collectSearchParams() : {};
         }
 
-        // 切换列显示/隐藏：用 CSS nth-child 一次性定位目标列，避免 O(行数×列数) 遍历
+        // 仅切换对应搜索框，下面表格的列和数据始终保持显示；无搜索框的列自动跳过
         function toggleColumn(columnIndex, show) {
-            const col = columnIndex + 1; // nth-child 从 1 开始
-            document.querySelectorAll(`#data-table tr > *:nth-child(${col})`)
-                .forEach(cell => { cell.style.display = show ? '' : 'none'; });
+            // 表头名称与搜索框 id 基本一致，仅「车种」需要映射为 VehicleType
+            const header = document.querySelectorAll('#data-table th')[columnIndex];
+            const columnName = header ? header.textContent.trim() : '';
+            const inputId = columnName === '车种' ? 'VehicleType' : columnName;
+            const input = inputId ? document.getElementById(inputId) : null;
+            const formGroup = input ? input.closest('.form-group') : null;
+            if (formGroup) formGroup.style.display = show ? '' : 'none';
         }
 
         document.addEventListener('DOMContentLoaded', function() {
@@ -420,25 +424,16 @@
                 checkbox.className = 'column-checkbox';
                 checkbox.id = `column-${index}`;
 
-                if (index === 0 || index === 1) {
-                    // 前两列（车种、SubPno）为固定列，不可隐藏
-                    checkbox.checked = true;
-                    checkbox.disabled = true;
-                    label.appendChild(checkbox);
-                    const span = document.createElement('span');
-                    span.textContent = `${columnName} (固定)`;
-                    label.appendChild(span);
-                } else {
-                    checkbox.dataset.columnIndex = index;
-                    checkbox.checked = savedColumnState[columnName] !== undefined ? savedColumnState[columnName] : true;
-                    label.appendChild(checkbox);
-                    label.appendChild(document.createTextNode(columnName));
-                    checkbox.addEventListener('change', function() {
-                        toggleColumn(index, this.checked);
-                        savedColumnState[columnName] = this.checked;
-                        localStorage.setItem('subListColumnState', JSON.stringify(savedColumnState));
-                    });
-                }
+                // 所有列均可取消勾选，显示状态与搜索框显隐统一由 toggleColumn 处理
+                checkbox.dataset.columnIndex = index;
+                checkbox.checked = savedColumnState[columnName] !== undefined ? savedColumnState[columnName] : true;
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(columnName));
+                checkbox.addEventListener('change', function() {
+                    toggleColumn(index, this.checked);
+                    savedColumnState[columnName] = this.checked;
+                    localStorage.setItem('subListColumnState', JSON.stringify(savedColumnState));
+                });
                 columnGroup.appendChild(label);
                 fragment.appendChild(columnGroup);
             });
