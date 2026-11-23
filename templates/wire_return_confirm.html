@@ -27,6 +27,15 @@
         }
         #resultPanel { display: none; }
         .toast-container { z-index: 1090; }
+        /* 回路类型徽标：单线蓝 / 花线黄 / 连接线绿 / 未知灰 */
+        .wire-kind-badge {
+            font-size: .75rem; font-weight: 600; letter-spacing: 1px;
+            padding: .25rem .6rem; border-radius: .35rem;
+        }
+        .wire-kind-单线 { background: #0d6efd; color: #fff; }
+        .wire-kind-花线 { background: #ffc107; color: #212529; }
+        .wire-kind-连接线 { background: #198754; color: #fff; }
+        .wire-kind-未知 { background: #6c757d; color: #fff; }
         @media (max-width: 767.98px) {
             .container-fluid { padding-left: 10px; padding-right: 10px; }
             .card { margin-bottom: 12px; }
@@ -275,14 +284,17 @@
             function renderResult(data) {
                 resultPanel.style.display = 'block';
                 const li = data.lot_info || {};
-                // 比对状态条
+                // 比对状态条（带回路类型徽标）
+                const kind = data.wire_kind || '未知';
+                const kindDetail = data.wire_kind_detail || '';
+                const kindBadge = `<span class="wire-kind-badge wire-kind-${kind}" title="${esc(kindDetail)}">${esc(kind)}</span>`;
                 if (data.matched) {
-                    matchState.className = 'alert alert-success py-2 small mb-3';
-                    matchState.innerHTML = '<i class="fa fa-check-circle me-1"></i>数据下载中找到一致数据，已拉出相关信息';
+                    matchState.className = 'alert alert-success py-2 small mb-3 d-flex align-items-center gap-2';
+                    matchState.innerHTML = '<i class="fa fa-check-circle me-1"></i>数据下载中找到一致数据，已拉出相关信息 ' + kindBadge;
                 } else {
-                    matchState.className = 'alert alert-warning py-2 small mb-3';
+                    matchState.className = 'alert alert-warning py-2 small mb-3 d-flex align-items-center gap-2';
                     matchState.innerHTML = '<i class="fa fa-exclamation-triangle me-1"></i>' +
-                        '数据下载中未找到该 LOT + 回路号，仅保存 LOT、回路号和数量(选填)';
+                        '数据下载中未找到该 LOT + 回路号，仅保存 LOT、回路号和数量(选填) ' + kindBadge;
                 }
                 // LOT 关联信息（品番/规格/颜色/长度/数量 与返回确认记录保持同步）
                 const detailRows = data.details || [];

@@ -240,12 +240,13 @@
             const COLUMNS = [
                 ['操作', '_actions', 'sticky-col'],
                 ['车种别', 'vehicle'],
-                ['序号', 'seq'], ['EO', 'eo'], ['品番', 'part_no'], ['LOT/NO', 'lot_no'],
+                ['EO', 'eo'], ['品番', 'part_no'], ['LOT/NO', 'lot_no'],
                 ['回路号', 'circuit_no'], ['线质', 'wire'], ['规格/颜色', 'spec_color'],
                 ['长度', 'length_cut2'], ['数量', 'qty'], ['配线区分', 'div_type'],
                 ['端子名1/2', 'terminal'], ['号机名', 'machine'], ['压高', 'crimp'],
                 ['备注', 'remark'], ['返回确认', 'return_status'],
-                ['操作人', 'created_by_name'], ['日期', 'date']
+                ['操作人', 'created_by_name'], ['日期', 'date'],
+                ['返回时间', 'return_date']
             ];
 
             function esc(s) {
@@ -420,9 +421,8 @@
                 });
                 const rows = [];
                 let no = 0;
-                const seen = new Set();
-                // 补线返回确认集合（LOT|回路号大写），由接口随数据返回
-                const confirmedSet = new Set(data.return_confirmed || []);
+                // 补线返回确认映射：LOT|回路号大写 -> 返回时间 YYYY-MM-DD，由接口随数据返回
+                const confirmedMap = data.return_confirmed || {};
                 sorted.forEach(r => {
                     // 号机为空的记录：仅展示「录入不全」自动补录行（同图纸未扫回路），
                     // 其余无号机中间态不入库/不展示
@@ -430,21 +430,21 @@
                     if (!r.machine_no && remarkTxt.indexOf('录入不全') < 0) return;
                     const li = (data.lot_info || {})[r.lot_no] || {};
                     const circUp = (r.circuit_no || '').trim().toUpperCase();
+                    const confirmKey = `${String(r.lot_no).trim()}|${circUp}`;
+                    const returnDay = confirmedMap[confirmKey] || '';
                     // 取数优先用「LOT|回路」稳定键（不依赖品番/EO，LOT登录资料删除后仍命中），
                     // 未命中再回退旧的 品番|EO|回路 键
-                    const byLot = (data.sublist_by_lot || {})[`${String(r.lot_no).trim()}|${circUp}`];
+                    const byLot = (data.sublist_by_lot || {})[confirmKey];
                     const key = `${(li.part_no || '').trim().toUpperCase()}|${(li.jx_eo || '').trim().toUpperCase()}|${circUp}`;
                     const dtlList = byLot !== undefined ? byLot : ((data.sublist || {})[key] || []);
                     const eff = dtlList.length ? dtlList : [null];
                     eff.forEach(dtl => {
                         no++;
-                        const seq = seen.has(r.lot_no) ? '' : 1;
-                        seen.add(r.lot_no);
                         const machine = String(r.machine_no || '').split('$')[0];
                         rows.push({
                             _id: r.id, _raw: r, _dtl: dtl, date: formatUTC8(r.created_at),
                             created_by_name: r.created_by_name || '',
-                            vehicle: li.vehicle_type || '', seq: seq,
+                            vehicle: li.vehicle_type || '',
                             part_no: li.part_no || '', eo: li.jx_eo || '',
                             lot_no: r.lot_no, circuit_no: r.circuit_no || '',
                             wire: dtl ? (dtl.wire || '') : '',
@@ -455,9 +455,8 @@
                             machine: machine,
                             crimp: '',
                             remark: remarkTxt,
-                            return_status: confirmedSet.has(
-                                `${String(r.lot_no).trim()}|${String(r.circuit_no || '').trim().toUpperCase()}`)
-                                ? '已返回' : '未返回',
+                            return_status: returnDay ? '已返回' : '未返回',
+                            return_date: returnDay,
                         });
                     });
                 });

@@ -6104,8 +6104,9 @@ def wire_scan_entry_data():
         # 线束明细：直接读 wire_scan_detail 文本快照；
         # 仅历史缺口（扫码时未固化）惰性实时拉取一次并补固化，新数据零 sub_list 查询
         subl, subl_by_lot = _wire_load_snapshot_map(lot_info, lot_circuit, lazy_heal=True)
-        # 补线返回确认键集合（LOT|回路号大写），供数据下载页「返回确认」列展示
-        return_confirmed = []
+        # 补线返回确认映射：键 LOT|回路号大写 -> 返回时间 YYYY-MM-DD，
+        # 供数据下载页同时展示「返回确认」和「返回时间」两列
+        return_confirmed = {}
         try:
             from models.wire_return_confirm import WireReturnConfirm
             # 分批查询，避免 IN 参数过多触发 SQLite 表达式树/参数上限
@@ -6114,10 +6115,16 @@ def wire_scan_entry_data():
                 confirm_rows = (WireReturnConfirm.query
                                 .filter(WireReturnConfirm.lot_no.in_(chunk))
                                 .all())
-                return_confirmed.extend(
-                    f'{(c.lot_no or "").strip()}|{(c.circuit_no or "").strip().upper()}'
-                    for c in confirm_rows
-                )
+                for c in confirm_rows:
+                    key = f'{(c.lot_no or "").strip()}|{(c.circuit_no or "").strip().upper()}'
+                    # created_at 是返回确认时间，格式化为 YYYY-MM-DD 便于前端展示
+                    day = ''
+                    if c.created_at:
+                        try:
+                            day = c.created_at.strftime('%Y-%m-%d %H:%M:%S')
+                        except Exception:
+                            day = ''
+                    return_confirmed[key] = day
         except Exception as ce:
             current_app.logger.warning(f'读取补线返回确认失败(已跳过): {ce}')
         return jsonify({'success': True, 'records': [r.to_dict() for r in records],
@@ -7254,9 +7261,9 @@ def wire_scan_entry_download():
         wb = Workbook()
         ws = wb.active
         ws.title = '扫描录入'
-        headers = ['车种别', '序号', 'EO', '品番', 'LOT/NO', '回路号',
+        headers = ['车种别', 'EO', '品番', 'LOT/NO', '回路号',
                    '线质', '规格/颜色', '长度', '数量', '配线区分', '端子名1/2', '号机名',
-                   '压高', '备注', '返回确认', '操作人', '日期']
+                   '压高', '备注', '返回确认', '操作人', '日期', '返回时间']
         ws.append(headers)
         for c in ws[1]:
             c.font = Font(bold=True)
@@ -7265,19 +7272,24 @@ def wire_scan_entry_download():
         # 「录入不全」自动补录行统一浅红底+深红字，与页面高亮保持一致
         incomplete_fill = PatternFill('solid', fgColor='FFC7CE')
         incomplete_font = Font(color='9C0006')
-        # 返回确认集合（LOT|回路号大写），分批查询避免 IN 参数过多
-        return_confirmed_set = set()
+        # 返回确认映射（LOT|回路号大写 -> 返回时间 YYYY-MM-DD），分批查询避免 IN 参数过多
+        return_confirmed_map = {}
         try:
             from models.wire_return_confirm import WireReturnConfirm
             for i in range(0, len(lot_nos), 500):
                 chunk = lot_nos[i:i + 500]
                 for c in WireReturnConfirm.query.filter(
                         WireReturnConfirm.lot_no.in_(chunk)).all():
-                    return_confirmed_set.add(
-                        f'{(c.lot_no or "").strip()}|{(c.circuit_no or "").strip().upper()}')
+                    key = f'{(c.lot_no or "").strip()}|{(c.circuit_no or "").strip().upper()}'
+                    day = ''
+                    if c.created_at:
+                        try:
+                            day = c.created_at.strftime('%Y-%m-%d %H:%M:%S')
+                        except Exception:
+                            day = ''
+                    return_confirmed_map[key] = day
         except Exception as ce:
             current_app.logger.warning(f'导出读取补线返回确认失败(已跳过): {ce}')
-        seen_lot_first = set()
         for r in records:
             li = lot_info.get(r.lot_no) or {}
             part_no = li.get('part_no') or ''
@@ -7287,8 +7299,6 @@ def wire_scan_entry_download():
             circ_key, dtl_list = rec_detail_map.get(r.id, ('', []))
             rows = dtl_list if dtl_list else [None]
             for dtl in rows:
-                seq = 1 if r.lot_no not in seen_lot_first else ''
-                seen_lot_first.add(r.lot_no)
                 tml = f'{dtl["tml1"] or ""}\n{dtl["tml2"] or ""}' if dtl else ''
                 # 压高与页面同源：命中压高登录才输出，未命中留空（不再回退固化旧值）
                 crimp = ''
@@ -7328,16 +7338,18 @@ def wire_scan_entry_download():
                         note_parts.append('【资料已冻结归档·只读】')
                 if rec_remark:
                     note_parts.append(rec_remark)
+                _rc_key = f'{r.lot_no.strip()}|{(r.circuit_no or "").strip().upper()}'
+                _rc_day = return_confirmed_map.get(_rc_key, '')
                 ws.append([
-                    vehicle, seq, eo, part_no, r.lot_no, r.circuit_no or '',
+                    vehicle, eo, part_no, r.lot_no, r.circuit_no or '',
                     (dtl['wire'] or '') if dtl else '', spec_color,
                     (dtl['length_cut2'] or '') if dtl else '',
                     r.wire_qty if r.machine_no else '', div_type, tml, machine, crimp or '',
                     ' '.join(note_parts),
-                    '已返回' if f'{r.lot_no.strip()}|{(r.circuit_no or "").strip().upper()}'
-                    in return_confirmed_set else '未返回',
+                    '已返回' if _rc_day else '未返回',
                     r.created_by_name or '',
-                    r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else ''
+                    r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else '',
+                    _rc_day
                 ])
                 if is_incomplete:
                     for cell in ws[ws.max_row]:
@@ -7502,6 +7514,77 @@ def _parse_wire_return_content(content):
     if not circuit_no:
         raise ValueError('回路号为空')
     return lot_no, circuit_no
+
+
+def _wire_classify_wire_kind(circuit_no, details, lot_info=None):
+    """按业务规则判定回路类型：单线 / 花线 / 连接线 / 未知。
+
+    判定顺序：
+      1. 花线优先：任意一条线束明细的配线区分为 TW（Remark1 以 TW 开头，或 Rel2/Rel1 为 TW）
+      2. 查 SetCode 图纸管理编号：当前回路号所在 SetCode 下
+         - 回路数 = 1 → 单线
+         - 回路数 > 1 → 连接线
+      3. 兜底 → 未知（details 为空或 SetCode 缺失）
+
+    返回 (kind, detail)：kind 为四字中文标签，detail 为调试说明字符串。
+    """
+    circ_up = (circuit_no or '').strip().upper()
+    dtl = details or []
+
+    def _div_type(d):
+        rk = str(d.get('remark1') or '').strip()
+        if rk.upper().startswith('TW'):
+            return 'TW'
+        return str(d.get('rel2') or '').strip() or str(d.get('rel1') or '').strip()
+
+    # 步骤 1：花线判定
+    for d in dtl:
+        if _div_type(d).upper() == 'TW':
+            return '花线', '配线区分=TW'
+
+    # 步骤 2：SetCode 维度判定
+    setcodes = []
+    for d in dtl:
+        sc = str(d.get('SetCode') or '').strip().upper()
+        if sc:
+            setcodes.append(sc)
+    # 固化快照缺 SetCode 时，从 SubList 拉
+    if not setcodes and lot_info:
+        try:
+            from models.sub_list import SubList
+            part_no = (lot_info.get('part_no') or '').strip()
+            eo = (lot_info.get('jx_eo') or '').strip()
+            if part_no and eo and circ_up:
+                rows = (SubList.query
+                        .filter(SubList.SubPno == part_no, SubList.EoKsc == eo,
+                                SubList.deleted == 0,
+                                db.func.upper(SubList.Circuit) == circ_up)
+                        .with_entities(SubList.SetCode).all())
+                setcodes = [str(r.SetCode or '').strip().upper() for r in rows if (r.SetCode or '').strip()]
+        except Exception:
+            setcodes = []
+
+    if not setcodes:
+        return '未知', '无线束明细或 SetCode'
+
+    # 查每个 SetCode 下回路号数量
+    try:
+        from models.sub_list import SubList
+        circ_counts = {}
+        for sc in setcodes:
+            n = (SubList.query
+                 .filter(SubList.SetCode == sc, SubList.deleted == 0)
+                 .with_entities(db.func.count(db.distinct(db.func.upper(SubList.Circuit))))
+                 .scalar() or 0)
+            circ_counts[sc] = n
+        # 所有 SetCode 回路数都是 1 → 单线；有任何 > 1 → 连接线
+        if all(c == 1 for c in circ_counts.values()):
+            return '单线', f"SetCode={','.join(setcodes)} 下均仅 1 个回路"
+        else:
+            detail_parts = [f"{sc}({n})" for sc, n in circ_counts.items()]
+            return '连接线', f"SetCode 回路分布: {','.join(detail_parts)}"
+    except Exception as e:
+        return '未知', f'SubList 查询异常: {e}'
 
 
 def _wire_return_match(lot_no, circuit_no):
@@ -7707,6 +7790,8 @@ def wire_return_confirm_scan():
             return jsonify({'success': False, 'error': 'LOT和回路号不能为空'}), 400
 
         matched, lot_info, rows, details = _wire_return_match(lot_no, circuit_no)
+        # 判定回路类型（单线 / 花线 / 连接线 / 未知）
+        wire_kind, wire_kind_detail = _wire_classify_wire_kind(circuit_no, details, lot_info)
         # 是否已确认过（同 LOT+回路号只保留一条）
         from models.wire_return_confirm import WireReturnConfirm
         confirmed = (WireReturnConfirm.query
@@ -7721,6 +7806,8 @@ def wire_return_confirm_scan():
             'lot_info': lot_info,
             'records': [r.to_dict() for r in rows],
             'details': details,
+            'wire_kind': wire_kind,
+            'wire_kind_detail': wire_kind_detail,
             'confirmed': confirmed.to_dict() if confirmed else None,
         })
     except Exception as e:
