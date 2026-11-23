@@ -239,16 +239,54 @@
             div.className = 'alert alert-' + (ok ? 'success' : 'danger') + ' position-fixed top-0 start-50 translate-middle-x mt-3 shadow';
             div.style.zIndex = 2000;
             div.style.minWidth = '260px';
+            div.style.maxWidth = '86vw';
+            div.style.whiteSpace = 'normal';
+            div.style.wordBreak = 'break-all';
             div.textContent = msg;
             document.body.appendChild(div);
             setTimeout(function () { div.remove(); }, 2600);
         }
+        // AJAX 请求统一标识：让后端把未登录/无权限识别为 JSON(401/403)，
+        // 而不是 302 到登录页返回 HTML（那会表现为「网络错误」）。
+        var AJAX_HEADERS = { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+        // 统一解析响应：非 JSON（如登录页/404/500 HTML）时抛出可读错误，
+        // 便于内网排查「网络错误」的真实原因，而不是笼统提示。
+        function readJSON(r) {
+            // 登录态失效：直接回登录页，避免用户在内网反复看到「网络错误」
+            if (r.status === 401) {
+                var next = encodeURIComponent(location.pathname + location.search);
+                setTimeout(function () { window.location.href = '{{ url_for("main.login") }}?next=' + next; }, 800);
+                return Promise.reject(new Error('登录已失效，正在跳转登录页'));
+            }
+            var ct = (r.headers.get('content-type') || '').toLowerCase();
+            if (ct.indexOf('json') === -1) {
+                return r.text().then(function (t) {
+                    var snippet = String(t || '').replace(/\s+/g, ' ').slice(0, 100);
+                    throw new Error('HTTP ' + r.status + ' 返回非JSON: ' + snippet);
+                });
+            }
+            return r.json().then(function (d) {
+                // 2xx 但业务失败时保留后端错误信息
+                if (!r.ok && d && d.error) { throw new Error(d.error); }
+                return d;
+            });
+        }
+        function netErrText(err) {
+            if (!err) { return '网络异常（无响应）'; }
+            // fetch 被网络层拦截时是 TypeError: Failed to fetch
+            return err.message || String(err);
+        }
         function postJSON(url, payload) {
             return fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': CSRF,
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
                 body: JSON.stringify(payload || {})
-            }).then(function (r) { return r.json(); });
+            }).then(readJSON);
         }
 
         // ---------------- 查询与渲染 ----------------
@@ -269,15 +307,15 @@
         function loadList() {
             var body = document.getElementById('listBody');
             body.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-4">加载中...</td></tr>';
-            fetch('{{ url_for("main.material_inbound_daily_data") }}?' + queryParams().toString())
-                .then(function (r) { return r.json(); })
+            fetch('{{ url_for("main.material_inbound_daily_data") }}?' + queryParams().toString(), { headers: AJAX_HEADERS })
+                .then(readJSON)
                 .then(function (res) {
                     if (!res.success) { toast(res.error || '查询失败', false); return; }
                     items = res.items || [];
                     renderSummary(res.summary || {});
                     renderList();
                 })
-                .catch(function () { toast('网络错误', false); });
+                .catch(function (err) { toast('查询失败：' + netErrText(err), false); });
         }
 
         function renderSummary(s) {
@@ -337,10 +375,12 @@
                 }
                 buf += '</tr>';
             }
-            // <template> 一次性解析 + replaceChildren 批量替换，仅触发一次重排
+            // <template> 一次性解析；replaceChildren 需 Chrome 86+，
+            // 老内核（Win7/PDA 旧 WebView）改用「清空 + appendChild」兼容写法
             var tpl = document.createElement('template');
             tpl.innerHTML = buf;
-            body.replaceChildren(tpl.content);
+            while (body.firstChild) { body.removeChild(body.firstChild); }
+            body.appendChild(tpl.content);
         }
 
         // ---------------- 排序 ----------------
@@ -405,8 +445,10 @@
             wrap.classList.remove('d-none');
             bar.style.width = '20%';
             fetch('{{ url_for("main.material_inbound_daily_upload") }}', {
-                method: 'POST', headers: { 'X-CSRFToken': CSRF }, body: fd
-            }).then(function (r) { return r.json(); })
+                method: 'POST',
+                headers: { 'X-CSRFToken': CSRF, 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: fd
+            }).then(readJSON)
               .then(function (res) {
                   bar.style.width = '100%';
                   setTimeout(function () { wrap.classList.add('d-none'); bar.style.width = '0%'; }, 500);
@@ -423,9 +465,9 @@
                   }
                   fileInput.value = '';
               })
-              .catch(function () {
+              .catch(function (err) {
                   wrap.classList.add('d-none');
-                  toast('上传失败', false);
+                  toast('上传失败：' + netErrText(err), false);
                   fileInput.value = '';
               });
         });
@@ -461,7 +503,7 @@
             postJSON('{{ url_for("main.material_inbound_daily_save") }}', payload).then(function (res) {
                 if (res.success) { modal.hide(); toast('保存成功', true); loadList(); }
                 else { toast(res.error || '保存失败', false); }
-            }).catch(function () { toast('保存失败', false); });
+            }).catch(function (err) { toast('保存失败：' + netErrText(err), false); });
         });
 
         // ---------------- 行内操作 ----------------
@@ -477,7 +519,7 @@
                 postJSON('{{ url_for("main.material_inbound_daily_delete") }}', { ids: [id] }).then(function (res) {
                     if (res.success) { toast('已删除', true); loadList(); }
                     else { toast(res.error || '删除失败', false); }
-                });
+                }).catch(function (err) { toast('删除失败：' + netErrText(err), false); });
             }
         });
 
@@ -494,7 +536,7 @@
                 postJSON('{{ url_for("main.material_inbound_daily_delete") }}', { ids: ids }).then(function (res) {
                     if (res.success) { toast('已删除 ' + res.deleted + ' 条', true); loadList(); }
                     else { toast(res.error || '删除失败', false); }
-                });
+                }).catch(function (err) { toast('删除失败：' + netErrText(err), false); });
             });
         }
         var checkAll = document.getElementById('checkAll');

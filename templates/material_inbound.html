@@ -341,17 +341,55 @@
             div.className = 'alert alert-' + (ok ? 'success' : 'danger') + ' position-fixed top-0 start-50 translate-middle-x mt-3 shadow';
             div.style.zIndex = 2000;
             div.style.minWidth = '260px';
+            div.style.maxWidth = '86vw';
+            div.style.whiteSpace = 'normal';
+            div.style.wordBreak = 'break-all';
             div.style.pointerEvents = 'none';
             div.textContent = msg;
             document.body.appendChild(div);
             setTimeout(function () { if (div.parentNode) { div.parentNode.removeChild(div); } }, 2600);
         }
+        // AJAX 请求统一标识：让后端把未登录/无权限识别为 JSON(401/403)，
+        // 而不是 302 到登录页返回 HTML（那会表现为「网络错误」）。
+        var AJAX_HEADERS = { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+        // 统一解析响应：非 JSON（如登录页/404/500 HTML）时抛出可读错误，
+        // 便于内网排查「网络错误」的真实原因，而不是笼统提示。
+        function readJSON(r) {
+            // 登录态失效：直接回登录页，避免用户在内网反复看到「网络错误」
+            if (r.status === 401) {
+                var next = encodeURIComponent(location.pathname + location.search);
+                setTimeout(function () { window.location.href = '{{ url_for("main.login") }}?next=' + next; }, 800);
+                return Promise.reject(new Error('登录已失效，正在跳转登录页'));
+            }
+            var ct = (r.headers.get('content-type') || '').toLowerCase();
+            if (ct.indexOf('json') === -1) {
+                return r.text().then(function (t) {
+                    var snippet = String(t || '').replace(/\s+/g, ' ').slice(0, 100);
+                    throw new Error('HTTP ' + r.status + ' 返回非JSON: ' + snippet);
+                });
+            }
+            return r.json().then(function (d) {
+                // 2xx 但业务失败时保留后端错误信息
+                if (!r.ok && d && d.error) { throw new Error(d.error); }
+                return d;
+            });
+        }
+        function netErrText(err) {
+            if (!err) { return '网络异常（无响应）'; }
+            // fetch 被网络层拦截时是 TypeError: Failed to fetch
+            return err.message || String(err);
+        }
         function postJSON(url, payload) {
             return fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': CSRF,
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
                 body: JSON.stringify(payload || {})
-            }).then(function (r) { return r.json(); });
+            }).then(readJSON);
         }
 
         // 自定义确认框：替代原生 confirm（DT40 WebView / 内置预览器对原生弹窗支持不稳定）
@@ -395,8 +433,8 @@
             p.set('plan_date', document.getElementById('inboundDate').value || today());
             if (kw) { p.set('keyword', kw); }
             document.getElementById('listHint').textContent = '查询中...';
-            fetch('{{ url_for("main.material_inbound_query") }}?' + p.toString())
-                .then(function (r) { return r.json(); })
+            fetch('{{ url_for("main.material_inbound_query") }}?' + p.toString(), { headers: AJAX_HEADERS })
+                .then(readJSON)
                 .then(function (res) {
                     if (!res.success) { toast(res.error || '查询失败', false); return; }
                     items = res.items || [];
@@ -427,7 +465,7 @@
                     scanInput.value = '';
                     lastScan = '';
                 })
-                .catch(function () { toast('网络错误', false); });
+                .catch(function (err) { toast('查询失败：' + netErrText(err), false); });
         }
 
         // 不主动把焦点放到任何输入框：避免无谓唤起输入法导致屏幕被遮挡。
@@ -490,12 +528,14 @@
                     (onlyPending && items.length ? '当日资材已全部入库' : '未找到匹配的资材明细') + '</td></tr>';
                 return;
             }
-            // 用 <template> 一次性解析字符串，减少解析器多次触发；再批量替换，仅一次重排
+            // 用 <template> 一次性解析字符串；replaceChildren 需 Chrome 86+，
+            // 老内核（Win7/PDA 旧 WebView）改用「清空 + appendChild」兼容写法
             var tpl = document.createElement('template');
             var buf = '';
             for (var i = 0; i < view.length; i++) { buf += rowHTML(view[i]); }
             tpl.innerHTML = buf;
-            body.replaceChildren(tpl.content);
+            while (body.firstChild) { body.removeChild(body.firstChild); }
+            body.appendChild(tpl.content);
         }
 
         // 多条匹配：全部展开为可点选卡片，等待用户点击；点击后弹二次确认
@@ -628,7 +668,7 @@
                         toast(res.error || '提交失败', false);
                     }
                 })
-                .catch(function () { btn.disabled = false; toast('提交失败', false); });
+                .catch(function (err) { btn.disabled = false; toast('提交失败：' + netErrText(err), false); });
         });
 
         // ---------------- 优博讯 DT40 扫描头（Android / WebView，TextBox 键盘模拟模式） ----------------

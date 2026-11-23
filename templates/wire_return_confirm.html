@@ -151,11 +151,19 @@
                 <h5 class="card-title mb-0 small"><i class="fa fa-check-square-o me-2"></i>返回确认记录
                     <span class="badge bg-light text-dark ms-1" id="listCount">0</span>
                 </h5>
-                <div class="d-flex gap-2">
+                <div class="d-flex gap-2 align-items-center flex-wrap">
                     <input type="text" class="form-control form-control-sm pda-ignore" id="searchInput"
-                           placeholder="LOT / 回路号" style="width:160px;">
-                    <button class="btn btn-sm btn-light" id="refreshBtn" type="button">
+                           placeholder="LOT / 回路号" style="width:150px;">
+                    <input type="date" class="form-control form-control-sm pda-ignore" id="startDate"
+                           style="width:140px;" title="确认时间-开始">
+                    <span class="small">~</span>
+                    <input type="date" class="form-control form-control-sm pda-ignore" id="endDate"
+                           style="width:140px;" title="确认时间-结束">
+                    <button class="btn btn-sm btn-light" id="refreshBtn" type="button" title="查询">
                         <i class="fa fa-refresh"></i>
+                    </button>
+                    <button class="btn btn-sm btn-light" id="exportBtn" type="button" title="导出Excel">
+                        <i class="fa fa-file-excel-o"></i> 导出
                     </button>
                 </div>
             </div>
@@ -424,11 +432,21 @@
             }
 
             // ---- 返回确认记录列表 ----
+            // 列表筛选参数：关键字 + 确认时间段（含首尾两天）
+            function listParams() {
+                const p = new URLSearchParams();
+                const q = document.getElementById('searchInput').value.trim();
+                const start = document.getElementById('startDate').value;
+                const end = document.getElementById('endDate').value;
+                if (q) p.set('q', q);
+                if (start) p.set('start', start);
+                if (end) p.set('end', end);
+                return p;
+            }
             async function loadList() {
                 try {
-                    const q = document.getElementById('searchInput').value.trim();
-                    const resp = await fetch('/wire/return_confirm/data?q=' + encodeURIComponent(q), {
-                        headers: { 'X-CSRFToken': CSRF }
+                    const resp = await fetch('/wire/return_confirm/data?' + listParams().toString(), {
+                        headers: { 'X-CSRFToken': CSRF, 'Accept': 'application/json' }
                     });
                     const data = await resp.json();
                     if (!data.success) throw new Error(data.error || '加载失败');
@@ -492,6 +510,13 @@
             document.getElementById('refreshBtn').addEventListener('click', loadList);
             document.getElementById('searchInput').addEventListener('keydown', function(e) {
                 if (e.key === 'Enter') { e.preventDefault(); loadList(); }
+            });
+            // 时间段变化即时刷新
+            document.getElementById('startDate').addEventListener('change', loadList);
+            document.getElementById('endDate').addEventListener('change', loadList);
+            // 导出 Excel：沿用当前关键字与时间段
+            document.getElementById('exportBtn').addEventListener('click', function() {
+                window.location.href = '/wire/return_confirm/download?' + listParams().toString();
             });
             listTbody.addEventListener('click', async function(e) {
                 const btn = e.target.closest('.js-del');

@@ -7930,10 +7930,89 @@ def wire_return_confirm_data():
             like = f'%{kw}%'
             q = q.filter(db.or_(WireReturnConfirm.lot_no.ilike(like),
                                 WireReturnConfirm.circuit_no.ilike(like)))
+        # 时间段筛选（按确认时间，含首尾两天）
+        start = (request.args.get('start') or '').strip()
+        end = (request.args.get('end') or '').strip()
+        if start:
+            try:
+                q = q.filter(WireReturnConfirm.created_at >= datetime.strptime(start, '%Y-%m-%d'))
+            except ValueError:
+                return jsonify({'success': False, 'error': '开始日期格式应为 YYYY-MM-DD'}), 400
+        if end:
+            try:
+                # 结束日当天 23:59:59 也要包含，用 < 次日 00:00
+                q = q.filter(WireReturnConfirm.created_at
+                             < datetime.strptime(end, '%Y-%m-%d') + timedelta(days=1))
+            except ValueError:
+                return jsonify({'success': False, 'error': '结束日期格式应为 YYYY-MM-DD'}), 400
         records = q.order_by(WireReturnConfirm.id.desc()).limit(500).all()
         return jsonify({'success': True, 'records': [r.to_dict() for r in records]})
     except Exception as e:
         current_app.logger.error(f'查询补线返回确认失败: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/wire/return_confirm/download')
+@login_required
+def wire_return_confirm_download():
+    """按关键字 + 时间段导出返回确认记录为 Excel（不受 500 条上限限制）。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_wire_return_confirm'):
+        return jsonify({'success': False, 'error': '无权限访问'}), 403
+    try:
+        from models.wire_return_confirm import WireReturnConfirm
+        q = WireReturnConfirm.query
+        kw = (request.args.get('q') or '').strip()
+        if kw:
+            like = f'%{kw}%'
+            q = q.filter(db.or_(WireReturnConfirm.lot_no.ilike(like),
+                                WireReturnConfirm.circuit_no.ilike(like)))
+        start = (request.args.get('start') or '').strip()
+        end = (request.args.get('end') or '').strip()
+        if start:
+            q = q.filter(WireReturnConfirm.created_at >= datetime.strptime(start, '%Y-%m-%d'))
+        if end:
+            q = q.filter(WireReturnConfirm.created_at
+                         < datetime.strptime(end, '%Y-%m-%d') + timedelta(days=1))
+        records = q.order_by(WireReturnConfirm.id.desc()).all()
+
+        from io import BytesIO
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill
+        output = BytesIO()
+        wb = Workbook()
+        ws = wb.active
+        ws.title = '返回确认'
+        headers = ['LOT', '回路号', '品番', '规格', '颜色', '长度',
+                   '配线区分', '数量', '比对结果', '确认人', '确认时间']
+        ws.append(headers)
+        for c in ws[1]:
+            c.font = Font(bold=True)
+            c.fill = PatternFill('solid', fgColor='D9E1F2')
+            c.alignment = Alignment(horizontal='center', vertical='center')
+        for r in records:
+            ws.append([
+                r.lot_no or '', r.circuit_no or '', r.part_no or '', r.spec or '',
+                r.color or '', r.length or '', r.div_type or '',
+                r.wire_qty if r.wire_qty is not None else '',
+                '有数据' if r.matched else '无数据',
+                r.created_by_name or '',
+                r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else '',
+            ])
+        # 列宽自适应（中文按 2 字符估算）
+        for col in ws.columns:
+            width = max(len(str(c.value or '')) * 1.6 for c in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max(width, 8), 30)
+        from utils.time_utils import get_utc8_time
+        ts = get_utc8_time().strftime('%Y%m%d_%H%M%S')
+        filename = f'返回确认记录_{start or "全部"}_{end or "至今"}_{ts}.xlsx'
+        wb.save(output)
+        output.seek(0)
+        return send_file(output, as_attachment=True, download_name=filename,
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    except Exception as e:
+        current_app.logger.error(f'导出返回确认记录失败: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
