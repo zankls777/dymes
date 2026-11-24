@@ -2822,7 +2822,7 @@ def invest_tidy():
                 save_invest_source
             )
             upload_stats = []
-            indi_total, input_total = 0, 0
+            failed = []
             for excel_file in files:
                 tmp_in = tempfile.NamedTemporaryFile(
                     delete=False, suffix='.xlsx', prefix='invest_in_')
@@ -2838,6 +2838,13 @@ def invest_tidy():
                     except Exception as se:
                         current_app.logger.warning(
                             f"投入源文件保存失败《{excel_file.filename}》: {se}")
+                except Exception as fe:
+                    # 单个文件失败不影响同批其余文件，并记录出错文件名便于定位
+                    db.session.rollback()
+                    current_app.logger.error(
+                        f"投入文件解析入库失败《{excel_file.filename}》: {fe}", exc_info=True)
+                    failed.append((excel_file.filename, f"{type(fe).__name__}: {fe}"))
+                    continue
                 finally:
                     if os.path.exists(tmp_in.name):
                         try:
@@ -2845,10 +2852,9 @@ def invest_tidy():
                         except OSError:
                             pass
                 upload_stats.append({'source_file': excel_file.filename, 'stats': stats})
-                indi_total += stats['indicator_total']
-                input_total += stats['input_total']
 
-            # 入库反馈：成功条数 + LOT 重复提醒 + MES678 指示数量对比提醒
+            # 入库反馈：成功条数 + LOT 重复提醒 + 逐文件数量核对
+            diff_files = []
             for u in upload_stats:
                 s = u['stats']
                 if s['inserted']:
@@ -2863,12 +2869,24 @@ def invest_tidy():
                 if not s['inserted'] and not s['dup_lots'] and not s['in_dup_count']:
                     flash(f"《{u['source_file']}》未识别到可入库的投入明细数据"
                           f"（请确认格式为「YYYY年M月D일 투입계획서」且Sheet含投入计划书与批次号 1-9 / A-Z）", 'warning')
-            # MES678 指示数量合计 与 各Sheet投入数量合计 自动对比
-            if indi_total > 0 and input_total > 0 and indi_total != input_total:
-                flash(f"MES678指示数量合计 {indi_total:,} 与 各Sheet投入数量合计 {input_total:,} 不一致，"
-                      f"差异 {abs(indi_total - input_total):,}（" +
-                      ('指示数量 多 ' if indi_total > input_total else '投入数量 多 ') +
-                      f"{abs(indi_total - input_total):,}），请核对源文件！", 'error')
+                # 逐文件对比：多文件合并对比会相互抵消，必须按文件定位差异
+                indi, inp = s['indicator_total'], s['input_total']
+                if indi > 0 and inp > 0 and indi != inp:
+                    diff_files.append(u['source_file'])
+                    flash(f"《{u['source_file']}》数量不一致：MES678指示数量 {indi:,}，"
+                          f"各Sheet投入数量 {inp:,}，差异 {abs(indi - inp):,}"
+                          f"（{'指示数量多' if indi > inp else '投入数量多'}），请核对该文件。", 'danger')
+            if failed:
+                for fname, err in failed:
+                    flash(f"《{fname}》解析/入库失败：{err[:200]}", 'danger')
+            # 多文件上传时给出汇总，直接列出存在问题的文件名
+            if len(files) > 1:
+                problem_files = [n for n, _ in failed] + diff_files
+                if problem_files:
+                    flash(f"本次共上传 {len(files)} 个文件，以下文件需要核对："
+                          + '、'.join(problem_files), 'warning')
+                elif upload_stats:
+                    flash(f"本次共上传 {len(files)} 个文件，均成功入库且数量核对一致", 'success')
             return render_template('invest_tidy.html',
                                    batches=db_file_rows() or None,
                                    totals=db_totals(),
@@ -3120,6 +3138,9 @@ def invest_tidy_download():
     """下载汇总Excel：?filtered=1 按筛选条件从数据库汇总下载；否则下载最近一次上传批次。"""
     if 'user_id' not in session:
         return redirect(url_for('main.login', next=request.url))
+    if not check_permission(session['user_id'], 'can_invest_tidy'):
+        flash('您没有投入计划书页面的访问权限', 'error')
+        return redirect(url_for('main.index'))
 
     # 1) 筛选下载：仅导出「批次明细」单表（不做任何汇总/聚合处理，速度快）
     f = request.args
@@ -3627,6 +3648,23 @@ def data_management():
                            backup_history=backup_history)
 
 
+def _data_mgmt_guard(admin_only=False):
+    """数据管理接口统一权限校验，返回错误响应或 None。
+
+    - admin_only=True：仅管理员（备份/恢复/整库导出等危险操作）
+    - 否则：需 can_data_management 页面权限
+    """
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if admin_only:
+        if not session.get('is_admin'):
+            return jsonify({'success': False, 'error': '无权限，仅管理员可操作'}), 403
+        return None
+    if not check_permission(session['user_id'], 'can_data_management'):
+        return jsonify({'success': False, 'error': '没有数据管理权限'}), 403
+    return None
+
+
 @main_bp.route('/data_management/upload', methods=['POST'])
 @login_required
 @csrf_exempt_route
@@ -3676,8 +3714,9 @@ def data_management_upload():
 @csrf_exempt_route
 def data_management_records():
     """日期范围 / 类别 / 关键字查询（分页返回，供页面表格渲染）。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _data_mgmt_guard()
+    if err:
+        return err
     from data_management_service import query_records, list_categories, daily_summary
     start = request.args.get('start', '').strip()
     end = request.args.get('end', '').strip()
@@ -3703,8 +3742,9 @@ def data_management_records():
 @csrf_exempt_route
 def data_management_export():
     """按当前筛选条件导出 CSV / Excel / JSON / PDF。"""
-    if 'user_id' not in session:
-        return redirect(url_for('main.login', next=request.url))
+    err = _data_mgmt_guard()
+    if err:
+        return err
     from data_management_service import (export_csv, export_excel, export_json,
                                          export_pdf)
     from utils.time_utils import get_utc8_time
@@ -3749,8 +3789,9 @@ def data_management_export():
 @csrf_exempt_route
 def data_management_db_stats():
     """返回数据库维护状态（文件大小 / 空闲页 / 可回收空间），供页面展示。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _data_mgmt_guard(admin_only=True)
+    if err:
+        return err
     try:
         from db_maintenance import db_stats
         return jsonify({'success': True, 'stats': db_stats()})
@@ -3807,8 +3848,9 @@ def data_management_backup_download():
     本接口启动任务并立即返回；前端轮询 /data_management/backup/download/progress
     展示进度，完成后跳转 /data_management/backup/download/result 下载。
     """
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _data_mgmt_guard(admin_only=True)
+    if err:
+        return err
     try:
         from data_management_service import backup_database
         from utils.export_task import start_export_async
@@ -3833,8 +3875,9 @@ def data_management_backup_download():
 @login_required
 def data_management_backup_download_progress():
     """返回整库备份进度（供前端轮询）。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _data_mgmt_guard(admin_only=True)
+    if err:
+        return err
     try:
         from utils.export_task import get_progress
         return jsonify({'success': True, 'progress': get_progress()})
@@ -3846,8 +3889,9 @@ def data_management_backup_download_progress():
 @login_required
 def data_management_backup_download_result():
     """下载已生成的备份快照；文件取走后立即清理。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _data_mgmt_guard(admin_only=True)
+    if err:
+        return err
     try:
         from utils.export_task import get_result_file, clear_result
         path, name = get_result_file()
@@ -3913,8 +3957,9 @@ def data_management_backup_restore_progress():
 @login_required
 def data_management_auto_backup_config():
     """自动备份配置：GET 返回当前配置，POST 保存并重启调度判断。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _data_mgmt_guard(admin_only=True)
+    if err:
+        return err
     from auto_backup_service import load_config, save_config
     if request.method == 'POST':
         try:
@@ -3962,8 +4007,9 @@ def data_management_auto_backup_run():
 @login_required
 def data_management_auto_backup_history():
     """自动备份历史记录列表。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _data_mgmt_guard(admin_only=True)
+    if err:
+        return err
     try:
         from auto_backup_service import load_history
         return jsonify({'success': True, 'history': load_history()})
@@ -4119,6 +4165,15 @@ def data_management_export_tables_result():
 # 页面1：登录页（上传/预览/编辑/列配置） 页面2：查询页（免登录模糊查询）
 
 
+def _corrugated_guard():
+    """波纹管位置接口统一权限校验：需 can_corrugated_location，返回错误响应或 None。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session['user_id'], 'can_corrugated_location'):
+        return jsonify({'success': False, 'error': '没有波纹管位置权限'}), 403
+    return None
+
+
 @main_bp.route('/corrugated_location')
 @login_required
 def corrugated_location():
@@ -4149,8 +4204,9 @@ def corrugated_location():
 @csrf_exempt_route
 def corrugated_location_upload():
     """上传 Excel -> 解析返回预览（不落库，页面确认后保存）。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _corrugated_guard()
+    if err:
+        return err
     file = request.files.get('file')
     if not file or not file.filename:
         return jsonify({'success': False, 'error': '未选择文件'}), 400
@@ -4174,8 +4230,9 @@ def corrugated_location_upload():
 @csrf_exempt_route
 def corrugated_location_save():
     """保存预览数据（全量覆盖旧数据），并同步列配置。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _corrugated_guard()
+    if err:
+        return err
     try:
         body = request.get_json(silent=True) or {}
         columns = body.get('columns') or []
@@ -4200,6 +4257,9 @@ def corrugated_location_template():
     """下载官方 Excel 录入模板。"""
     if 'user_id' not in session:
         return redirect(url_for('main.login', next=request.url))
+    if not check_permission(session['user_id'], 'can_corrugated_location'):
+        flash('您没有波纹管位置页面的访问权限', 'error')
+        return redirect(url_for('main.index'))
     try:
         from corrugated_location_service import build_template_workbook
         bio = build_template_workbook()
@@ -4216,8 +4276,9 @@ def corrugated_location_template():
 @csrf_exempt_route
 def corrugated_location_edit():
     """手动编辑单行数据。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _corrugated_guard()
+    if err:
+        return err
     try:
         body = request.get_json(silent=True) or {}
         row_id = body.get('id')
@@ -4240,8 +4301,9 @@ def corrugated_location_edit():
 @csrf_exempt_route
 def corrugated_location_delete():
     """删除单行数据。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _corrugated_guard()
+    if err:
+        return err
     try:
         body = request.get_json(silent=True) or {}
         row_id = body.get('id')
@@ -4263,8 +4325,12 @@ def corrugated_location_delete():
 @csrf_exempt_route
 def corrugated_location_clear():
     """清空全部波纹管位置数据（需管理员确认后执行）。"""
-    if 'user_id' not in session:
-        return jsonify({'success': False, 'error': '未登录'}), 401
+    err = _corrugated_guard()
+    if err:
+        return err
+    # 清空为破坏性操作，仅管理员可执行
+    if not session.get('is_admin'):
+        return jsonify({'success': False, 'error': '仅管理员可清空数据'}), 403
     try:
         from corrugated_location_service import clear_all, invalidate_query_cache
         n = clear_all()
@@ -11426,10 +11492,11 @@ def user_management():
 @main_bp.route('/api/users/<int:user_id>/permissions', methods=['GET'])
 @csrf_exempt_route
 def get_user_permissions(user_id):
-    # 只要已登录即可访问；非管理员仅可获取自己的权限
+    # 本人可读取自己的权限；管理员或被授予「管理用户权限」的用户可读取任意用户
     if 'user_id' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
-    if not session.get('is_admin') and session.get('user_id') != user_id:
+    if (session.get('user_id') != user_id
+            and not check_permission(session['user_id'], 'can_user_mgmt_manage_permissions')):
         return jsonify({'error': 'Forbidden'}), 403
 
     try:
@@ -11446,8 +11513,10 @@ def get_user_permissions(user_id):
 @main_bp.route('/api/users/<int:user_id>/permissions', methods=['POST'])
 @csrf_exempt_route
 def update_user_permissions(user_id):
-    # 检查用户是否登录且为管理员
-    if 'user_id' not in session or not session['is_admin']:
+    # 管理员或拥有「管理用户权限」的用户可修改（与页面按钮的显示条件保持一致）
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session['user_id'], 'can_user_mgmt_manage_permissions'):
         return jsonify({'success': False, 'error': '权限不足'}), 403
 
     try:
@@ -13809,9 +13878,8 @@ def sublist_download():
         current_app.logger.debug(f'收到下载请求数据: {data}')
         search_params = data.get('search_params', {})
         format_type = data.get('format', 'csv').lower()
-        visible_columns = data.get('visible_columns', [])
         show_differences = data.get('show_differences', False)
-        current_app.logger.debug(f'解析参数: format={format_type}, visible_columns={len(visible_columns)}, show_differences={show_differences}')
+        current_app.logger.debug(f'解析参数: format={format_type}, show_differences={show_differences}')
 
         query = SubList.query.filter(SubList.deleted == False, SubList.is_frozen == False)
         current_app.logger.info('开始构建数据库查询')
@@ -13855,7 +13923,9 @@ def sublist_download():
         # OFFSET 在百万级数据下越翻越慢（需跳过 offset 行），keyset 每批恒定开销。
         base_query = query.order_by(SubList.id)
         first_row = base_query.with_entities(SubList.id).first()
-        last_id = first_row[0] if first_row else None
+        # 游标从首行 id 的前一位开始：循环内使用 id > cursor，若直接用首行 id
+        # 会把 id 最小的那条记录跳过，导致导出比实际少一行。
+        last_id = (first_row[0] - 1) if first_row else 0
 
         def iter_id_batches(batch_size):
             """按 id 游标分批返回 [id, ...]，避免大 offset 的 O(n) 跳过开销。"""
@@ -13904,18 +13974,10 @@ def sublist_download():
             current_app.logger.warning('没有数据可导出')
             return jsonify({'error': '没有数据可导出'}), 400
         
-        # 获取所有列名
+        # 获取所有列名（导出始终输出全量列，不受页面搜索框勾选状态影响）
         sample_item = first_batch_items[0].to_dict()
         excluded_fields = ['source_file', 'deleted', 'upload_time']
         all_columns = [k for k, v in sample_item.items() if k not in excluded_fields]
-        
-        # 筛选可见列
-        if visible_columns:
-            existing_columns = [col for col in visible_columns if col in all_columns]
-            current_app.logger.info(f'可见列: {visible_columns}, 存在的列: {existing_columns}')
-            if existing_columns:
-                all_columns = existing_columns
-                current_app.logger.info(f'筛选后列数: {len(all_columns)}')
         
         # 确保车种列（VehicleType）始终被包含
         if 'VehicleType' not in all_columns:
@@ -14163,8 +14225,7 @@ def usagelist_download():
 
         search_params = data.get('search_params', {})
         format_type = data.get('format', 'csv').lower()
-        selected_columns = data.get('columns', [])  # 获取用户选择的列
-        current_app.logger.debug(f'解析参数: format={format_type}, selected_columns={len(selected_columns)}')
+        current_app.logger.debug(f'解析参数: format={format_type}')
 
         if format_type not in {'csv', 'excel'}:
             current_app.logger.warning(f'无效格式: {format_type}')
@@ -14197,7 +14258,8 @@ def usagelist_download():
 
         # 性能优化（M-1）：keyset 分页替代 OFFSET，避免百万级导出越翻越慢。
         _ufirst = query.with_entities(UsageList.id).first()
-        usage_last_id = _ufirst[0] if _ufirst else None
+        # 游标从首行 id 的前一位开始：循环内使用 id > cursor，否则会漏掉首行
+        usage_last_id = (_ufirst[0] - 1) if _ufirst else 0
 
         def iter_usage_batches(batch_size):
             """按 id 游标分批返回 [id, ...]，避免大 offset 的 O(n) 跳过开销。"""
@@ -14214,19 +14276,9 @@ def usagelist_download():
                 yield [r[0] for r in rows]
 
         # 获取模型的所有字段（排除不需要的）
+        # 导出始终输出全量字段，避免外部传入的列清单把 Excel 列裁掉
         excluded_fields = ['source_file', 'deleted', 'upload_time']
-        all_fields = [c.key for c in UsageList.__table__.columns if c.key not in excluded_fields]
-
-        # 如果没有选择列，使用所有可用字段
-        if not selected_columns:
-            columns_to_export = all_fields
-        else:
-            # 过滤出存在且有效的列
-            columns_to_export = [col for col in selected_columns if col in all_fields]
-
-            # 如果过滤后没有有效列，使用所有可用字段
-            if not columns_to_export:
-                columns_to_export = all_fields
+        columns_to_export = [c.key for c in UsageList.__table__.columns if c.key not in excluded_fields]
 
         # 确保车种列（VehicleType）始终被包含
         if 'VehicleType' not in columns_to_export:
@@ -20223,6 +20275,9 @@ def material_inbound_daily_template():
     """下载上传模板（标准列头 + 示例行）"""
     if 'user_id' not in session:
         return redirect(url_for('main.login', next=request.url))
+    if not check_permission(session['user_id'], 'can_material_inbound_daily'):
+        flash('您没有资材每日入库页面的访问权限', 'error')
+        return redirect(url_for('main.index'))
 
     wb = Workbook()
     ws = wb.active

@@ -49,6 +49,8 @@ ROOT_ALLOW = {
     "start.bat", "start.sh",
     # 部署配置
     "requirements.txt",
+    # 安全模块（routes.py 顶部 from security import ...，缺失会导致启动崩溃）
+    "security",
     # 目录
     "models", "utils", "templates", "static", "migrations", "template", "scripts",
 }

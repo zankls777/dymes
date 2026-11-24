@@ -17,12 +17,12 @@ from datetime import datetime, date
 from db import db
 from models.corrugated_location import CorrugatedLocation, CorrugatedColumnConfig
 
-# 标准模板列（与官方 Excel 模板一致；上传时可接受包含这些列的任意顺序 Excel）
-STANDARD_COLUMNS = [
-    "位置编号", "位置名称", "LOT", "车种", "图纸编号",
-    "波纹管规格", "内径(mm)", "外径(mm)", "长度(mm)", "数量",
-    "适用回路", "日期", "备注",
-]
+# 标准模板列（与 template/guanwuweizhi.xlsx 表头一致；上传可接受列顺序任意）
+STANDARD_COLUMNS = ["品番", "规格", "位置", "车种", "备注"]
+
+# 官方 Excel 模板文件（页面「下载录入模板」直接下发该文件）
+TEMPLATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "template", "guanwuweizhi.xlsx")
 
 # 日期提取：优先「日期」列，其次从可识别日期列
 _DATE_RE = re.compile(r"(20\d{2})[/-](\d{1,2})[/-](\d{1,2})")
@@ -104,26 +104,26 @@ def parse_excel(file_bytes, filename=""):
 
 
 def build_template_workbook():
-    """生成官方 Excel 模板（openpyxl），返回 BytesIO。"""
+    """下发表单模板：优先直接读取 template/guanwuweizhi.xlsx，缺失时按标准列动态生成。"""
+    if os.path.exists(TEMPLATE_FILE):
+        with open(TEMPLATE_FILE, "rb") as f:
+            bio = io.BytesIO(f.read())
+        bio.seek(0)
+        return bio
+
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import PatternFill, Alignment
     from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "波纹管位置"
-    header_fill = PatternFill("solid", fgColor="0070C0")
-    header_font = Font(color="FFFFFF", bold=True)
+    ws.title = "Sheet1"
+    header_fill = PatternFill("solid", fgColor="FFFF00")
     for i, name in enumerate(STANDARD_COLUMNS, start=1):
         cell = ws.cell(row=1, column=i, value=name)
         cell.fill = header_fill
-        cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
-        ws.column_dimensions[get_column_letter(i)].width = 14
-    ws.freeze_panes = "A2"
-    # 示例行（便于理解格式，保存时可删除）
-    ws.append(["A-01", "发动机舱前部", "LOT1024", "N33W", "91056-G6370",
-               "Φ25", "20", "28", "300", "2", "前保险杠回路", date.today().strftime("%Y-%m-%d"), ""])
+        ws.column_dimensions[get_column_letter(i)].width = 16
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -247,6 +247,9 @@ def _row_dict(r, columns=None):
 
 def update_row(row_id, data):
     """单行编辑：更新 values_json（以行 keys 对齐）。"""
+    # 防御：空数据会按缺失字段写空字符串，导致整行被清空，直接拒绝
+    if not data:
+        return False, "没有可更新的字段"
     r = db.session.get(CorrugatedLocation, row_id)
     if not r:
         return False, "记录不存在"
@@ -350,10 +353,29 @@ def sync_columns_from_records(records):
 
 
 def ensure_default_configs():
-    """首次使用时，若列配置表为空则按标准列建默认配置。"""
-    if CorrugatedColumnConfig.query.count() > 0:
-        return
+    """列配置与标准模板列保持一致：缺列自动补、旧列自动删、顺序按模板刷新。
+
+    保留已有列的显示名与可见性配置，仅同步字段集合与顺序。
+    """
+    existing = {c.field_key: c for c in CorrugatedColumnConfig.query.all()}
+    changed = False
     for i, name in enumerate(STANDARD_COLUMNS, start=1):
-        db.session.add(CorrugatedColumnConfig(
-            field_key=name, display_name=name, is_visible=True, sort_order=i))
-    db.session.commit()
+        row = existing.get(name)
+        if row:
+            if not row.display_name:
+                row.display_name = name
+                changed = True
+            if row.sort_order != i:
+                row.sort_order = i
+                changed = True
+        else:
+            db.session.add(CorrugatedColumnConfig(
+                field_key=name, display_name=name, is_visible=True, sort_order=i))
+            changed = True
+    # 模板已废弃的列（如旧版「位置编号 / LOT」等）从配置中移除
+    for key, row in existing.items():
+        if key not in STANDARD_COLUMNS:
+            db.session.delete(row)
+            changed = True
+    if changed:
+        db.session.commit()

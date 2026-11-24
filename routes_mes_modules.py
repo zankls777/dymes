@@ -188,9 +188,9 @@ def _has_perm(user, perm_code):
         return False
     if getattr(user, 'is_admin', False):
         return True
-    from utils.permission_utils import get_legacy_permission_row
-    perm = get_legacy_permission_row(user.id)
-    return bool(perm and getattr(perm, perm_code, False))
+    # 统一走 RBAC 有效权限（权限组 ∪ 用户覆盖），不再依赖已删除的旧权限表
+    from utils.permission_utils import check_permission
+    return check_permission(user.id, perm_code)
 
 
 def _require_perm(perm_code):

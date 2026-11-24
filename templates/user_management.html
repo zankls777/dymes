@@ -12,248 +12,312 @@
     <link href="../static/css/font-awesome.min.css" rel="stylesheet">
     {% include '_styles.html' %}
     <style>
-        .permission-section {
-            background-color: #f8f9fa;
-            border-radius: 4px;
-            padding: 8px;
-            margin-bottom: 10px;
-        }
-        
-        .page-permission-group {
-            background-color: white;
-            border: 1px solid #dee2e6;
-            border-radius: 3px;
-            padding: 6px;
-            margin-bottom: 6px;
-        }
-        
-        .page-header {
-            background-color: #f8f9fa;
-            padding: 6px;
-            border-radius: 2px;
-            margin-bottom: 6px;
-        }
-        
-        .page-permissions {
-            border-left: 2px solid #007bff;
-            padding-left: 8px;
-            margin-top: 6px;
-        }
-        
-        .permission-tag {
-            display: inline-block;
-            padding: 4px 10px;
-            margin: 4px 8px 4px 0;
-            border-radius: 14px;
-            font-size: 12px;
-            font-weight: 600;
-            color: #ffffff; /* 白字 */
-            background-color: #0d6efd; /* 纯色高对比填充 */
-            border: 1px solid #0a58ca; /* 深色边框增强轮廓 */
-            box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+        /* ============================================================
+           用户与权限管理 · 现代主题
+           仅调整视觉（标题区 / 卡片 / 表格 / 弹窗），不改动结构与交互
+           ============================================================ */
+        :root {
+            --um-brand: #1e6fbf;
+            --um-brand-2: #37a3e0;
+            --um-ink: #1f2933;
+            --um-ink-2: #5b6b7c;
+            --um-line: #e6ebf2;
+            --um-radius: 14px;
+            --um-shadow: 0 6px 20px rgba(23, 62, 105, .07);
+            --um-shadow-sm: 0 2px 8px rgba(23, 62, 105, .06);
         }
 
-        .permission-tag:hover {
-            background-color: #0b5ed7;
-            border-color: #0a53be;
+        /* ---------- 顶部标题区 ---------- */
+        .um-card .card-header.um-card-head {
+            position: static !important;
+            top: auto !important;
+            padding: 16px 18px !important;
+            background: #fff !important;
+            border-bottom: 1px solid var(--um-line) !important;
+            border-radius: var(--um-radius) var(--um-radius) 0 0 !important;
         }
+        .um-hero-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .um-hero-icon {
+            width: 44px; height: 44px; flex: none;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 14px; color: #fff; font-size: 19px;
+            background: linear-gradient(135deg, var(--um-brand) 0%, var(--um-brand-2) 100%);
+            box-shadow: 0 8px 18px rgba(30, 111, 191, .28);
+        }
+        .um-hero-title .card-title { font-size: 17px !important; font-weight: 700 !important; letter-spacing: .3px; color: var(--um-ink); }
+        .um-subtitle { font-size: 12px; color: #7b8a9c; margin-top: 3px; }
 
-        /* 仅用作容器，不上底色，不与页面争抢对比 */
-        .permission-container {
-            background-color: transparent;
-            border: 0;
-            border-radius: 0;
-            padding: 0;
+        /* 标题区操作按钮：浅色底 + 主色文字，主按钮渐变 */
+        .um-hero-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .um-hero-actions .btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: .46rem .95rem; border-radius: 10px;
+            font-size: 13px; font-weight: 600;
         }
-        
-        .form-check-input:indeterminate {
-            background-color: #ffc107;
-            border-color: #ffc107;
+        .um-hero-actions .btn-primary {
+            background: linear-gradient(135deg, var(--um-brand) 0%, var(--um-brand-2) 100%);
+            border: 0; box-shadow: 0 6px 14px rgba(30, 111, 191, .25);
         }
-        
-        .page-checkbox:checked + label {
-            color: #007bff;
-            font-weight: bold;
-        }
-        
-        .page-permission-group:hover {
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            transition: box-shadow 0.3s ease;
-        }
-        
-        /* 权限管理弹窗宽度设置 */
-        #permissionManagementModal .modal-dialog {
-            max-width: 85%;
-            width: 85%;
-        }
-        
-        @media (min-width: 1200px) {
-            #permissionManagementModal .modal-dialog {
-                max-width: 75%;
-                width: 75%;
-            }
-        }
-        
-        @media (min-width: 1400px) {
-            #permissionManagementModal .modal-dialog {
-                max-width: 70%;
-                width: 70%;
-            }
-        }
-        
-        /* 紧凑布局优化 */
-        #permissionManagementModal .modal-body {
-            padding: 12px;
-        }
-        
-        #permissionManagementModal .form-check {
-            margin-bottom: 4px;
-        }
-        
-        #permissionManagementModal .form-check-label {
-            font-size: 12px;
-            padding-left: 3px;
-        }
-        
-        #permissionManagementModal .row {
-            margin-bottom: 6px;
-        }
-        
-        #permissionManagementModal .col-md-3 {
-            padding: 0 6px;
-        }
-        
-        #permissionManagementModal h6 {
-            margin-bottom: 8px;
-            font-size: 13px;
-        }
-        
-        #permissionManagementModal .badge {
-            font-size: 9px;
-            padding: 2px 4px;
-        }
+        .um-hero-actions .btn-primary:hover { filter: brightness(1.05); }
+        .um-hero-actions .btn-outline-success { color: #1c7a3d; border-color: #c9e8d4; background: #f3fbf6; }
+        .um-hero-actions .btn-outline-success:hover { color: #fff; background: #1c7a3d; border-color: #1c7a3d; }
+        .um-hero-actions .btn-outline-info { color: #176f97; border-color: #c6e4f2; background: #f2fafd; }
+        .um-hero-actions .btn-outline-info:hover { color: #fff; background: #176f97; border-color: #176f97; }
+        .um-hero-actions .btn-outline-secondary { color: #5c6b7c; border-color: #dfe6ee; background: #f7f9fc; }
+        .um-hero-actions .btn-outline-secondary:hover { color: #33475f; background: #eef2f7; border-color: #d5dfe9; }
+        .um-hero-actions .btn:disabled { opacity: .55; }
 
-        /* ---------- 用户列表 ---------- */
+        /* ---------- 主卡片 ---------- */
+        .um-card { border: 1px solid var(--um-line); border-radius: var(--um-radius); box-shadow: var(--um-shadow); overflow: hidden; background: #fff; }
+        .um-card > .card-body { padding: 16px 18px 18px; }
+
+        /* ---------- 筛选工具栏 ---------- */
         .filter-toolbar {
-            background: #f8f9fa;
-            border: 1px solid #e9ecef;
-            border-radius: 6px;
-            padding: 8px 12px;
+            padding: 12px 14px;
+            margin-bottom: 14px;
+            border: 1px solid var(--um-line);
+            border-radius: 12px;
+            background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+            box-shadow: var(--um-shadow-sm);
+        }
+        .filter-toolbar .form-label { font-size: 11.5px; font-weight: 600; color: #6b7b8d; letter-spacing: .02em; }
+        .filter-toolbar .input-group-text { background: #f2f7fd; border-color: #e2e9f2; color: #90a2b6; border-radius: 9px 0 0 9px; }
+        .filter-toolbar .form-control,
+        .filter-toolbar .form-select { border-color: #e2e9f2; border-radius: 9px; font-size: 13px; background-color: #fff; }
+        .filter-toolbar .input-group .form-control { border-radius: 0 9px 9px 0; }
+        .filter-toolbar .form-control:focus,
+        .filter-toolbar .form-select:focus { border-color: #9cc1ff; box-shadow: 0 0 0 3px rgba(30, 111, 191, .1); }
+        .filter-toolbar .btn { border-radius: 9px; font-size: 13px; font-weight: 600; }
+        /* 用网格接管筛选行，避免 Bootstrap 列宽合计超出导致按钮换行 */
+        .filter-toolbar .row {
+            display: grid;
+            grid-template-columns: 2.2fr repeat(5, 1fr) 1.5fr;
+            gap: 10px;
+            align-items: end;
+            margin: 0;
+        }
+        .filter-toolbar .row > [class*="col-"] { width: auto; max-width: none; padding: 0; }
+        @media (max-width: 1199.98px) {
+            .filter-toolbar .row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .filter-toolbar .row > [class*="col-"]:first-child,
+            .filter-toolbar .row > [class*="col-"]:last-child { grid-column: span 3; }
+        }
+        @media (max-width: 575.98px) {
+            .filter-toolbar .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .filter-toolbar .row > [class*="col-"]:first-child,
+            .filter-toolbar .row > [class*="col-"]:last-child { grid-column: span 2; }
         }
 
+        /* ---------- 用户表格 ---------- */
+        .um-table-wrap { border: 1px solid var(--um-line); border-radius: 12px; overflow: auto; background: #fff; }
         .user-table {
+            width: 100%;
+            min-width: 860px;
             margin-bottom: 0;
             font-size: 13px;
-            /* 固定表格布局，严格按各 <th> 设定的列宽渲染，避免列被拉伸 */
-            table-layout: fixed;
-            width: 100%;
+            table-layout: fixed;       /* 严格按 <th> 列宽渲染，避免列被拉伸 */
+            border-collapse: separate;
+            border-spacing: 0;
         }
+        .user-table thead th {
+            position: sticky; top: 0; z-index: 2;
+            padding: 10px !important;
+            background: #f3f7fd !important;
+            border-top: 0 !important;
+            border-bottom: 1px solid #e3ecf8 !important;
+            color: #5a7189;
+            font-size: 11.5px;
+            font-weight: 700;
+            letter-spacing: .03em;
+            white-space: nowrap;
+        }
+        .user-table tbody td {
+            padding: 9px 10px !important;
+            border-top: 0 !important;
+            border-bottom: 1px solid #f0f4fa !important;
+            color: #2c3e50;
+            vertical-align: middle;
+        }
+        .user-table tbody tr:last-child td { border-bottom: 0 !important; }
+        .user-table tbody tr { transition: background-color .16s ease; }
+        .user-table.table-striped > tbody > tr:nth-of-type(odd) > * { background-color: #fcfdff; }
+        .user-table.table-hover > tbody > tr:hover > * { background-color: #f3f9ff; }
 
         /* 用户名 / 权限组列过长时省略号截断，保持列宽稳定 */
         .user-table td:nth-child(2),
         .user-table td:nth-child(3),
         .user-table td:nth-child(4),
-        .user-table td:nth-child(8) {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
+        .user-table td:nth-child(8) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .user-table td:nth-child(3) { font-weight: 600; color: #1f2f42; }
 
-        /* 收紧表格行的上下内边距，消除行内多余留白 */
-        .user-table thead th,
-        .user-table tbody td {
-            padding-top: 4px;
-            padding-bottom: 4px;
-        }
+        .user-table th.sortable { cursor: pointer; user-select: none; }
+        .user-table th.sortable:hover { background: #e9f1fc !important; color: var(--um-brand); }
 
-        .user-table thead th {
-            white-space: nowrap;
-            background: #f1f3f5;
-            font-weight: 600;
-            font-size: 12px;
-            color: #495057;
-        }
-
-        .user-table th.sortable:hover {
-            background: #e7ebef;
-            color: #0d6efd;
-        }
-
-        .user-table td {
-            vertical-align: middle;
-        }
-
+        /* 行内操作：紧凑图标按钮 */
+        .user-table .btn-group { gap: 4px; }
         .user-table .btn-group .btn {
-            padding: 1px 6px;
-            font-size: 11px;
-            line-height: 1.6;
+            width: 27px; height: 27px; padding: 0 !important; flex: 0 0 auto;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 12px; line-height: 1;
+            border-radius: 8px !important;
         }
+        .user-table .btn-group .btn + .btn { margin-left: 0; }
+        .user-table .btn-outline-secondary { color: #5c6b7c; border-color: #e0e7ef; }
+        .user-table .btn-outline-secondary:hover { color: #33475f; background: #eef2f7; border-color: #d5dfe9; }
+        .user-table .btn-outline-warning { color: #a5730a; border-color: #f2e2bd; }
+        .user-table .btn-outline-warning:hover { color: #8a5f06; background: #fdf3dc; border-color: #efd9a6; }
+        .user-table .btn-outline-info { color: #176f97; border-color: #c9e5f2; }
+        .user-table .btn-outline-info:hover { color: #125b7d; background: #e6f3fb; border-color: #b7dcee; }
+        .user-table .btn-outline-primary { color: #1b5db3; border-color: #cfe0f8; }
+        .user-table .btn-outline-primary:hover { color: #164a8f; background: #e8f1fd; border-color: #b7d2f4; }
+        .user-table .btn-outline-dark { color: #4a5a6b; border-color: #dde5ee; }
+        .user-table .btn-outline-dark:hover { color: #2c3e50; background: #eef2f7; border-color: #ccd7e2; }
+        .user-table .btn-outline-danger { color: #b02a2a; border-color: #f3cccc; }
+        .user-table .btn-outline-danger:hover { color: #932020; background: #fdecec; border-color: #eeb3b3; }
+        .user-table .btn-primary { color: #fff; background: var(--um-brand); border-color: var(--um-brand); }
+        .user-table .btn-primary:hover { background: #15528c; border-color: #15528c; }
 
-        .user-table .badge {
-            font-size: 11px;
-            font-weight: 500;
+        /* 状态/类型胶囊：低饱和底色 + 深色文字，避免整行花哨 */
+        .um-page .badge,
+        .modal .badge { padding: .34em .62em; font-size: 11px; font-weight: 600; border-radius: 999px; letter-spacing: .01em; }
+        .um-page .badge.bg-success, .modal .badge.bg-success { background: #e7f6ec !important; color: #1c7a3d !important; }
+        .um-page .badge.bg-secondary, .modal .badge.bg-secondary { background: #eef1f6 !important; color: #5c6b7c !important; }
+        .um-page .badge.bg-info, .modal .badge.bg-info { background: #e6f3fb !important; color: #176f97 !important; }
+        .um-page .badge.bg-warning, .modal .badge.bg-warning { background: #fdf3dc !important; color: #96660b !important; }
+        .um-page .badge.bg-primary, .modal .badge.bg-primary { background: #e8f1fd !important; color: #1b5db3 !important; }
+        .um-page .badge.bg-danger, .modal .badge.bg-danger { background: #fdecec !important; color: #b02a2a !important; }
+        .um-page .badge.bg-light, .modal .badge.bg-light { background: #f4f6fa !important; color: #5c6b7c !important; border: 1px solid #e6ebf2 !important; }
+
+        /* ---------- 分页 ---------- */
+        .um-page .pagination { gap: 4px; }
+        .um-page .pagination .page-link {
+            padding: .34rem .68rem;
+            border: 1px solid #e4ebf5;
+            border-radius: 9px;
+            background: #fff;
+            color: #47627f;
+            font-size: 12.5px;
+            font-weight: 600;
         }
-
-        /* 表格单元格内联徽标不换行换行控制 */
-        .user-table td:nth-child(6) {
-            max-width: 240px;
+        .um-page .pagination .page-item.active .page-link {
+            background: var(--um-brand); border-color: var(--um-brand); color: #fff;
+            box-shadow: 0 4px 10px rgba(30, 111, 191, .25);
         }
+        .um-page .pagination .page-item.disabled .page-link { color: #b6c1cf; background: #f7f9fc; }
+        .um-page #paginationInfo { font-size: 12.5px; color: #7b8a9c; }
 
-        /* 加载指示器 */
+        /* ---------- 弹窗统一视觉 ---------- */
+        .modal-content { border: 0; border-radius: 16px; box-shadow: 0 24px 64px rgba(15, 23, 42, .2); overflow: hidden; }
+        .modal-header { padding: 15px 20px; border-bottom: 1px solid #eef2f8; background: #fff; }
+        .modal-title { font-size: 15.5px; font-weight: 700; color: #17212b; }
+        .modal-body { padding: 18px 20px; }
+        .modal-footer { padding: 12px 20px; border-top: 1px solid #eef2f8; background: #fbfcfe; gap: 8px; }
+        .modal-footer .btn { border-radius: 10px; font-size: 13px; font-weight: 600; padding: .45rem 1rem; }
+        .modal .form-label { font-size: 12.5px; font-weight: 600; color: #4a5b6d; }
+        .modal .form-control,
+        .modal .form-select { border-color: #e2e9f2; border-radius: 9px; font-size: 13px; }
+        .modal .form-control:focus,
+        .modal .form-select:focus { border-color: #9cc1ff; box-shadow: 0 0 0 3px rgba(30, 111, 191, .12); }
+        .modal .alert { border-radius: 10px; font-size: 13px; }
+        .modal .nav-tabs { gap: 6px; border-bottom: 1px solid #eef2f8; }
+        .modal .nav-tabs .nav-link { padding: .5rem .9rem; border: 0; border-radius: 9px 9px 0 0; color: #5b6b7c; font-size: 13px; font-weight: 600; }
+        .modal .nav-tabs .nav-link.active { background: #f2f7fd; color: var(--um-brand); border-bottom: 2px solid var(--um-brand); }
+
+        .um-page .form-check-input,
+        .modal .form-check-input { cursor: pointer; border-color: #cdd8e5; }
+        .um-page .form-check-input:checked,
+        .modal .form-check-input:checked { background-color: var(--um-brand); border-color: var(--um-brand); }
+        .um-page .form-check-input:focus,
+        .modal .form-check-input:focus { border-color: #9cc1ff; box-shadow: 0 0 0 3px rgba(30, 111, 191, .12); }
+        .form-check-input:indeterminate { background-color: #f0a92e; border-color: #f0a92e; }
+
+        /* ---------- 权限管理弹窗 ---------- */
+        #permissionManagementModal .modal-dialog { max-width: min(1160px, 90vw); width: 90%; }
+        #permissionManagementModal .modal-body { padding: 16px 20px; }
+        #permissionManagementModal .form-check { margin-bottom: 2px; }
+        #permissionManagementModal .form-check-label { padding-left: 2px; font-size: 12.5px; color: #3d5064; }
+        #permissionManagementModal .row { margin-bottom: 0; }
+        #permissionManagementModal .col-md-3 { padding: 0 8px; }
+        #permissionManagementModal .mb-1 > h6,
+        #permissionManagementModal h6 { font-size: 13px; font-weight: 700; color: #1f2933; }
+
+        .permission-section { padding: 0; margin-bottom: 10px; background: transparent; border-radius: 0; }
+        .permission-section > h6 { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; padding-bottom: 0; border-bottom: 0; }
+        .page-permission-group {
+            padding: 10px 12px;
+            margin-bottom: 10px !important;
+            border: 1px solid #e7eef8;
+            border-radius: 12px;
+            background: #fff;
+            transition: border-color .2s ease, box-shadow .2s ease;
+        }
+        .page-permission-group:hover { border-color: #d7e5f6; box-shadow: var(--um-shadow-sm); }
+        .page-header { padding: 8px 10px; margin-bottom: 8px !important; border: 1px solid #e9f1fc; border-radius: 9px; background: #f5f9ff; }
+        .page-header .badge { font-size: 10.5px; }
+        .page-permissions { margin-top: 2px; padding-left: 0; border-left: 0; }
+        .permission-container { padding: 0; border: 0; background: transparent; }
+        .permission-tag {
+            display: inline-block;
+            margin: 3px 6px 3px 0;
+            padding: 3px 9px;
+            border: 1px solid #cfe1f8;
+            border-radius: 999px;
+            background: #e9f2fd;
+            color: #1b5db3;
+            font-size: 11.5px;
+            font-weight: 600;
+            box-shadow: none;
+        }
+        .permission-tag:hover { background: #dcebfc; border-color: #b9d4f3; }
+        .page-checkbox:checked + label { color: var(--um-brand); font-weight: 700; }
+        #current-permissions-preview { max-height: 96px; overflow: auto; padding: 6px 2px; }
+
+        /* 按钮内加载指示器 */
         .loader {
             display: none;
-            width: 14px;
-            height: 14px;
-            border: 2px solid rgba(255, 255, 255, 0.5);
+            width: 14px; height: 14px;
+            margin-left: 4px;
+            border: 2px solid rgba(255, 255, 255, .5);
             border-top-color: #fff;
             border-radius: 50%;
-            animation: um-spin 0.6s linear infinite;
             vertical-align: middle;
-            margin-left: 4px;
+            animation: um-spin .6s linear infinite;
         }
+        @keyframes um-spin { to { transform: rotate(360deg); } }
 
-        @keyframes um-spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* ---------- 响应式适配 ---------- */
+        /* ---------- 响应式 ---------- */
         @media (max-width: 991.98px) {
-            .filter-toolbar .col-12,
-            .filter-toolbar .col-6 {
-                margin-bottom: 6px;
-            }
+            .um-card > .card-body { padding: 14px; }
         }
 
         @media (max-width: 767.98px) {
-            .user-table {
-                font-size: 12px;
-            }
-            .user-table thead th,
-            .user-table td {
-                padding: 6px 4px;
-            }
-            /* 小屏把更多列折叠为隐藏，减少横向滚动 */
-            .user-table th:nth-child(6),
-            .user-table td:nth-child(6) {
-                display: none;
-            }
+            .um-card .card-header.um-card-head { padding: 12px 14px !important; }
+            .um-hero-icon { width: 38px; height: 38px; border-radius: 12px; font-size: 16px; }
+            .um-hero-title .card-title { font-size: 15.5px !important; }
+            .um-hero-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+            .um-hero-actions .btn { width: 100%; justify-content: center; }
+            .filter-toolbar { padding: 10px; }
+            #permissionManagementModal .modal-dialog { width: auto; max-width: none; margin: .5rem; }
             #batchPermissionModal .modal-body,
-            #importUserModal .modal-body {
-                padding: 10px;
-            }
+            #importUserModal .modal-body { padding: 14px; }
+            /* 小屏隐藏次要列，保留选择/用户名/权限组/状态/操作 */
+            .user-table { min-width: 660px; font-size: 12px; }
+            .user-table th:nth-child(2), .user-table td:nth-child(2),
+            .user-table th:nth-child(5), .user-table td:nth-child(5),
+            .user-table th:nth-child(6), .user-table td:nth-child(6),
+            .user-table th:nth-child(8), .user-table td:nth-child(8) { display: none; }
+            .user-table thead th,
+            .user-table tbody td { padding: 8px !important; }
+            /* 小屏操作列收窄并允许按钮换行，避免被横向裁切 */
+            .user-table th:last-child { width: 150px !important; }
+            .user-table .btn-group { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
         }
 
         @media (max-width: 575.98px) {
-            .user-table th:nth-child(5),
-            .user-table td:nth-child(5),
-            .user-table th:nth-child(9),
-            .user-table td:nth-child(9) {
-                display: none;
-            }
-            .card-header .h5,
-            .card-header h5 {
-                font-size: 15px;
-            }
+            .um-page .pagination .page-link { padding: .3rem .55rem; font-size: 12px; }
+            /* 手机端再隐藏“权限组”列，保持选择/用户名/状态/操作可见 */
+            .user-table th:nth-child(4), .user-table td:nth-child(4) { display: none; }
+            .user-table { min-width: 100%; }
         }
     </style>
 
@@ -261,7 +325,7 @@
 <body>
     {% include '_navbar.html' %}
 
-    <div class="container-fluid mt-4">
+    <div class="container-fluid um-page mt-4">
 
         <!-- 闪现消息 -->
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -278,11 +342,17 @@
         <!-- 主内容区域 -->
         <div class="row">
             <div class="col-lg-12">
-                <div class="card">
-                    <div class="card-header">
-                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <h5 class="card-title mb-0"><i class="fa fa-users mr-1"></i> 用户与权限管理</h5>
-                            <div class="d-flex gap-2 flex-wrap">
+                <div class="card um-card">
+                    <div class="card-header um-card-head">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                            <div class="um-hero-title">
+                                <div class="um-hero-icon"><i class="fa fa-users"></i></div>
+                                <div>
+                                    <h5 class="card-title mb-0">用户与权限管理</h5>
+                                    <p class="um-subtitle mb-0">统一管理平台账号、权限组与功能授权</p>
+                                </div>
+                            </div>
+                            <div class="um-hero-actions">
                                 {% if current_user and (current_user.is_admin or (current_user.has_permission('can_user_mgmt_add_user'))) %}
                                     <button type="button" class="btn btn-primary" id="addUserBtn" data-bs-toggle="modal" data-bs-target="#addUserModal">
                                         <i class="fa fa-plus mr-1"></i> 添加用户
@@ -296,7 +366,7 @@
                                         <i class="fa fa-object-group mr-1"></i> 批量权限 <span class="badge bg-secondary" id="batchSelectedCount">0</span>
                                     </button>
                                     <a href="{{ url_for('rbac.role_management_page') }}" class="btn btn-outline-secondary">
-                                        <i class="fa fa-layer-group mr-1"></i> 权限组管理
+                                        <i class="fa fa-th-large mr-1"></i> 权限组管理
                                     </a>
                                 {% endif %}
                             </div>
@@ -361,7 +431,7 @@
                         </div>
 
                         <!-- 用户列表 -->
-                        <div class="table-responsive">
+                        <div class="table-responsive um-table-wrap">
                             <table class="table table-striped table-hover align-middle user-table">
                                 <thead>
                                     <tr>
@@ -370,16 +440,16 @@
                                         </th>
                                         <th class="sortable" data-sort="id" style="width:60px;">ID <i class="fa fa-sort text-muted"></i></th>
                                         <th class="sortable" data-sort="username" style="width:130px;">用户名 <i class="fa fa-sort text-muted"></i></th>
-                                        <th style="width:110px;">权限组</th>
+                                        <th style="width:170px;">权限组</th>
                                         <th class="sortable" data-sort="is_admin" style="width:90px;">管理员 <i class="fa fa-sort text-muted"></i></th>
                                         <th class="sortable" data-sort="is_operator" style="width:90px;">作业者 <i class="fa fa-sort text-muted"></i></th>
                                         <th class="sortable" data-sort="is_active" style="width:80px;">状态 <i class="fa fa-sort text-muted"></i></th>
-                                        <th style="width:180px;">权限</th>
-                                        <th style="width:210px;">操作</th>
+                                        <th style="width:120px;">权限</th>
+                                        <th style="width:240px;">操作</th>
                                     </tr>
                                 </thead>
                                 <tbody id="userTableBody">
-                                    <tr><td colspan="11" class="text-center text-muted py-4">
+                                    <tr><td colspan="9" class="text-center text-muted py-4">
                                         <span class="spinner-border spinner-border-sm mr-2"></span>加载中...
                                     </td></tr>
                                 </tbody>

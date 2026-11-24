@@ -2,85 +2,213 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>权限组管理</title>
     <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
+    {% include '_styles.html' %}
     <style>
-        body { background: #f5f6fa; }
-        .layout { display: flex; gap: 16px; padding: 16px; }
-        .panel { background: #fff; border: 1px solid #e3e6ef; border-radius: 8px; padding: 16px; }
-        .panel-groups { width: 300px; flex: none; }
-        .panel-main { flex: 1; min-width: 0; }
-        .group-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-        .group-item:hover { background: #f0f3fa; }
-        .group-item.active { background: #e3ecff; }
-        .group-item .badge { font-size: 11px; }
-        .module-block { border: 1px solid #eceef5; border-radius: 6px; margin-bottom: 10px; }
-        .module-header { background: #f7f8fc; padding: 8px 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; }
-        .module-header input { margin-right: 8px; }
-        .perm-list { padding: 8px 12px 12px 32px; display: flex; flex-wrap: wrap; gap: 10px 22px; }
-        .perm-item { display: flex; align-items: center; gap: 6px; min-width: 180px; }
-        .perm-type { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: #eef1f8; color: #667; }
-        .perm-type.page { background: #e6f4ea; color: #2e7d32; }
-        .perm-item.denied label { text-decoration: line-through; color: #d9534f; }
-        .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
-        .empty-tip { color: #98a0b3; padding: 30px; text-align: center; }
-        .overrides-hint { font-size: 12px; color: #8a8f9e; }
-        .member-list { border: 1px solid #eceef5; border-radius: 6px; }
-        .member-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #f2f4f9; }
-        .member-row:last-child { border-bottom: none; }
-        .member-row:hover { background: #f7f9fd; }
-        .member-name { flex: 1; min-width: 0; }
-        .member-name .sub { font-size: 12px; color: #98a0b3; }
-        .member-count { font-size: 12px; color: #8a8f9e; }
+        /* ============================================================
+           权限组管理 · 现代主题（浅色卡片 / 分段 Tab / 胶囊标签）
+           ============================================================ */
+        :root {
+            --rb-brand: #1e6fbf;
+            --rb-brand-2: #37a3e0;
+            --rb-ink: #1f2933;
+            --rb-ink-2: #5b6b7c;
+            --rb-line: #e6ebf2;
+            --rb-radius: 14px;
+            --rb-shadow: 0 6px 20px rgba(23, 62, 105, .07);
+        }
+
+        .rm-page { max-width: 1500px; margin: 0 auto; padding: 18px 4px 26px; }
+
+        /* ---------- 标题区 ---------- */
+        .rm-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+        .rm-hero-title { display: flex; align-items: center; gap: 12px; }
+        .rm-hero-icon {
+            width: 44px; height: 44px; flex: none; border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-size: 19px;
+            background: linear-gradient(135deg, var(--rb-brand) 0%, var(--rb-brand-2) 100%);
+            box-shadow: 0 8px 18px rgba(30, 111, 191, .28);
+        }
+        .rm-hero h1 { margin: 0; font-size: 20px; font-weight: 700; color: var(--rb-ink); letter-spacing: .3px; }
+        .rm-hero p { margin: 4px 0 0; font-size: 12.5px; color: var(--rb-ink-2); }
+        .rm-hero .btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: .5rem 1rem; border: 0; border-radius: 10px;
+            font-size: 13px; font-weight: 600;
+            background: linear-gradient(135deg, var(--rb-brand) 0%, var(--rb-brand-2) 100%);
+            box-shadow: 0 6px 14px rgba(30, 111, 191, .25);
+        }
+        .rm-hero .btn:hover { filter: brightness(1.05); }
+
+        /* ---------- 双栏布局 ---------- */
+        .rm-layout { display: flex; gap: 16px; align-items: flex-start; }
+        .rm-panel { background: #fff; border: 1px solid var(--rb-line); border-radius: var(--rb-radius); box-shadow: var(--rb-shadow); padding: 14px; }
+        .rm-panel-groups { width: 300px; flex: none; }
+        .rm-panel-main { flex: 1; min-width: 0; }
+        .rm-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--rb-line); }
+        .rm-panel-head strong { font-size: 13.5px; font-weight: 700; color: var(--rb-ink); }
+        .rm-panel-head .hint { font-size: 11.5px; color: #8a9bb0; }
+
+        /* ---------- 权限组列表 ---------- */
+        #groupList { display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 250px); overflow-y: auto; }
+        .group-item {
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            padding: 10px 12px; border: 1px solid transparent; border-radius: 10px;
+            cursor: pointer; transition: background .16s ease, border-color .16s ease;
+        }
+        .group-item:hover { background: #f6faff; border-color: #e4eefb; }
+        .group-item.active { background: linear-gradient(90deg, #eaf3ff 0%, #f7fbff 100%); border-color: #cfe2fa; box-shadow: inset 3px 0 0 var(--rb-brand); }
+        .group-item .g-name { font-size: 13px; font-weight: 600; color: #22364d; }
+        .group-item .g-code { font-size: 11.5px; color: #8a9bb0; }
+        .group-item .badge { padding: .3em .55em; border-radius: 999px; font-size: 10.5px; background: #eef1f6 !important; color: #5c6b7c !important; }
+
+        /* ---------- 右侧工具栏 ---------- */
+        .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+        .rm-toolbar-title { min-width: 0; }
+        .rm-toolbar-title h2 { margin: 0; font-size: 15.5px; font-weight: 700; color: var(--rb-ink); }
+        .rm-toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+        .toolbar .btn { padding: .4rem .8rem; border-radius: 9px; font-size: 12.5px; font-weight: 600; }
+        .overrides-hint { display: block; margin-top: 3px; font-size: 11.5px; color: #8a9bb0; }
+
+        /* ---------- 分段式 Tab ---------- */
+        #groupTabs { display: inline-flex; gap: 4px; margin-bottom: 14px; padding: 4px; border: 0; border-radius: 10px; background: #f1f5fa; }
+        #groupTabs .nav-link { padding: .42rem .95rem; border: 0; border-radius: 8px; color: #5b6b7c; font-size: 13px; font-weight: 600; }
+        #groupTabs .nav-link:hover { color: var(--rb-brand); }
+        #groupTabs .nav-link.active { background: #fff; color: var(--rb-brand); box-shadow: 0 2px 8px rgba(15, 23, 42, .08); }
+
+        /* ---------- 权限树 ---------- */
+        .module-block { margin-bottom: 12px; border: 1px solid #e8eef7; border-radius: 12px; background: #fff; overflow: hidden; }
+        .module-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #f6f9fe; border-bottom: 1px solid #eef3fa; color: #2b3d52; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .module-header input { margin: 0; }
+        .perm-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px 18px; padding: 12px 14px 14px 34px; }
+        .perm-item { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; }
+        .perm-item label { margin: 0; color: #3d5064; cursor: pointer; }
+        .perm-type { margin-left: auto; padding: 1px 7px; border-radius: 999px; background: #eef1f8; color: #667; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+        .perm-type.page { background: #e7f6ec; color: #1c7a3d; }
+        .perm-item.denied label { color: #b02a2a; text-decoration: line-through; }
+
+        .form-check-input { cursor: pointer; border-color: #cdd8e5; }
+        .form-check-input:checked { background-color: var(--rb-brand); border-color: var(--rb-brand); }
+        .form-check-input:focus { border-color: #9cc1ff; box-shadow: 0 0 0 3px rgba(30, 111, 191, .12); }
+
+        /* ---------- 成员列表 ---------- */
+        .member-list { border: 1px solid #e8eef7; border-radius: 12px; overflow: hidden; }
+        .member-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #f2f5fa; }
+        .member-row:last-child { border-bottom: 0; }
+        .member-row:hover { background: #f7fbff; }
+        .member-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: #22364d; }
+        .member-name .sub { display: block; margin-top: 1px; font-size: 11.5px; font-weight: 400; color: #8a9bb0; }
+        .member-row .badge { padding: .3em .55em; border-radius: 999px; font-size: 10.5px; background: #fdf3dc !important; color: #96660b !important; }
+        .member-count { font-size: 12px; color: #7b8a9c; }
+        #memberSearch { border-color: #e2e9f2; border-radius: 9px; font-size: 13px; }
+        #memberSearch:focus { border-color: #9cc1ff; box-shadow: 0 0 0 3px rgba(30, 111, 191, .1); }
+
+        .empty-tip {
+            display: flex; align-items: center; justify-content: center;
+            min-height: 180px; padding: 30px;
+            border: 1px dashed #e3eaf4; border-radius: 12px;
+            background: #fbfcfe; color: #98a5b6; font-size: 13px;
+        }
+
+        /* ---------- 弹窗 ---------- */
+        .modal-content { border: 0; border-radius: 16px; box-shadow: 0 24px 64px rgba(15, 23, 42, .2); overflow: hidden; }
+        .modal-header { padding: 15px 20px; border-bottom: 1px solid #eef2f8; }
+        .modal-title { font-size: 15.5px; font-weight: 700; color: #17212b; }
+        .modal-body { padding: 18px 20px; }
+        .modal-footer { padding: 12px 20px; border-top: 1px solid #eef2f8; background: #fbfcfe; gap: 8px; }
+        .modal-footer .btn { padding: .45rem 1rem; border-radius: 10px; font-size: 13px; font-weight: 600; }
+        .modal .form-label { font-size: 12.5px; font-weight: 600; color: #4a5b6d; }
+        .modal .form-control { border-color: #e2e9f2; border-radius: 9px; font-size: 13px; }
+        .modal .form-control:focus { border-color: #9cc1ff; box-shadow: 0 0 0 3px rgba(30, 111, 191, .12); }
+
+        /* ---------- 响应式 ---------- */
+        @media (max-width: 991.98px) {
+            .rm-layout { flex-direction: column; align-items: stretch; }
+            .rm-panel-groups { width: 100%; }
+            .rm-panel-main { width: 100%; }
+            #groupList { flex-direction: row; max-height: none; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+            .group-item { flex: none; min-width: 210px; }
+        }
+        @media (max-width: 767.98px) {
+            .rm-page { padding: 14px 2px 22px; }
+            .rm-hero-icon { width: 38px; height: 38px; border-radius: 12px; font-size: 16px; }
+            .rm-hero h1 { font-size: 17px; }
+            .rm-hero .btn { width: 100%; justify-content: center; }
+            .toolbar { align-items: flex-start; }
+            .rm-toolbar-actions { width: 100%; margin-left: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+            .rm-toolbar-actions .btn { width: 100%; }
+            .perm-list { grid-template-columns: 1fr; padding-left: 14px; }
+        }
     </style>
 </head>
 <body>
 {% include '_navbar.html' %}
-<div class="layout">
-    <!-- 左侧：权限组列表 -->
-    <div class="panel panel-groups">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <strong>权限组列表</strong>
-            <button class="btn btn-sm btn-primary" onclick="GroupUI.openGroupModal()">新增权限组</button>
+<div class="rm-page">
+    <!-- 页面标题区 -->
+    <div class="rm-hero">
+        <div class="rm-hero-title">
+            <div class="rm-hero-icon"><i class="fa fa-th-large"></i></div>
+            <div>
+                <h1>权限组管理</h1>
+                <p>按角色聚合权限，统一为成员批量授权</p>
+            </div>
         </div>
-        <div id="groupList"></div>
+        <button class="btn btn-primary" onclick="GroupUI.openGroupModal()">
+            <i class="fa fa-plus"></i> 新增权限组
+        </button>
     </div>
 
-    <!-- 右侧：权限配置 / 成员管理 -->
-    <div class="panel panel-main">
-        <div class="toolbar">
-            <h6 class="mb-0" id="currentGroupTitle">请选择权限组</h6>
-            <span class="overrides-hint" id="inheritHint"></span>
-            <div class="ms-auto">
-                <button class="btn btn-sm btn-outline-secondary" id="btnPermAllOn" onclick="GroupUI.selectAll(true)">全选</button>
-                <button class="btn btn-sm btn-outline-secondary" id="btnPermAllOff" onclick="GroupUI.selectAll(false)">全不选</button>
-                <button class="btn btn-sm btn-success" onclick="GroupUI.savePermissions()" id="btnSavePerm" disabled>保存权限</button>
-                <button class="btn btn-sm btn-success d-none" onclick="GroupUI.saveMembers()" id="btnSaveMember" disabled>保存成员</button>
-                <button class="btn btn-sm btn-outline-danger" onclick="GroupUI.deleteGroup()" id="btnDelGroup" disabled>删除权限组</button>
+    <div class="rm-layout">
+        <!-- 左侧：权限组列表 -->
+        <aside class="rm-panel rm-panel-groups">
+            <div class="rm-panel-head">
+                <strong>权限组列表</strong>
+                <span class="hint">选择后配置</span>
             </div>
-        </div>
-        <ul class="nav nav-tabs mb-3" id="groupTabs">
-            <li class="nav-item">
-                <a class="nav-link active" data-bs-toggle="tab" href="#tabPerm" onclick="GroupUI.switchTab('perm')">权限配置</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" data-bs-toggle="tab" href="#tabMember" onclick="GroupUI.switchTab('member')">成员管理</a>
-            </li>
-        </ul>
-        <div class="tab-content">
-            <div class="tab-pane fade show active" id="tabPerm">
-                <div id="permissionTree"><div class="empty-tip">从左侧选择权限组后配置权限</div></div>
-            </div>
-            <div class="tab-pane fade" id="tabMember">
-                <div class="d-flex align-items-center mb-2" style="gap:8px;">
-                    <input class="form-control form-control-sm" style="max-width:220px;" id="memberSearch"
-                           placeholder="搜索用户名/姓名/部门" oninput="GroupUI.filterMembers()">
-                    <span class="member-count" id="memberCount"></span>
+            <div id="groupList"></div>
+        </aside>
+
+        <!-- 右侧：权限配置 / 成员管理 -->
+        <section class="rm-panel rm-panel-main">
+            <div class="toolbar">
+                <div class="rm-toolbar-title">
+                    <h2 id="currentGroupTitle">请选择权限组</h2>
+                    <span class="overrides-hint" id="inheritHint"></span>
                 </div>
-                <div id="memberList"><div class="empty-tip">从左侧选择权限组后管理成员</div></div>
+                <div class="rm-toolbar-actions">
+                    <button class="btn btn-sm btn-outline-secondary" id="btnPermAllOn" onclick="GroupUI.selectAll(true)">全选</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="btnPermAllOff" onclick="GroupUI.selectAll(false)">全不选</button>
+                    <button class="btn btn-sm btn-success" onclick="GroupUI.savePermissions()" id="btnSavePerm" disabled>保存权限</button>
+                    <button class="btn btn-sm btn-success d-none" onclick="GroupUI.saveMembers()" id="btnSaveMember" disabled>保存成员</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="GroupUI.deleteGroup()" id="btnDelGroup" disabled>删除权限组</button>
+                </div>
             </div>
-        </div>
+            <ul class="nav nav-tabs" id="groupTabs">
+                <li class="nav-item">
+                    <a class="nav-link active" data-bs-toggle="tab" href="#tabPerm" onclick="GroupUI.switchTab('perm')">权限配置</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#tabMember" onclick="GroupUI.switchTab('member')">成员管理</a>
+                </li>
+            </ul>
+            <div class="tab-content">
+                <div class="tab-pane fade show active" id="tabPerm">
+                    <div id="permissionTree"><div class="empty-tip">从左侧选择权限组后配置权限</div></div>
+                </div>
+                <div class="tab-pane fade" id="tabMember">
+                    <div class="d-flex align-items-center flex-wrap mb-2" style="gap:8px;">
+                        <input class="form-control form-control-sm" style="max-width:240px;" id="memberSearch"
+                               placeholder="搜索用户名/姓名/部门" oninput="GroupUI.filterMembers()">
+                        <span class="member-count" id="memberCount"></span>
+                    </div>
+                    <div id="memberList"><div class="empty-tip">从左侧选择权限组后管理成员</div></div>
+                </div>
+            </div>
+        </section>
     </div>
 </div>
 
@@ -154,8 +282,8 @@ const GroupUI = (function () {
         box.innerHTML = groups.map(g => `
             <div class="group-item ${g.id === currentGroupId ? 'active' : ''}" onclick="GroupUI.selectGroup(${g.id})">
                 <div>
-                    <div>${escapeHtml(g.name)}</div>
-                    <small class="text-muted">${escapeHtml(g.code)}</small>
+                    <div class="g-name">${escapeHtml(g.name)}</div>
+                    <div class="g-code">${escapeHtml(g.code)}</div>
                 </div>
                 ${g.is_builtin ? '<span class="badge bg-secondary">内置</span>' : ''}
             </div>`).join('');

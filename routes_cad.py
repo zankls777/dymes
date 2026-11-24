@@ -106,9 +106,9 @@ def _require_permission():
     """校验页面访问权限。"""
     if session.get('is_admin'):
         return None
-    from utils.permission_utils import get_legacy_permission_row
-    perm = get_legacy_permission_row(session['user_id'])
-    if not perm or not perm.can_rw_comparison:
+    # 统一走 RBAC 有效权限（权限组 ∪ 用户覆盖）
+    from utils.permission_utils import check_permission
+    if not check_permission(session['user_id'], 'can_rw_comparison'):
         return jsonify({'success': False, 'error': '无权限'}), 403
     return None
 
@@ -191,9 +191,9 @@ def rw_cad_page():
         return redirect(url_for('main.login', next=request.url))
 
     if not session.get('is_admin'):
-        from utils.permission_utils import get_legacy_permission_row
-        perm = get_legacy_permission_row(session['user_id'])
-        if not perm or not perm.can_rw_comparison:
+        # 统一走 RBAC 有效权限（权限组 ∪ 用户覆盖）
+        from utils.permission_utils import check_permission
+        if not check_permission(session['user_id'], 'can_rw_comparison'):
             flash('您没有 RW 图纸产出的访问权限', 'error')
             return redirect(url_for('main.index'))
 

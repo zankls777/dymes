@@ -2,147 +2,690 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>波纹管位置查询 - 免登录</title>
-    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
-    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#1e6fbf">
+    <meta name="format-detection" content="telephone=no">
+    <title>波纹管位置查询</title>
     <style>
-        body { background: #f4f6f8; }
+        :root {
+            --brand: #1e6fbf;
+            --brand-dark: #15528c;
+            --brand-light: #e8f1fb;
+            --text: #1f2933;
+            --text-sub: #6b7683;
+            --line: #e5e9ef;
+            --bg: #f4f6f8;
+            --card: #ffffff;
+            --radius: 14px;
+            --shadow: 0 4px 16px rgba(23, 62, 105, .08);
+            --shadow-hover: 0 8px 24px rgba(23, 62, 105, .14);
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                         "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            -webkit-text-size-adjust: 100%;
+        }
+
+        /* ============ 顶部标题栏 ============ */
+        .app-header {
+            background: linear-gradient(135deg, var(--brand) 0%, #2e8bd6 55%, #37a3e0 100%);
+            color: #fff;
+            padding: calc(18px + env(safe-area-inset-top)) 18px 42px;
+            position: relative;
+        }
+        .app-header::after {           /* 顶部光晕装饰 */
+            content: "";
+            position: absolute;
+            right: -60px; top: -80px;
+            width: 200px; height: 200px;
+            background: rgba(255, 255, 255, .12);
+            border-radius: 50%;
+        }
+        .header-inner {
+            max-width: 1140px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .header-title {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: .5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .header-title svg { width: 22px; height: 22px; flex: none; }
+        .header-sub {
+            margin: 6px 0 0;
+            font-size: 12.5px;
+            color: rgba(255, 255, 255, .82);
+        }
+        .total-chip {
+            flex: none;
+            background: rgba(255, 255, 255, .18);
+            border: 1px solid rgba(255, 255, 255, .3);
+            border-radius: 999px;
+            padding: 5px 12px;
+            font-size: 12.5px;
+            white-space: nowrap;
+            backdrop-filter: blur(4px);
+        }
+        .total-chip b { font-size: 15px; }
+
+        /* ============ 主体容器 ============ */
+        .page {
+            max-width: 1140px;
+            margin: -28px auto 0;
+            padding: 0 14px calc(20px + env(safe-area-inset-bottom));
+            position: relative;
+            z-index: 2;
+        }
+
+        /* ============ 搜索框 ============ */
         .search-card {
-            max-width: 1100px; margin: 24px auto; background: #fff;
-            border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
+            background: var(--card);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 12px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
         }
-        .header-bar {
-            background: #1e6fbf; color: #fff; border-radius: 10px 10px 0 0;
-            padding: 14px 18px; display: flex; justify-content: space-between;
-            align-items: center; flex-wrap: wrap; gap: 8px;
+        .search-field {
+            position: relative;
+            flex: 1 1 auto;
+            display: flex;
+            align-items: center;
+            min-width: 0;
         }
-        .search-row { padding: 14px 18px; }
-        .search-input {
-            border-radius: 20px; padding-left: 16px; border: 1px solid #ced4da;
+        .search-field .icon-search {
+            position: absolute;
+            left: 13px;
+            width: 18px; height: 18px;
+            color: #9aa5b1;
+            pointer-events: none;
         }
-        .table-responsive { max-height: 68vh; overflow: auto; }
-        .table { font-size: .9rem; margin-bottom: 0; }
-        .table thead th {
-            position: sticky; top: 0; background: #eef3f8; z-index: 1;
-            white-space: nowrap; font-weight: 600;
+        #keyword {
+            width: 100%;
+            height: 44px;
+            padding: 0 38px 0 40px;
+            border: 1.5px solid var(--line);
+            border-radius: 10px;
+            background: #f8fafc;
+            font-size: 16px;            /* 16px 避免 iOS 聚焦时自动放大 */
+            color: var(--text);
+            outline: none;
+            transition: border-color .18s, background .18s, box-shadow .18s;
+            -webkit-appearance: none;
         }
-        .pager { padding: 12px 18px; border-top: 1px solid #e9ecef; }
+        #keyword::placeholder { color: #a9b3bf; font-size: 14px; }
+        #keyword:focus {
+            border-color: var(--brand);
+            background: #fff;
+            box-shadow: 0 0 0 3px rgba(30, 111, 191, .12);
+        }
+        .clear-btn {
+            position: absolute;
+            right: 6px;
+            width: 30px; height: 30px;
+            border: 0;
+            border-radius: 50%;
+            background: #eef1f5;
+            color: #7c8794;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            padding: 0;
+        }
+        .clear-btn.show { display: flex; }
+        .clear-btn:active { background: #e2e7ee; }
+        .search-btn {
+            flex: none;
+            height: 44px;
+            min-width: 84px;
+            padding: 0 20px;
+            border: 0;
+            border-radius: 10px;
+            background: var(--brand);
+            color: #fff;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: background .18s, transform .12s;
+        }
+        .search-btn:hover { background: var(--brand-dark); }
+        .search-btn:active { transform: scale(.97); }
+        .search-btn:disabled { opacity: .6; cursor: not-allowed; }
+
+        /* ============ 结果区 ============ */
+        .result-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin: 16px 2px 10px;
+            font-size: 12.5px;
+            color: var(--text-sub);
+        }
+        .result-bar .kw-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            max-width: 62%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            background: var(--brand-light);
+            color: var(--brand-dark);
+            border-radius: 6px;
+            padding: 2px 8px;
+        }
+        .result-bar .kw-tag.hide { display: none; }
+
+        /* --- 桌面端表格 --- */
+        .table-wrap {
+            background: var(--card);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: auto;
+            max-height: calc(100vh - 300px);
+        }
+        table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+        thead th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #eef3f9;
+            color: #3b4a5a;
+            font-weight: 600;
+            text-align: left;
+            padding: 12px 14px;
+            white-space: nowrap;
+            border-bottom: 1px solid var(--line);
+        }
+        tbody td {
+            padding: 11px 14px;
+            border-bottom: 1px solid #f1f4f8;
+            vertical-align: top;
+            word-break: break-word;
+        }
+        tbody tr:last-child td { border-bottom: 0; }
+        tbody tr:hover td { background: #f7fafd; }
+        td.col-idx { color: #98a2ab; width: 52px; white-space: nowrap; }
+
+        /* --- 移动端卡片 --- */
+        .card-list { display: none; flex-direction: column; gap: 10px; }
+        .data-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 14px;
+            transition: box-shadow .18s, transform .18s;
+        }
+        .data-card:active { transform: scale(.995); box-shadow: var(--shadow-hover); }
+        .card-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px dashed var(--line);
+        }
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--brand-dark);
+            word-break: break-all;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        }
+        .card-badge {
+            flex: none;
+            background: var(--brand-light);
+            color: var(--brand-dark);
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .card-body { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
+        .kv {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            font-size: 13.5px;
+        }
+        .kv .k {
+            flex: none;
+            width: 46px;
+            color: var(--text-sub);
+            font-size: 12.5px;
+            line-height: 1.7;
+        }
+        .kv .v { flex: 1 1 auto; word-break: break-word; }
+
+        /* ============ 状态提示 ============ */
+        .state {
+            background: var(--card);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 48px 20px;
+            text-align: center;
+            color: var(--text-sub);
+        }
+        .state svg { width: 52px; height: 52px; color: #c9d3dd; margin-bottom: 10px; }
+        .state .title { font-size: 15px; color: var(--text); margin-bottom: 4px; }
+        .state .desc { font-size: 13px; }
+        .state .retry {
+            margin-top: 14px;
+            border: 1px solid var(--brand);
+            background: #fff;
+            color: var(--brand);
+            border-radius: 8px;
+            padding: 8px 18px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        /* 骨架屏 */
+        .skeleton { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; }
+        .sk-line {
+            height: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #eef1f5 25%, #e2e7ee 50%, #eef1f5 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.4s infinite;
+        }
+        .sk-line:last-child { margin-bottom: 0; width: 60%; }
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* ============ 分页 ============ */
+        .pager {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            padding: 18px 4px 4px;
+        }
+        .pager button {
+            width: 44px; height: 44px;
+            border-radius: 12px;
+            border: 1px solid var(--line);
+            background: var(--card);
+            color: #47525e;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background .18s, border-color .18s, transform .12s;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .pager button svg { width: 18px; height: 18px; }
+        .pager button:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+        .pager button:active:not(:disabled) { transform: scale(.95); }
+        .pager button:disabled { opacity: .38; cursor: not-allowed; }
+        .pager .page-info { font-size: 13px; color: var(--text-sub); min-width: 132px; text-align: center; }
+        .pager .page-info b { color: var(--text); font-weight: 600; }
+
         .footer-note {
-            text-align: center; color: #98a2ab; font-size: .78rem;
-            padding: 14px 0 18px;
+            text-align: center;
+            color: #9aa5b1;
+            font-size: 11.5px;
+            padding: 14px 0 6px;
         }
-        .empty-tip { padding: 40px 0; text-align: center; color: #98a2ab; }
-        @media (max-width: 576px) {
-            .search-card { margin: 10px; }
-            .table { font-size: .8rem; }
+
+        mark {
+            background: #fff1b8;
+            color: #8a5a00;
+            border-radius: 3px;
+            padding: 0 1px;
+        }
+
+        .hidden { display: none !important; }
+
+        /* ============ 响应式 ============ */
+        @media (max-width: 767.98px) {
+            .app-header { padding: calc(14px + env(safe-area-inset-top)) 14px 38px; }
+            .header-title { font-size: 17px; }
+            .header-sub { display: none; }
+            .total-chip { padding: 4px 10px; font-size: 12px; }
+            .page { padding-left: 10px; padding-right: 10px; }
+            .search-card { padding: 10px; gap: 8px; }
+            .search-btn { min-width: 64px; padding: 0 14px; }
+            .search-btn span { display: none; }     /* 移动端仅留图标 */
+            .table-wrap { display: none; }
+            .card-list { display: flex; }
+            .result-bar { margin: 12px 2px 8px; }
+        }
+
+        @media (min-width: 768px) {
+            .card-list { display: none !important; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * { animation: none !important; transition: none !important; }
         }
     </style>
 </head>
 <body>
 
-<div class="search-card">
-    <div class="header-bar">
-        <div><i class="fa fa-map-marker me-1"></i> 波纹管位置查询</div>
-        <span class="small">共 <b>{{ total }}</b> 条记录 · 免登录开放查询</span>
-    </div>
-
-    <div class="search-row d-flex gap-2 align-items-center">
-        <input type="search" id="keyword" class="form-control search-input"
-               placeholder="输入关键词模糊查询（编号、名称、LOT、车种、图纸编号、回路等）"
-               autocomplete="off">
-        <button class="btn btn-primary" id="searchBtn"><i class="fa fa-search me-1"></i>查询</button>
-    </div>
-
-    <div class="table-responsive">
-        <table class="table table-hover table-bordered">
-            <thead><tr id="tHead"></tr></thead>
-            <tbody id="tBody"></tbody>
-        </table>
-        <div id="emptyTip" class="empty-tip" style="display:none;">未找到匹配数据，请更换关键词重试。</div>
-    </div>
-
-    <div class="pager d-flex justify-content-between align-items-center">
-        <span class="small text-muted" id="pageInfo"></span>
-        <div class="btn-group">
-            <button class="btn btn-outline-secondary btn-sm" id="prevBtn"><i class="fa fa-chevron-left"></i></button>
-            <button class="btn btn-outline-secondary btn-sm" id="nextBtn"><i class="fa fa-chevron-right"></i></button>
+<header class="app-header">
+    <div class="header-inner">
+        <div>
+            <h1 class="header-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0z"></path>
+                    <circle cx="12" cy="10" r="3"></circle>
+                </svg>
+                波纹管位置查询
+            </h1>
+            <p class="header-sub">免登录 · 支持品番 / 规格 / 位置 / 车种模糊检索</p>
         </div>
+        <span class="total-chip">共 <b id="totalTop">{{ total }}</b> 条</span>
     </div>
-</div>
+</header>
 
-<div class="footer-note">大焱资料管理系统 · 波纹管位置数据 · 支持移动端浏览 · <span id="today"></span></div>
+<main class="page">
+    <!-- 搜索 -->
+    <section class="search-card">
+        <div class="search-field">
+            <svg class="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"></circle>
+                <path d="M20 20l-3.5-3.5"></path>
+            </svg>
+            <input type="search" id="keyword" enterkeyhint="search" autocomplete="off"
+                   placeholder="输入关键词模糊查询（品番、规格、位置、车种）" aria-label="搜索关键词">
+            <button class="clear-btn" id="clearBtn" type="button" aria-label="清空关键词">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                     stroke-width="2.2" stroke-linecap="round">
+                    <path d="M6 6l12 12M18 6L6 18"></path>
+                </svg>
+            </button>
+        </div>
+        <button class="search-btn" id="searchBtn" type="button">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"></circle>
+                <path d="M20 20l-3.5-3.5"></path>
+            </svg>
+            <span>查询</span>
+        </button>
+    </section>
 
-<script src="../static/js/bootstrap.bundle.min.js"></script>
+    <!-- 结果统计 -->
+    <div class="result-bar">
+        <span id="resultText">共 0 条记录</span>
+        <span class="kw-tag hide" id="kwTag"></span>
+    </div>
+
+    <!-- 数据展示 -->
+    <section id="resultArea">
+        <div class="table-wrap" id="tableWrap">
+            <table>
+                <thead><tr id="tHead"></tr></thead>
+                <tbody id="tBody"></tbody>
+            </table>
+        </div>
+        <div class="card-list" id="cardList"></div>
+    </section>
+
+    <!-- 加载 / 空 / 错误 -->
+    <section id="stateBox" class="hidden"></section>
+
+    <!-- 分页 -->
+    <nav class="pager" id="pager" aria-label="分页导航">
+        <button id="prevBtn" type="button" aria-label="上一页" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+        </button>
+        <span class="page-info" id="pageInfo">第 <b>1</b> / 1 页</span>
+        <button id="nextBtn" type="button" aria-label="下一页" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"></path></svg>
+        </button>
+    </nav>
+
+    <p class="footer-note">大焱资料管理系统 · 波纹管位置数据 · <span id="today"></span></p>
+</main>
+
 <script>
-const PAGESIZE = 20;
-let curPage = 1, totalCnt = 0, pagesCnt = 1;
-let cols = {{ columns | tojson }} || [];
-renderHead(cols);
+(function () {
+    'use strict';
 
-function renderHead(cols) {
-    document.getElementById('tHead').innerHTML =
-        '<th class="text-center" style="width:50px;">#</th>' +
-        cols.map(c => '<th>' + (c.display_name || c.field_key) + '</th>').join('');
-}
+    const PAGESIZE = 20;
+    const API = '/corrugated_location/search/api';
 
-function renderRows(rows) {
-    const body = document.getElementById('tBody');
-    document.getElementById('emptyTip').style.display = rows.length ? 'none' : 'block';
-    if (!rows.length) { body.innerHTML = ''; return; }
-    body.innerHTML = rows.map((r, i) => {
-        const start = (curPage - 1) * PAGESIZE;
-        let cells = cols.map(c => '<td>' + (r.data[c.field_key] ?? '') + '</td>').join('');
-        return '<tr><td class="text-center">' + (start + i + 1) + '</td>' + cells + '</tr>';
-    }).join('');
-}
+    // 页面初始列（后端渲染，避免首屏空表头）
+    let cols = {{ columns | tojson }} || [];
+    const state = { kw: '', page: 1, pages: 1, total: {{ total }} };
 
-async function load(page) {
-    const kw = document.getElementById('keyword').value.trim();
-    try {
-        const res = await fetch('/corrugated_location/search/api?q=' + encodeURIComponent(kw) +
-                                '&page=' + page + '&per_page=' + PAGESIZE);
-        const d = await res.json();
-        if (!d.success) { document.getElementById('tBody').innerHTML =
-            '<tr><td class="empty-tip" colspan="99">查询失败：' + (d.error || '未知错误') + '</td></tr>'; return; }
-        curPage = d.page || 1; totalCnt = d.total || 0; pagesCnt = d.pages || 1;
-        cols = d.columns || cols;
-        renderHead(cols);
-        renderRows(d.items || []);
-        document.getElementById('pageInfo').textContent =
-            '第 ' + curPage + ' / ' + pagesCnt + ' 页 · 共 ' + totalCnt + ' 条';
-        document.getElementById('prevBtn').disabled = curPage <= 1;
-        document.getElementById('nextBtn').disabled = curPage >= pagesCnt;
-    } catch (e) {
-        document.getElementById('pageInfo').textContent = '加载失败：' + e.message;
+    const $ = id => document.getElementById(id);
+    const el = {
+        keyword: $('keyword'), clearBtn: $('clearBtn'), searchBtn: $('searchBtn'),
+        resultText: $('resultText'), kwTag: $('kwTag'),
+        tHead: $('tHead'), tBody: $('tBody'), cardList: $('cardList'), tableWrap: $('tableWrap'),
+        stateBox: $('stateBox'), pager: $('pager'), pageInfo: $('pageInfo'),
+        prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
+        totalTop: $('totalTop'), today: $('today')
+    };
+
+    // ---------------- 文本处理 ----------------
+    const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ESC_MAP[ch]);
+    const escReg = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    /** 转义并高亮关键词（先转义再匹配，避免 XSS） */
+    function hl(raw) {
+        const text = esc(raw);
+        const kw = state.kw.trim();
+        if (!kw) return text;
+        try {
+            return text.replace(new RegExp(escReg(esc(kw)), 'gi'), m => '<mark>' + m + '</mark>');
+        } catch (e) {
+            return text;
+        }
     }
-}
 
-document.getElementById('searchBtn').onclick = () => load(1);
-document.getElementById('keyword').onkeydown = e => { if (e.key === 'Enter') load(1); };
-document.getElementById('prevBtn').onclick = () => load(curPage - 1);
-document.getElementById('nextBtn').onclick = () => load(curPage + 1);
+    // ---------------- 渲染 ----------------
+    const ICONS = {
+        empty: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path><path d="M8 11h6"></path></svg>',
+        error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16.5h.01"></path></svg>'
+    };
 
-// 自动更新日期
-(function() {
-    const el = document.getElementById('today');
-    if (!el) return;
-    function fmt() {
+    function renderHead() {
+        el.tHead.innerHTML = '<th class="col-idx">#</th>' +
+            cols.map(c => '<th>' + esc(c.display_name || c.field_key) + '</th>').join('');
+    }
+
+    function renderTable(items) {
+        const start = (state.page - 1) * PAGESIZE;
+        el.tBody.innerHTML = items.map((r, i) =>
+            '<tr><td class="col-idx">' + (start + i + 1) + '</td>' +
+            cols.map(c => '<td>' + (hl(r.data[c.field_key]) || '<span style="color:#c3ccd6">—</span>') + '</td>').join('') +
+            '</tr>'
+        ).join('');
+    }
+
+    function renderCards(items) {
+        // 第一列作品番标题，第二列作标签，其余列作键值行（数据驱动，兼容列配置变化）
+        const titleCol = cols[0];
+        const badgeCol = cols[1];
+        const restCols = cols.slice(2);
+
+        el.cardList.innerHTML = items.map(r => {
+            const title = titleCol ? (hl(r.data[titleCol.field_key]) || '—') : '—';
+            const badgeVal = badgeCol ? r.data[badgeCol.field_key] : '';
+            const badge = (badgeCol && badgeVal)
+                ? '<span class="card-badge">' + hl(badgeVal) + '</span>' : '';
+            const kv = restCols
+                .filter(c => r.data[c.field_key])
+                .map(c => '<div class="kv"><span class="k">' +
+                    esc(c.display_name || c.field_key) + '</span><span class="v">' +
+                    hl(r.data[c.field_key]) + '</span></div>')
+                .join('');
+            return '<article class="data-card">' +
+                '<div class="card-head"><div class="card-title">' + title + '</div>' + badge + '</div>' +
+                (kv ? '<div class="card-body">' + kv + '</div>' : '') +
+                '</article>';
+        }).join('');
+    }
+
+    function renderPager() {
+        el.pageInfo.innerHTML = '第 <b>' + state.page + '</b> / ' + state.pages + ' 页';
+        el.prevBtn.disabled = state.page <= 1;
+        el.nextBtn.disabled = state.page >= state.pages;
+        el.pager.classList.toggle('hidden', state.total === 0);
+    }
+
+    function showState(type, msg) {
+        const box = el.stateBox;
+        if (!type) {
+            box.classList.add('hidden');
+            box.innerHTML = '';
+            return;
+        }
+        if (type === 'loading') {
+            box.innerHTML = '<div class="skeleton"><div class="sk-line"></div>' +
+                '<div class="sk-line"></div><div class="sk-line"></div></div>' +
+                '<div class="skeleton" style="margin-top:10px;"><div class="sk-line"></div>' +
+                '<div class="sk-line"></div><div class="sk-line"></div></div>';
+        } else if (type === 'empty') {
+            box.innerHTML = '<div class="state">' + ICONS.empty +
+                '<div class="title">未找到匹配数据</div>' +
+                '<div class="desc">' + esc(msg || '换个关键词再试试') + '</div></div>';
+        } else {
+            box.innerHTML = '<div class="state">' + ICONS.error +
+                '<div class="title">查询失败</div><div class="desc">' + esc(msg || '请稍后重试') + '</div>' +
+                '<button class="retry" type="button" id="retryBtn">重新加载</button></div>';
+            const retry = $('retryBtn');
+            if (retry) retry.onclick = () => load(state.page);
+        }
+        box.classList.remove('hidden');
+    }
+
+    function setResultVisible(visible) {
+        el.tableWrap.classList.toggle('hidden', !visible);
+        el.cardList.classList.toggle('hidden', !visible);
+    }
+
+    // ---------------- 数据加载 ----------------
+    async function load(page) {
+        state.kw = el.keyword.value.trim();
+        el.searchBtn.disabled = true;
+        setResultVisible(false);
+        showState('loading');
+        el.pager.classList.add('hidden');
+
+        try {
+            const url = API + '?q=' + encodeURIComponent(state.kw) +
+                        '&page=' + page + '&per_page=' + PAGESIZE;
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+            const d = await res.json();
+            if (!d.success) throw new Error(d.error || '接口返回异常');
+
+            state.page = d.page || 1;
+            state.pages = d.pages || 1;
+            state.total = d.total || 0;
+            if (Array.isArray(d.columns) && d.columns.length) cols = d.columns;
+
+            const items = d.items || [];
+            renderHead();
+            if (items.length) {
+                renderTable(items);
+                renderCards(items);
+                setResultVisible(true);
+                showState(null);
+            } else {
+                setResultVisible(false);
+                showState('empty', state.kw ? '没有包含「' + state.kw + '」的记录' : '当前暂无数据');
+            }
+
+            // 结果统计与关键词标签
+            el.totalTop.textContent = state.total;
+            el.resultText.textContent = state.kw
+                ? '匹配到 ' + state.total + ' 条记录'
+                : '共 ' + state.total + ' 条记录';
+            el.kwTag.classList.toggle('hide', !state.kw);
+            el.kwTag.textContent = state.kw ? '关键词：' + state.kw : '';
+
+            renderPager();
+            el.clearBtn.classList.toggle('show', !!el.keyword.value);
+        } catch (e) {
+            setResultVisible(false);
+            showState('error', e.message);
+            el.resultText.textContent = '查询失败';
+        } finally {
+            el.searchBtn.disabled = false;
+        }
+    }
+
+    // ---------------- 交互 ----------------
+    function scrollToTop() {
+        const top = document.querySelector('.search-card').getBoundingClientRect().top + window.scrollY - 10;
+        window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+    }
+
+    el.searchBtn.onclick = () => { load(1); scrollToTop(); };
+
+    el.keyword.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { load(1); scrollToTop(); }
+    });
+
+    // 输入时切换清空按钮；清空后自动重新加载全量
+    el.keyword.addEventListener('input', () => {
+        el.clearBtn.classList.toggle('show', !!el.keyword.value);
+    });
+
+    el.clearBtn.onclick = () => {
+        el.keyword.value = '';
+        el.clearBtn.classList.remove('show');
+        el.keyword.focus();
+        load(1);
+    };
+
+    el.prevBtn.onclick = () => { if (state.page > 1) { load(state.page - 1); scrollToTop(); } };
+    el.nextBtn.onclick = () => { if (state.page < state.pages) { load(state.page + 1); scrollToTop(); } };
+
+    // 页脚日期
+    (function () {
         const d = new Date();
         const pad = n => String(n).padStart(2, '0');
-        const days = ['日','一','二','三','四','五','六'];
-        el.textContent = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
-                         ' 星期' + days[d.getDay()];
-    }
-    fmt();
-    const t = setInterval(() => {
-        const d = new Date();
-        if (d.getHours() === 0 && d.getMinutes() === 0) fmt();
-    }, 60000);
-})();
+        const days = ['日', '一', '二', '三', '四', '五', '六'];
+        el.today.textContent = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+                               ' 星期' + days[d.getDay()];
+    })();
 
-// 初始加载
-load(1);
+    // 初始化
+    el.clearBtn.classList.toggle('show', !!el.keyword.value);
+    load(1);
+})();
 </script>
 </body>
 </html>

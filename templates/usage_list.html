@@ -313,9 +313,35 @@
                              'KscPno', 'Part_Name', 'Usage', 'Length']
         });
 
-        // 从表单读取全部搜索条件
+        // 从表单读取全部搜索条件（未勾选的列视为停用，不参与搜索）
         function getUsageListParams() {
-            return usageListCtrl ? usageListCtrl.collectSearchParams() : {};
+            return omitDisabledParams(usageListCtrl ? usageListCtrl.collectSearchParams() : {});
+        }
+
+        // 收集「未勾选」的列对应的搜索字段名：勾选框取消后该条件不再生效
+        function getDisabledSearchFields() {
+            const disabled = new Set();
+            const headers = document.querySelectorAll('#data-table th');
+            document.querySelectorAll('.column-checkbox').forEach(checkbox => {
+                if (checkbox.checked) return;  // 已勾选：条件保留
+                const index = parseInt(checkbox.dataset.columnIndex);
+                const header = headers[index];
+                if (!header) return;
+                const columnName = header.textContent.trim();
+                // 表头「车种」对应输入框 id 为 VehicleType
+                disabled.add(columnName === '车种' ? 'VehicleType' : columnName);
+            });
+            return disabled;
+        }
+
+        // 过滤掉被停用的搜索条件，保证搜索与导出同口径
+        function omitDisabledParams(params) {
+            const disabled = getDisabledSearchFields();
+            const result = {};
+            Object.keys(params || {}).forEach(key => {
+                if (!disabled.has(key)) result[key] = params[key];
+            });
+            return result;
         }
 
         // 仅切换对应搜索框，下面表格的列和数据始终保持显示
@@ -457,8 +483,9 @@
 
                 const format = document.getElementById('download-format').value;
                 // 使用「已生效」的搜索条件（与当前表格数据同口径）：
-                // 不再直接读输入框原始值，避免未 trim 的空白或未提交的临时输入导致导出 0 条
-                const searchParams = usageListCtrl.collectEffectiveSearchParams();
+                // 不再直接读输入框原始值，避免未 trim 的空白或未提交的临时输入导致导出 0 条；
+                // 同时剔除未勾选（已隐藏）的搜索条件，避免隐藏条件继续过滤导致导出内容缺失。
+                const searchParams = omitDisabledParams(usageListCtrl.collectEffectiveSearchParams());
 
                 fetch('{{ url_for('main.usagelist_download') }}', {
                     method: 'POST',

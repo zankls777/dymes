@@ -48,7 +48,7 @@
                     <button class="btn btn-primary" id="uploadBtn"><i class="fa fa-search me-1"></i>解析预览</button>
                     <a href="{{ url_for('main.corrugated_location_template') }}" class="btn btn-outline-secondary">
                         <i class="fa fa-download me-1"></i>下载录入模板</a>
-                    <span class="text-muted small">支持 .xlsx/.xls，列可自定义，自动识别「日期」列按日归档</span>
+                    <span class="text-muted small">支持 .xlsx/.xls，模板列：品番 / 规格 / 位置 / 车种 / 备注</span>
                 </div>
                 <div id="uploadMsg"></div>
             </div>
@@ -140,8 +140,12 @@
         document.querySelectorAll('.row-edit').forEach(btn => btn.onclick = () => {
             const id = btn.dataset.id;
             if (String(id).startsWith('pending_')) { alert('预览中的行尚未入库，保存后即可编辑'); return; }
-            const row = INIT.items.find(x => x.id === id) || {};
+            // data-id 是字符串，INIT.items 里的 id 是数字，必须统一类型后再比较，
+            // 否则找不到行会提交空数据，把整行内容清空。
+            const row = INIT.items.find(x => String(x.id) === String(id));
+            if (!row) { alert('未找到该行数据，请刷新页面后重试'); return; }
             const cols = Object.keys(row.data || {});
+            if (!cols.length) { alert('该行没有可编辑的字段，请刷新页面后重试'); return; }
             const kv = cols.map(c => prompt('修改「' + c + '」：', row.data[c] ?? ''));
             if (kv.includes(null)) return;
             const data = Object.fromEntries(cols.map((c, i) => [c, kv[i] ?? '']));
