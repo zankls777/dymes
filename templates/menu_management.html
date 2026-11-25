@@ -35,8 +35,15 @@
             font-size: .84rem; font-weight: 600; color: #1f2937; }
         .mm-entry-summary { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
             font-size: .72rem; color: #94a3b8; }
-        .mm-move { flex: 0 0 auto; max-width: 110px; padding: 3px 4px; border: 1px solid #e5e9f0; border-radius: 7px;
-            background: #fff; color: #475569; font-size: .72rem; cursor: pointer; }
+        /* 拖拽相关：手柄、拖动中、放置位置提示 */
+        .mm-grip { flex: 0 0 auto; width: 16px; text-align: center; color: #94a3b8; cursor: grab; }
+        .mm-grip:active { cursor: grabbing; }
+        .mm-entry { cursor: grab; }
+        .mm-entry.dragging, .mm-group.dragging { opacity: .45; }
+        .mm-entry.drop-before { box-shadow: inset 0 3px 0 #0d6efd; }
+        .mm-entry.drop-after { box-shadow: inset 0 -3px 0 #0d6efd; }
+        .mm-entries.drop-into { background: #f0f7ff; box-shadow: inset 0 0 0 1px rgba(13, 110, 253, .25); }
+        .mm-group.drag-over { border-color: rgba(13, 110, 253, .5); box-shadow: 0 0 0 3px rgba(13, 110, 253, .12); }
         .mm-empty { padding: 12px; text-align: center; color: #94a3b8; font-size: .8rem; }
         .mm-status { min-height: 20px; margin-bottom: 8px; font-size: .8rem; }
         .mm-status.ok { color: #15803d; }
@@ -53,7 +60,7 @@
     <div class="mm-head">
         <div>
             <h1 class="h3 mb-1" style="color:#1f2937;">菜单管理 · 侧边栏分组</h1>
-            <p class="mm-desc">调整分组名称、顺序与菜单归属；保存后全站生效，页面权限仍按原规则过滤。</p>
+            <p class="mm-desc">拖动分组左侧手柄调整顺序；拖动菜单可跨分组移动或组内排序；保存后全站生效，页面权限仍按原规则过滤。</p>
         </div>
         <div class="d-flex flex-wrap" style="gap:8px;">
             <button type="button" class="btn btn-outline-primary btn-sm" id="mmAddGroup"><i class="fa fa-plus"></i> 新增分组</button>
@@ -73,6 +80,6 @@
     </div>
 </div>
 
-<script defer src="{{ url_for('static', filename='js/menu_management.js') }}?v=20261106"></script>
+<script defer src="{{ url_for('static', filename='js/menu_management.js') }}?v=20261124"></script>
 </body>
 </html>

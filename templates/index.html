@@ -246,10 +246,13 @@
             <div class="col-12 col-lg-9">
                 {% set permissions = session.get('user_permissions', {}) %}
 
-                <div class="section-title"><i class="fa fa-th-large text-primary"></i>核心功能入口</div>
+                <div class="section-title">
+                    <i class="fa fa-th-large text-primary"></i>常用功能
+                    <span class="text-muted small ms-2" style="font-weight:400;">按使用频率自动排序</span>
+                </div>
                 <div class="feature-grid">
                     {% if session.get('is_admin') or permissions.get('can_sub_list') %}
-                    <a class="feature-card" href="{{ url_for('main.sub_list') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.sub_list', 999) }}" href="{{ url_for('main.sub_list') }}">
                         <div class="feature-icon bg-blue"><i class="fa fa-list-ul"></i></div>
                         <div class="feature-title">SubList</div>
                         <div class="feature-desc">部品明细列表查询与下载</div>
@@ -258,7 +261,7 @@
                     {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_usage_list') %}
-                    <a class="feature-card" href="{{ url_for('main.usage_list') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.usage_list', 999) }}" href="{{ url_for('main.usage_list') }}">
                         <div class="feature-icon bg-green"><i class="fa fa-table"></i></div>
                         <div class="feature-title">UsageList</div>
                         <div class="feature-desc">使用量清单查询与下载</div>
@@ -267,7 +270,7 @@
                     {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_file_management') %}
-                    <a class="feature-card" href="{{ url_for('main.file_management') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.file_management', 999) }}" href="{{ url_for('main.file_management') }}">
                         <div class="feature-icon bg-purple"><i class="fa fa-folder-open"></i></div>
                         <div class="feature-title">文件管理</div>
                         <div class="feature-desc">文件上传、检索与冻结管理</div>
@@ -276,7 +279,7 @@
                     {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_file_comparison') %}
-                    <a class="feature-card" href="{{ url_for('main.file_comparison') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.file_comparison', 999) }}" href="{{ url_for('main.file_comparison') }}">
                         <div class="feature-icon bg-orange"><i class="fa fa-code-fork"></i></div>
                         <div class="feature-title">数据差异对比</div>
                         <div class="feature-desc">文件差异 / RW 核对分析</div>
@@ -285,7 +288,7 @@
                     {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_products') %}
-                    <a class="feature-card" href="{{ url_for('main.products') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.products', 999) }}" href="{{ url_for('main.products') }}">
                         <div class="feature-icon bg-red"><i class="fa fa-cube"></i></div>
                         <div class="feature-title">成品管理</div>
                         <div class="feature-desc">成品信息维护与查询</div>
@@ -294,7 +297,7 @@
                     {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_material_download') %}
-                    <a class="feature-card" href="{{ url_for('main.material_download') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.material_download', 999) }}" href="{{ url_for('main.material_download') }}">
                         <div class="feature-icon bg-cyan"><i class="fa fa-download"></i></div>
                         <div class="feature-title">资材量下载</div>
                         <div class="feature-desc">资材用量数据下载</div>
@@ -303,7 +306,7 @@
                     {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_material_calculator') %}
-                    <a class="feature-card" href="{{ url_for('main.tape_calculator') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.tape_calculator', 999) }}" href="{{ url_for('main.tape_calculator') }}">
                         <div class="feature-icon bg-indigo"><i class="fa fa-scissors"></i></div>
                         <div class="feature-title">资材换算</div>
                         <div class="feature-desc">胶带 / 皮子 / 管换算工具</div>
@@ -312,7 +315,7 @@
                     {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_wire_lot_login') %}
-                    <a class="feature-card" href="{{ url_for('main.wire_lot_login') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.wire_lot_login', 999) }}" href="{{ url_for('main.wire_lot_login') }}">
                         <div class="feature-icon bg-blue"><i class="fa fa-sign-in"></i></div>
                         <div class="feature-title">LOT 登录</div>
                         <div class="feature-desc">补线打端子 LOT 登记</div>
@@ -320,7 +323,7 @@
                     </a>
                     {% endif %}
                     {% if session.get('is_admin') or permissions.get('can_wire_scan_entry') %}
-                    <a class="feature-card" href="{{ url_for('main.wire_scan_entry') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.wire_scan_entry', 999) }}" href="{{ url_for('main.wire_scan_entry') }}">
                         <div class="feature-icon bg-green"><i class="fa fa-barcode"></i></div>
                         <div class="feature-title">扫描录入</div>
                         <div class="feature-desc">补线数据扫码 / 手动录入</div>
@@ -328,7 +331,7 @@
                     </a>
                     {% endif %}
                     {% if session.get('is_admin') or permissions.get('can_wire_data_download') %}
-                    <a class="feature-card" href="{{ url_for('main.wire_data_download') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.wire_data_download', 999) }}" href="{{ url_for('main.wire_data_download') }}">
                         <div class="feature-icon bg-orange"><i class="fa fa-file-excel-o"></i></div>
                         <div class="feature-title">补线数据下载</div>
                         <div class="feature-desc">历史扫描数据按日期导出</div>
@@ -336,7 +339,7 @@
                     </a>
                     {% endif %}
                     {% if session.get('is_admin') or permissions.get('can_wire_return_confirm') %}
-                    <a class="feature-card" href="{{ url_for('main.wire_return_confirm') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.wire_return_confirm', 999) }}" href="{{ url_for('main.wire_return_confirm') }}">
                         <div class="feature-icon bg-green"><i class="fa fa-check-square-o"></i></div>
                         <div class="feature-title">补线返回确认</div>
                         <div class="feature-desc">传票扫描核对并登记返回</div>
@@ -345,7 +348,7 @@
                     {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_auto_loading') %}
-                    <a class="feature-card" href="{{ url_for('main.auto_loading') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.auto_loading', 999) }}" href="{{ url_for('main.auto_loading') }}">
                         <div class="feature-icon bg-cyan"><i class="fa fa-truck"></i></div>
                         <div class="feature-title">汽车厂装车实际</div>
                         <div class="feature-desc">装车实绩数据上传与统计</div>
@@ -354,13 +357,13 @@
                     {% endif %}
 
                     {% if session.get('is_admin') or permissions.get('can_system_management') %}
-                    <a class="feature-card" href="{{ url_for('main.user_management') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.user_management', 999) }}" href="{{ url_for('main.user_management') }}">
                         <div class="feature-icon bg-purple"><i class="fa fa-users"></i></div>
                         <div class="feature-title">用户与权限管理</div>
                         <div class="feature-desc">系统用户、角色与权限配置</div>
                         <div class="feature-link-row text-purple">进入 <i class="fa fa-arrow-right ms-1"></i></div>
                     </a>
-                    <a class="feature-card" href="{{ url_for('main.operation_logs') }}">
+                    <a class="feature-card" style="order: {{ card_order.get('main.operation_logs', 999) }}" href="{{ url_for('main.operation_logs') }}">
                         <div class="feature-icon bg-red"><i class="fa fa-history"></i></div>
                         <div class="feature-title">操作记录</div>
                         <div class="feature-desc">系统操作日志审计查询</div>

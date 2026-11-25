@@ -537,7 +537,11 @@
                 }
             });
 
-            // 页面加载：拉取确认记录，焦点定位到扫描框
+            // 页面加载：开始/结束日期默认当天（使用本地日期，避免 UTC 时区偏差）
+            const now = new Date();
+            const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            document.getElementById('startDate').value = today;
+            document.getElementById('endDate').value = today;
             loadList();
             scanInput.focus();
         })();

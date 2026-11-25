@@ -1349,6 +1349,72 @@
                                     </div>
                                 </div>
 
+                                <!-- 在库管理 -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_inventory_stock" data-page="inventory_stock">
+                                            <label class="form-check-label fw-bold" for="page_inventory_stock">在库管理</label>
+                                        </div>
+                                        <span class="badge bg-primary">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_inventory_stock_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_stock" name="permissions" value="can_inventory_stock" data-page="inventory_stock">
+                                                    <label class="form-check-label" for="can_inventory_stock">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_stock_edit" name="permissions" value="can_inventory_stock_edit" data-page="inventory_stock">
+                                                    <label class="form-check-label" for="can_inventory_stock_edit">新增/编辑在库</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_stock_delete" name="permissions" value="can_inventory_stock_delete" data-page="inventory_stock">
+                                                    <label class="form-check-label" for="can_inventory_stock_delete">删除在库</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_stock_import" name="permissions" value="can_inventory_stock_import" data-page="inventory_stock">
+                                                    <label class="form-check-label" for="can_inventory_stock_import">导入在库数据</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 出入库管理（移动端） -->
+                                <div class="page-permission-group mb-1">
+                                    <div class="page-header d-flex align-items-center mb-1">
+                                        <div class="form-check me-3">
+                                            <input type="checkbox" class="form-check-input page-checkbox" id="page_inventory_stock_mobile" data-page="inventory_stock_mobile">
+                                            <label class="form-check-label fw-bold" for="page_inventory_stock_mobile">出入库管理</label>
+                                        </div>
+                                        <span class="badge bg-primary">页面访问 + 操作权限</span>
+                                    </div>
+                                    <div class="page-permissions ms-4" id="page_inventory_stock_mobile_permissions">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_stock_mobile" name="permissions" value="can_inventory_stock_mobile" data-page="inventory_stock_mobile">
+                                                    <label class="form-check-label" for="can_inventory_stock_mobile">页面访问</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input page-permission" id="can_inventory_stock_mobile_submit" name="permissions" value="can_inventory_stock_mobile_submit" data-page="inventory_stock_mobile">
+                                                    <label class="form-check-label" for="can_inventory_stock_mobile_submit">提交出入库</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <!-- 盘点管理 -->
                                 <div class="page-permission-group mb-1">
                                     <div class="page-header d-flex align-items-center mb-1">
@@ -2152,7 +2218,15 @@
             'can_mes_price_add': { id: 'can_mes_price_add', name: '新增单价' },
             'can_mes_price_edit': { id: 'can_mes_price_edit', name: '编辑单价' },
             'can_mes_price_delete': { id: 'can_mes_price_delete', name: '删除单价' },
-            'can_mes_price_download': { id: 'can_mes_price_download', name: '导出单价' }
+            'can_mes_price_download': { id: 'can_mes_price_download', name: '导出单价' },
+            // 在库管理
+            'can_inventory_stock': { id: 'can_inventory_stock', name: '在库管理页面' },
+            'can_inventory_stock_edit': { id: 'can_inventory_stock_edit', name: '新增/编辑在库' },
+            'can_inventory_stock_delete': { id: 'can_inventory_stock_delete', name: '删除在库' },
+            'can_inventory_stock_import': { id: 'can_inventory_stock_import', name: '导入在库数据' },
+            // 出入库管理（移动端）
+            'can_inventory_stock_mobile': { id: 'can_inventory_stock_mobile', name: '出入库管理页面' },
+            'can_inventory_stock_mobile_submit': { id: 'can_inventory_stock_mobile_submit', name: '提交出入库' }
         };
 
         // 权限管理服务

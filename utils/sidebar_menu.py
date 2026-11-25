@@ -47,11 +47,12 @@ PAGE_DEFS = {
     'material_inbound': {'title': '仓库资材入库(移动端)', 'endpoint': 'main.material_inbound', 'tab': '仓库资材入库', 'perm': 'can_material_inbound'},
     'corrugated_location': {'title': '波纹管位置录入', 'endpoint': 'main.corrugated_location', 'tab': '波纹管位置录入', 'perm': 'can_corrugated_location'},
     'corrugated_location_search': {'title': '波纹管查询(移动端)', 'endpoint': 'main.corrugated_location_search', 'tab': '波纹管查询', 'perm': 'can_corrugated_location'},
-    'inventory_login': {'title': '盘点数据登录', 'endpoint': 'main.inventory_login', 'tab': '盘点数据登录', 'perm': 'can_inventory_login'},
+    'inventory_stock': {'title': '在库管理', 'endpoint': 'main.inventory_stock', 'tab': '在库管理', 'perm': 'can_inventory_stock'},
+    'inventory_stock_mobile': {'title': '出入库管理（移动端）', 'endpoint': 'main.inventory_stock_mobile', 'tab': '出入库管理', 'perm': 'can_inventory_stock_mobile'},
     'inventory_check': {'title': '盘点实查（移动端）', 'endpoint': 'main.inventory_check', 'tab': '盘点实查', 'perm': 'can_inventory_check'},
     'defective_login': {'title': '不良品登录(移动端)', 'endpoint': 'main.defective_login_page', 'tab': '不良品登录', 'perm': 'can_defective_login'},
     'defective_export': {'title': '不良品清单导出', 'endpoint': 'main.defective_export_page', 'tab': '不良品清单导出', 'perm': 'can_defective_export'},
-    'inventory_summary': {'title': '数据汇总', 'endpoint': 'main.inventory_summary', 'tab': '数据汇总', 'perm': 'can_inventory_summary'},
+    'inventory_summary': {'title': '盘点数据登录/数据汇总', 'endpoint': 'main.inventory_summary', 'tab': '盘点数据汇总', 'perm': 'can_inventory_summary'},
     'invest_tidy': {'title': '投入计划书', 'endpoint': 'main.invest_tidy', 'tab': '投入计划书', 'perm': 'can_invest_tidy'},
     'auto_loading': {'title': '汽车厂装车实际', 'endpoint': 'main.auto_loading', 'tab': '汽车厂装车实际', 'perm': 'can_auto_loading'},
     'mes_plan': {'title': '计划登录', 'endpoint': 'mes_mod.plan_page', 'tab': '计划登录', 'perm': 'can_mes_plan'},
@@ -67,35 +68,73 @@ PAGE_DEFS = {
 }
 
 # 一级条目定义：page=直接跳转页面；children=可展开的子菜单页面
+# 说明：「资材与文件」分组内全部改为 flat 二级页面（与 SubList 同级，直接跳转）
 ENTRY_DEFS = {
-    'lists': {'title': '清单列表', 'icon': 'fa-list-ul', 'children': ['sub_list', 'usage_list']},
-    'file_management': {'title': '文件管理', 'icon': 'fa-folder', 'page': 'file_management'},
-    'nas_search': {'title': 'NAS文件搜索', 'icon': 'fa-server', 'page': 'nas_search'},
-    'compare': {'title': '数据对比', 'icon': 'fa-code-fork', 'children': ['file_comparison', 'rw_comparison', 'rw_cad']},
-    'products': {'title': '成品', 'icon': 'fa-cube', 'page': 'products'},
-    'material_download': {'title': '资材量下载', 'icon': 'fa-download', 'page': 'material_download'},
-    'material_calc': {'title': '资材换算', 'icon': 'fa-calculator', 'children': ['tape_calculator', 'sheet_calculator', 'tube_calculator']},
-    'material': {'title': '资材管理', 'icon': 'fa-cubes', 'children': ['material_inbound_daily', 'material_inbound', 'corrugated_location', 'corrugated_location_search']},
-    'inventory': {'title': '盘点查询', 'icon': 'fa-clipboard', 'children': ['inventory_login', 'inventory_check', 'defective_login', 'defective_export', 'inventory_summary']},
-    'wire': {'title': '补线打端子', 'icon': 'fa-scissors', 'children': ['wire_lot_login', 'wire_scan_entry', 'wire_data_download', 'wire_crimp_login', 'wire_return_confirm']},
-    'invest_tidy': {'title': '投入计划书', 'icon': 'fa-file-excel-o', 'page': 'invest_tidy'},
-    'auto_loading': {'title': '汽车厂装车实际', 'icon': 'fa-truck', 'page': 'auto_loading'},
-    'mes': {'title': 'MES', 'icon': 'fa-industry', 'children': ['mes_plan', 'mes_production', 'mes_quality', 'mes_price', 'mes_group']},
-    'user_management': {'title': '用户与权限管理', 'icon': 'fa-users', 'page': 'user_management'},
-    'operation_logs': {'title': '操作记录', 'icon': 'fa-history', 'page': 'operation_logs'},
-    'data_management': {'title': '数据备份管理', 'icon': 'fa-database', 'page': 'data_management'},
-    'menu_management': {'title': '菜单管理', 'icon': 'fa-list', 'page': 'menu_management'},
-    'shortcut_settings': {'title': '快捷键设置', 'icon': 'fa-link', 'page': 'shortcut_settings'},
+    'sub_list': {'title': 'SubList', 'icon': 'fa-list-ul', 'page': 'sub_list', 'flat': True},
+    'usage_list': {'title': 'UsageList', 'icon': 'fa-table', 'page': 'usage_list', 'flat': True},
+    'file_management': {'title': '文件管理', 'icon': 'fa-folder', 'page': 'file_management', 'flat': True},
+    'nas_search': {'title': 'NAS文件搜索', 'icon': 'fa-server', 'page': 'nas_search', 'flat': True},
+    'file_comparison': {'title': '数据差异对比', 'icon': 'fa-code-fork', 'page': 'file_comparison', 'flat': True},
+    'rw_comparison': {'title': 'RW核对', 'icon': 'fa-exchange', 'page': 'rw_comparison', 'flat': True},
+    'rw_cad': {'title': 'RW图纸产出', 'icon': 'fa-file-image-o', 'page': 'rw_cad', 'flat': True},
+    'products': {'title': '成品', 'icon': 'fa-cube', 'page': 'products', 'flat': True},
+    'material_download': {'title': '资材量下载', 'icon': 'fa-download', 'page': 'material_download', 'flat': True},
+    'tape_calculator': {'title': '胶带换算', 'icon': 'fa-calculator', 'page': 'tape_calculator', 'flat': True},
+    'sheet_calculator': {'title': '皮子换算', 'icon': 'fa-calculator', 'page': 'sheet_calculator', 'flat': True},
+    'tube_calculator': {'title': '管换算', 'icon': 'fa-calculator', 'page': 'tube_calculator', 'flat': True},
+    'material_inbound_daily': {'title': '资材入库登录', 'icon': 'fa-sign-in', 'page': 'material_inbound_daily', 'flat': True},
+    'material_inbound': {'title': '仓库资材入库(移动端)', 'icon': 'fa-mobile', 'page': 'material_inbound', 'flat': True},
+    'corrugated_location': {'title': '波纹管位置录入', 'icon': 'fa-map-marker', 'page': 'corrugated_location', 'flat': True},
+    'corrugated_location_search': {'title': '波纹管查询(移动端)', 'icon': 'fa-search', 'page': 'corrugated_location_search', 'flat': True},
+    'inventory_stock': {'title': '在库管理', 'icon': 'fa-cubes', 'page': 'inventory_stock', 'flat': True},
+    'inventory_stock_mobile': {'title': '出入库管理（移动端）', 'icon': 'fa-mobile', 'page': 'inventory_stock_mobile', 'flat': True},
+    'inventory_check': {'title': '盘点实查（移动端）', 'icon': 'fa-check-square-o', 'page': 'inventory_check', 'flat': True},
+    'defective_login': {'title': '不良品登录(移动端)', 'icon': 'fa-exclamation-triangle', 'page': 'defective_login', 'flat': True},
+    'defective_export': {'title': '不良品清单导出', 'icon': 'fa-file-excel-o', 'page': 'defective_export', 'flat': True},
+    'inventory_summary': {'title': '盘点数据登录/数据汇总', 'icon': 'fa-bar-chart', 'page': 'inventory_summary', 'flat': True},
+    'wire_lot_login': {'title': 'LOT登录', 'icon': 'fa-sign-in', 'page': 'wire_lot_login', 'flat': True},
+    'wire_scan_entry': {'title': '扫描录入', 'icon': 'fa-barcode', 'page': 'wire_scan_entry', 'flat': True},
+    'wire_data_download': {'title': '数据下载', 'icon': 'fa-file-excel-o', 'page': 'wire_data_download', 'flat': True},
+    'wire_crimp_login': {'title': '压高登陆', 'icon': 'fa-arrows-v', 'page': 'wire_crimp_login', 'flat': True},
+    'wire_return_confirm': {'title': '补线返回确认', 'icon': 'fa-check-square-o', 'page': 'wire_return_confirm', 'flat': True},
+    'invest_tidy': {'title': '投入计划书', 'icon': 'fa-file-excel-o', 'page': 'invest_tidy', 'flat': True},
+    'auto_loading': {'title': '汽车厂装车实际', 'icon': 'fa-truck', 'page': 'auto_loading', 'flat': True},
+    'mes_plan': {'title': '计划登录', 'icon': 'fa-calendar', 'page': 'mes_plan', 'flat': True},
+    'mes_production': {'title': '生产入库', 'icon': 'fa-industry', 'page': 'mes_production', 'flat': True},
+    'mes_quality': {'title': '品质检查(包装)', 'icon': 'fa-check-circle', 'page': 'mes_quality', 'flat': True},
+    'mes_price': {'title': '单价登陆', 'icon': 'fa-jpy', 'page': 'mes_price', 'flat': True},
+    'mes_group': {'title': 'MES分组', 'icon': 'fa-object-group', 'page': 'mes_group', 'flat': True},
+    'user_management': {'title': '用户与权限管理', 'icon': 'fa-users', 'page': 'user_management', 'flat': True},
+    'operation_logs': {'title': '操作记录', 'icon': 'fa-history', 'page': 'operation_logs', 'flat': True},
+    'data_management': {'title': '数据备份管理', 'icon': 'fa-database', 'page': 'data_management', 'flat': True},
+    'menu_management': {'title': '菜单管理', 'icon': 'fa-list', 'page': 'menu_management', 'flat': True},
+    'shortcut_settings': {'title': '快捷键设置', 'icon': 'fa-link', 'page': 'shortcut_settings', 'flat': True},
 }
 
-# 默认分组：按实际业务域归类（管理员可在菜单管理页调整）
+# 默认分组：按实际业务域归类（管理员可在菜单管理页拖拽调整）
 DEFAULT_GROUPS = [
-    {'key': 'data', 'title': '资料与文件', 'entries': ['lists', 'file_management', 'nas_search', 'compare']},
-    {'key': 'product', 'title': '成品管理', 'entries': ['products']},
-    {'key': 'material', 'title': '资材与盘点', 'entries': ['material_download', 'material_calc', 'material', 'inventory']},
-    {'key': 'wire', 'title': '补线打端子', 'entries': ['wire']},
-    {'key': 'production', 'title': '生产与 MES', 'entries': ['invest_tidy', 'auto_loading', 'mes']},
-    {'key': 'system', 'title': '系统管理', 'entries': ['user_management', 'operation_logs', 'data_management', 'menu_management', 'shortcut_settings']},
+    {'key': 'material', 'title': '资材与文件', 'entries': [
+        'sub_list', 'usage_list', 'file_management', 'nas_search',
+        'file_comparison', 'rw_comparison', 'rw_cad',
+        'products', 'material_download',
+        'tape_calculator', 'sheet_calculator', 'tube_calculator',
+        'material_inbound_daily', 'material_inbound',
+        'corrugated_location', 'corrugated_location_search',
+        'inventory_stock', 'inventory_stock_mobile', 'inventory_check',
+        'defective_login', 'defective_export', 'inventory_summary',
+    ]},
+    {'key': 'wire', 'title': '补线打端子', 'entries': [
+        'wire_lot_login', 'wire_scan_entry', 'wire_data_download',
+        'wire_crimp_login', 'wire_return_confirm',
+    ]},
+    {'key': 'production', 'title': '生产与 MES', 'entries': [
+        'invest_tidy', 'auto_loading', 'mes_plan', 'mes_production',
+        'mes_quality', 'mes_price', 'mes_group',
+    ]},
+    {'key': 'system', 'title': '系统管理', 'entries': [
+        'user_management', 'operation_logs', 'data_management',
+        'menu_management', 'shortcut_settings',
+    ]},
 ]
 
 MAX_GROUPS = 12          # 分组数量上限，避免侧边栏过长
@@ -138,14 +177,31 @@ def normalize_layout(raw):
         groups.append({'key': key, 'title': _clean_title(group.get('title')), 'entries': entries})
         seen_groups.add(key)
 
+    # 先清理空分组（如历史上独立、已被移除条目的盘点查询分组），
+    # 避免后续补全条目时把所有菜单塞进空分组
+    groups = [g for g in groups if g['entries']]
     if not groups:
         return _default_layout()
 
     default_group_of = {ek: g['key'] for g in DEFAULT_GROUPS for ek in g['entries']}
+    default_title = {g['key']: g['title'] for g in DEFAULT_GROUPS}
+    default_order = [g['key'] for g in DEFAULT_GROUPS]
     for entry_key in ENTRY_DEFS:
         if entry_key in seen_entries:
             continue
-        target = next((g for g in groups if g['key'] == default_group_of.get(entry_key)), groups[-1])
+        target_key = default_group_of.get(entry_key)
+        target = next((g for g in groups if g['key'] == target_key), None)
+        if target is None and target_key:
+            # 默认分组不存在（如结构升级后旧分组被清空）：按默认顺序插入新分组
+            pos = 0
+            for idx, group in enumerate(groups):
+                if group['key'] in default_order and default_order.index(group['key']) < default_order.index(target_key):
+                    pos = idx + 1
+            target = {'key': target_key, 'title': default_title[target_key], 'entries': []}
+            groups.insert(pos, target)
+            seen_groups.add(target_key)
+        if target is None:
+            target = groups[-1]
         target['entries'].append(entry_key)
     return {'groups': groups}
 
@@ -154,16 +210,48 @@ def load_layout():
     """读取布局配置，异常/空配置回落到默认布局。"""
     try:
         raw = get_setting(SETTING_KEY)
-        return normalize_layout(json.loads(raw)) if raw else _default_layout()
+        if not raw:
+            return _default_layout()
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return _default_layout()
+        if data.get('v') != 3:
+            # 旧版布局：折叠父项已全部拆分为扁平二级条目，做一次性迁移
+            data = _migrate_to_flat_layout(data)
+        return normalize_layout(data)
     except Exception as exc:
         logger.error('读取侧边栏布局失败: %s', exc)
         return _default_layout()
 
 
+def _migrate_to_flat_layout(data):
+    """把旧版分组配置迁移为全扁平结构（仅执行一次，保存后写回版本号）。"""
+    groups = data.get('groups') if isinstance(data, dict) else None
+    if not isinstance(groups, list):
+        return _default_layout()
+
+    # 已不存在的折叠父项直接丢弃；页面条目保留在管理员自定义的分组中
+    cleaned = []
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get('entries'), list):
+            continue
+        entries = [e for e in group['entries'] if e in ENTRY_DEFS]
+        cleaned.append({'key': group.get('key'), 'title': group.get('title'), 'entries': entries})
+    cleaned = [g for g in cleaned if g['entries']]
+
+    # 标题统一为「资材与文件」（分组不存在时由 normalize_layout 自动补建）
+    for group in cleaned:
+        if group['key'] == 'material':
+            group['title'] = '资材与文件'
+    return {'v': 3, 'groups': cleaned}
+
+
 def save_layout(payload):
     """保存布局配置（先规范化再落库），返回保存后的布局。"""
     layout = normalize_layout(payload)
-    set_setting(SETTING_KEY, json.dumps(layout, ensure_ascii=False), SETTING_DESC)
+    # 写入版本号，避免再次触发旧结构迁移
+    stored = {'v': 3, 'groups': layout['groups']}
+    set_setting(SETTING_KEY, json.dumps(stored, ensure_ascii=False), SETTING_DESC)
     db.session.commit()
     return layout
 
@@ -222,7 +310,9 @@ def _build_entry(entry_key, is_admin, permissions):
     url = _safe_url(page['endpoint'])
     if not url:
         return None
-    return {'key': entry_key, 'type': 'link', 'title': entry['title'], 'icon': entry['icon'],
+    # flat=True 的条目按二级页面渲染（与 SubList 同级），其余仍为一级链接
+    return {'key': entry_key, 'type': 'flat' if entry.get('flat') else 'link',
+            'title': entry['title'], 'icon': entry['icon'],
             'url': url, 'tab': page.get('tab') or page['title']}
 
 

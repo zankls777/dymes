@@ -411,6 +411,7 @@ def create_app():
         from models.material_inbound import MaterialInboundDaily
         from models.inventory_check import InventoryTeam, InventoryCheck
         from models.inventory_pno_dict import InventoryPnoDict
+        from models.stock_management import StockItem, StockMovement
         from models.defective_login import DefectiveLogin
         from models.system_setting import SystemSetting
         from models.mes_group import MesGroup

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
-    <title>数据汇总 - 大焱资料管理系统</title>
+    <title>盘点数据登录 / 数据汇总 - 大焱资料管理系统</title>
     <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
     <!-- 日期选择器样式（Litepicker）：仅在聚焦日期框时由 JS 动态引入 -->
@@ -55,6 +55,16 @@
         .state-box { text-align: center; padding: 48px 16px; color: #868e96; }
         .state-box .fa { font-size: 2.4rem; margin-bottom: 10px; display: block; color: #ced4da; }
         .state-box.error .fa { color: #ffa8a8; }
+        /* 盘点班组维护（合并自原盘点数据登录页） */
+        .team-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 12px; border: 1px solid #e9ecef; border-radius: 8px;
+            margin-bottom: 8px; background: #fff;
+        }
+        .team-item.is-off { background: #f8f9fa; opacity: 0.75; }
+        .team-name { font-weight: 600; font-size: 1rem; word-break: break-all; }
+        .team-meta { font-size: 0.8rem; color: #868e96; margin-top: 2px; }
+        .btn-main { min-height: 46px; }
         /* 悬浮提示 */
         #chartTip {
             position: fixed; z-index: 2000; pointer-events: none; display: none;
@@ -80,6 +90,17 @@
     {% include '_navbar.html' %}
     <div class="container-fluid mt-4">
 
+        <!-- 页面标题 + 盘点班组维护（原盘点数据登录页功能） -->
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+            <h5 class="mb-0"><i class="fa fa-clipboard me-2"></i>盘点数据登录 / 数据汇总</h5>
+            {% if can_edit_team %}
+            <button class="btn btn-sm btn-outline-primary" id="btnOpenTeamModal" title="盘点班组维护">
+                <i class="fa fa-users me-1"></i>盘点班组维护
+            </button>
+            {% endif %}
+        </div>
+
+        {% if can_view_summary %}
         <!-- 筛选区 -->
         <div class="filter-bar">
             <div class="row g-2 align-items-end">
@@ -252,9 +273,61 @@
                 </div>
             </div>
         </div>
+        {% else %}
+        <div class="alert alert-light border text-muted small mb-0">
+            <i class="fa fa-info-circle me-1"></i>当前账号仅具备盘点班组维护权限，汇总数据需「数据汇总页面」权限。
+        </div>
+        {% endif %}
     </div>
 
     <div id="chartTip"></div>
+
+    {% if can_edit_team %}
+    <!-- 盘点班组维护弹窗（原 /inventory/login 页面功能） -->
+    <div class="modal fade" id="teamModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <span class="modal-title fw-bold"><i class="fa fa-users me-1"></i>盘点班组维护</span>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-2 mb-3">
+                        <div class="col-5">
+                            <input type="text" class="form-control" id="newTeamName" placeholder="班组名称*" maxlength="50">
+                        </div>
+                        <div class="col-3">
+                            <input type="number" class="form-control" id="newTeamSort" placeholder="排序" min="0" inputmode="numeric">
+                        </div>
+                        <div class="col-4">
+                            <button class="btn btn-primary w-100 btn-main" id="btnAddTeam">
+                                <i class="fa fa-plus me-1"></i>新增班组
+                            </button>
+                        </div>
+                    </div>
+                    <div id="teamList">
+                        <div class="text-center text-muted py-4 small">加载中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自定义确认框（替代原生 confirm，兼容 WebView） -->
+    <div class="modal fade" id="confirmModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-body py-3">
+                    <div id="confirmText" class="mb-0"></div>
+                </div>
+                <div class="modal-footer py-2">
+                    <button class="btn btn-secondary btn-sm" id="btnConfirmNo">取消</button>
+                    <button class="btn btn-danger btn-sm" id="btnConfirmYes">确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
     <script>
@@ -287,7 +360,10 @@
         var URL_DETAIL = '{{ url_for("main.inventory_summary_detail") }}';
         var URL_TEAMS = '{{ url_for("main.inventory_teams") }}';
         var URL_DELETE = '{{ url_for("main.inventory_check_delete") }}';
+        var URL_TEAM_SAVE = '{{ url_for("main.inventory_team_save") }}';
+        var URL_TEAM_DELETE = '{{ url_for("main.inventory_team_delete") }}';
         var CAN_DELETE = {{ 'true' if can_delete else 'false' }};
+        var TEAM_CAN_EDIT = {{ 'true' if can_edit_team else 'false' }};
         var CSRFEl = document.querySelector('meta[name="csrf-token"]');
         var CSRF = CSRFEl ? CSRFEl.getAttribute('content') : '';
 
@@ -316,6 +392,24 @@
             return String(s === null || s === undefined ? '' : s)
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // 轻提示与 JSON 提交（班组维护复用，风格同原盘点数据登录页）
+        function toast(msg, ok) {
+            var div = document.createElement('div');
+            div.className = 'alert alert-' + (ok ? 'success' : 'danger') +
+                ' position-fixed top-0 start-50 translate-middle-x mt-3 shadow';
+            div.style.zIndex = 3000;
+            div.textContent = msg;
+            document.body.appendChild(div);
+            setTimeout(function () { div.remove(); }, 2200);
+        }
+        function postJSON(url, payload) {
+            return fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify(payload || {})
+            }).then(function (r) { return r.json(); });
         }
 
         // ---------- 日期范围 ----------
@@ -594,19 +688,186 @@
 
         // 班组下拉（用于清单筛选）
         function loadTeamOptions() {
+            var sel = document.getElementById('listTeam');
+            if (!sel) { return; }   // 仅班组维护权限时无清单区
             fetch(URL_TEAMS, { headers: { 'X-CSRFToken': CSRF } })
                 .then(function (res) { return res.json(); })
                 .then(function (res) {
                     if (!res.success) { return; }
-                    var sel = document.getElementById('listTeam');
+                    var keep = sel.value;   // 重建选项后尽量保留当前筛选班组
+                    sel.innerHTML = '<option value="">全部班组</option>';
                     (res.items || res.teams || []).forEach(function (t) {
                         var o = document.createElement('option');
                         o.value = t.id;
                         o.textContent = t.name;
                         sel.appendChild(o);
                     });
+                    if (keep) { sel.value = keep; }
                 })
                 .catch(function () { /* 下拉失败不阻断清单 */ });
+        }
+
+        // ---------- 盘点班组维护（合并自原 /inventory/login 页面） ----------
+        function setupTeamMaintenance() {
+            var openBtn = document.getElementById('btnOpenTeamModal');
+            if (!openBtn || !TEAM_CAN_EDIT) { return; }
+
+            var teamModal = new bootstrap.Modal(document.getElementById('teamModal'));
+            var confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
+            var confirmHandler = null;
+            var editingId = null;   // 非空表示编辑模式
+            var nameInput = document.getElementById('newTeamName');
+            var sortInput = document.getElementById('newTeamSort');
+            var btnAdd = document.getElementById('btnAddTeam');
+            var listEl = document.getElementById('teamList');
+
+            document.getElementById('btnConfirmYes').addEventListener('click', function () {
+                confirmModal.hide();
+                var fn = confirmHandler; confirmHandler = null;
+                if (fn) { fn(); }
+            });
+            document.getElementById('btnConfirmNo').addEventListener('click', function () {
+                confirmHandler = null; confirmModal.hide();
+            });
+            function showConfirm(text, onYes) {
+                document.getElementById('confirmText').textContent = text;
+                confirmHandler = onYes;
+                confirmModal.show();
+            }
+
+            function resetForm() {
+                editingId = null;
+                nameInput.value = '';
+                sortInput.value = '';
+                btnAdd.innerHTML = '<i class="fa fa-plus me-1"></i>新增班组';
+                btnAdd.classList.remove('btn-success');
+                btnAdd.classList.add('btn-primary');
+                btnAdd.removeAttribute('data-active');
+            }
+
+            function renderList(items) {
+                if (!items.length) {
+                    listEl.innerHTML = '<div class="text-center text-muted py-4 small">暂无班组，请在上方新增</div>';
+                    return;
+                }
+                listEl.innerHTML = items.map(function (t) {
+                    return '<div class="team-item' + (t.is_active ? '' : ' is-off') + '" data-id="' + t.id + '">' +
+                        '<div class="flex-grow-1 me-2">' +
+                            '<div class="team-name">' + esc(t.name) +
+                                (t.is_active ? '' : ' <span class="badge bg-secondary">停用</span>') + '</div>' +
+                            '<div class="team-meta">排序 ' + t.sort_no + (t.remark ? ' · ' + esc(t.remark) : '') + '</div>' +
+                        '</div>' +
+                        '<div class="d-flex gap-1 flex-shrink-0">' +
+                            '<button class="btn btn-sm btn-outline-primary btn-team-edit" data-id="' + t.id +
+                                '" data-name="' + esc(t.name) + '" data-sort="' + t.sort_no +
+                                '" data-remark="' + esc(t.remark || '') + '" data-active="' + (t.is_active ? '1' : '0') + '">编辑</button>' +
+                            '<button class="btn btn-sm btn-outline-secondary btn-team-toggle" data-id="' + t.id +
+                                '" data-active="' + (t.is_active ? '1' : '0') + '">' + (t.is_active ? '停用' : '启用') + '</button>' +
+                            '<button class="btn btn-sm btn-outline-danger btn-team-del" data-id="' + t.id +
+                                '" data-name="' + esc(t.name) + '">删除</button>' +
+                        '</div>' +
+                    '</div>';
+                }).join('');
+            }
+
+            function loadTeams() {
+                return fetch(URL_TEAMS + '?all=1', { headers: { 'X-CSRFToken': CSRF } })
+                    .then(function (r) { return r.json(); })
+                    .then(function (res) {
+                        renderList(res.success ? (res.items || []) : []);
+                        if (!res.success && res.error) { toast(res.error, false); }
+                    });
+            }
+
+            // 班组变更后同步刷新清单上方的班组下拉
+            function afterChanged() {
+                loadTeams();
+                loadTeamOptions();
+            }
+
+            openBtn.addEventListener('click', function () {
+                resetForm();
+                teamModal.show();
+                loadTeams();
+            });
+
+            btnAdd.addEventListener('click', function () {
+                var name = nameInput.value.trim();
+                var sort = sortInput.value.trim();
+                if (!name) { toast('请输入班组名称', false); nameInput.focus(); return; }
+                var payload = { name: name, sort_no: sort || 0 };
+                if (editingId) {
+                    payload.id = editingId;
+                    payload.is_active = btnAdd.getAttribute('data-active') !== '0';
+                }
+                postJSON(URL_TEAM_SAVE, payload).then(function (res) {
+                    if (res.success) {
+                        toast(editingId ? '修改成功' : '新增成功', true);
+                        resetForm();
+                        afterChanged();
+                    } else {
+                        toast(res.error || '保存失败', false);
+                    }
+                }).catch(function () { toast('网络异常，请重试', false); });
+            });
+            nameInput.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); sortInput.focus(); }
+            });
+            sortInput.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); btnAdd.click(); }
+            });
+
+            listEl.addEventListener('click', function (e) {
+                var editBtn = e.target.closest('.btn-team-edit');
+                if (editBtn) {
+                    editingId = editBtn.getAttribute('data-id');
+                    nameInput.value = editBtn.getAttribute('data-name') || '';
+                    sortInput.value = editBtn.getAttribute('data-sort') || '';
+                    btnAdd.setAttribute('data-active', editBtn.getAttribute('data-active') || '1');
+                    btnAdd.innerHTML = '<i class="fa fa-check me-1"></i>保存修改';
+                    btnAdd.classList.remove('btn-primary');
+                    btnAdd.classList.add('btn-success');
+                    nameInput.focus();
+                    return;
+                }
+                var delBtn = e.target.closest('.btn-team-del');
+                if (delBtn) {
+                    var id = delBtn.getAttribute('data-id');
+                    var nm = delBtn.getAttribute('data-name');
+                    showConfirm('确定删除班组「' + nm + '」？', function () {
+                        postJSON(URL_TEAM_DELETE, { id: id }).then(function (res) {
+                            toast(res.success ? '删除成功' : (res.error || '删除失败'), res.success);
+                            if (res.success) {
+                                if (editingId === id) { resetForm(); }
+                                afterChanged();
+                            }
+                        }).catch(function () { toast('网络异常，请重试', false); });
+                    });
+                    return;
+                }
+                var tgBtn = e.target.closest('.btn-team-toggle');
+                if (tgBtn) {
+                    var tid = tgBtn.getAttribute('data-id');
+                    var active = tgBtn.getAttribute('data-active') === '1';
+                    // 停用/启用：先取当前班组完整信息再保存（接口要求全量字段）
+                    fetch(URL_TEAMS + '?all=1', { headers: { 'X-CSRFToken': CSRF } })
+                        .then(function (r) { return r.json(); })
+                        .then(function (res) {
+                            var t = (res.items || []).filter(function (x) {
+                                return String(x.id) === String(tid);
+                            })[0];
+                            if (!t) { return; }
+                            return postJSON(URL_TEAM_SAVE, {
+                                id: t.id, name: t.name, sort_no: t.sort_no,
+                                remark: t.remark, is_active: !active
+                            }).then(function (r2) {
+                                toast(r2.success ? '操作成功' : (r2.error || '操作失败'), r2.success);
+                                if (r2.success) { afterChanged(); }
+                            });
+                        })
+                        .catch(function () { toast('网络异常，请重试', false); });
+                }
+            });
         }
 
         // ---------- 纯 SVG 柱状图（单系列：班组 - 盘点记录数） ----------
@@ -773,6 +1034,9 @@
         }
 
         function init() {
+            setupTeamMaintenance();   // 合并后的班组维护入口（仅班组权限也可用）
+            // 无数据汇总权限时，页面不渲染筛选/图表区，直接结束
+            if (!dateRange) { return; }
             // 日期框未加载 Litepicker 前退化为手工输入，聚焦时再按需加载
             dateRange.readOnly = false;
             dateRange.placeholder = '格式：2026-01-01 ~ 2026-01-31';

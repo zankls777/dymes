@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>在库管理 - 大焱资料管理系统</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        html, body { overflow-x: hidden; }
+        .card { margin-bottom: 14px; }
+        .req::before { content: '*'; color: #dc3545; margin-right: 2px; }
+        .stat-box {
+            border: 1px solid #e3e8ef; border-radius: 8px; background: #fff;
+            padding: 10px 12px; height: 100%;
+        }
+        .stat-box .label { font-size: 0.78rem; color: #6c757d; }
+        .stat-box .value { font-size: 1.2rem; font-weight: 700; color: #0d6efd; }
+        .stat-box .value.warn { color: #dc3545; }
+        .table thead th { white-space: nowrap; background: #f8f9fa; font-size: 0.84rem; }
+        .table tbody td { vertical-align: middle; font-size: 0.88rem; }
+        .row-check, #checkAll { width: 16px; height: 16px; cursor: pointer; }
+        .pno-cell { font-weight: 700; font-family: Consolas, monospace; }
+        /* 数值样式：负数=异常（黄底红字），正数=加粗黑字，0=普通黑字 */
+        .qty-neg { background: #fff3cd; color: #dc3545; font-weight: 700; }
+        .qty-pos { color: #212529; font-weight: 700; }
+        .qty-zero { color: #212529; font-weight: 400; }
+        .btn-main { min-height: 42px; }
+        @media (max-width: 767.98px) {
+            .container-fluid { padding-left: 10px; padding-right: 10px; }
+            .container-fluid.mt-4 { margin-top: 0.5rem !important; }
+            .card-body { padding: 0.85rem; }
+        }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+
+    <div class="container-fluid mt-4">
+        <div class="page-head d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+            <h5 class="mb-0"><i class="fa fa-cubes me-2"></i>在库管理</h5>
+            <div class="d-flex gap-2">
+                <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.inventory_stock_mobile') }}">
+                    <i class="fa fa-exchange me-1"></i>出入库管理
+                </a>
+                <button class="btn btn-outline-dark btn-sm" id="btnPrintLabels">
+                    <i class="fa fa-print me-1"></i>看板打印
+                </button>
+                {% if can_import %}
+                <button class="btn btn-outline-success btn-sm" id="btnImport">
+                    <i class="fa fa-upload me-1"></i>Excel导入
+                </button>
+                {% endif %}
+                {% if can_edit %}
+                <button class="btn btn-primary btn-sm" id="btnAdd">
+                    <i class="fa fa-plus me-1"></i>新增记录
+                </button>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 汇总概览 -->
+        <div class="row g-2 mb-2">
+            <div class="col-6 col-md-3">
+                <div class="stat-box"><div class="label">品番数（当前筛选）</div><div class="value" id="statCount">0</div></div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-box"><div class="label">初始数量合计</div><div class="value" id="statInitial">0</div></div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-box"><div class="label">入库合计</div><div class="value" id="statIn">0</div></div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-box"><div class="label">出库合计</div><div class="value" id="statOut">0</div></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-light py-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span class="small fw-bold"><i class="fa fa-list-ul me-2"></i>在库清单</span>
+                <div class="d-flex gap-2 align-items-center">
+                    <button class="btn btn-sm btn-outline-secondary" id="btnHideZero" title="隐藏剩余量为 0 的品番">隐藏剩余0</button>
+                    <button class="btn btn-sm btn-outline-success" id="btnExport" title="导出当前筛选结果">
+                        <i class="fa fa-download me-1"></i>Excel下载
+                    </button>
+                    <input type="text" class="form-control form-control-sm" id="keyword" style="width:220px;"
+                           placeholder="品番 / 业体品番 / 位置">
+                    <button class="btn btn-sm btn-primary" id="btnRefresh" title="按关键字查询">确定</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="btnClearKeyword" title="清除搜索关键字">清除</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th class="text-center" style="width:36px;">
+                                    <input type="checkbox" id="checkAll" title="全选/取消全选">
+                                </th>
+                                <th class="text-center">资材品番</th>
+                                <th class="text-center">业体品番</th>
+                                <th class="text-center">位置</th>
+                                <th class="text-end">初始数量</th>
+                                <th class="text-end">入库数量</th>
+                                <th class="text-end">出库数量</th>
+                                <th class="text-end">剩余量</th>
+                                <th class="text-center">备注</th>
+                                <th class="text-center">操作人</th>
+                                <th class="text-center">操作时间</th>
+                                {% if can_edit or can_delete %}
+                                <th class="text-center">操作</th>
+                                {% endif %}
+                            </tr>
+                        </thead>
+                        <tbody id="stockBody">
+                            <tr><td colspan="12" class="text-center text-muted py-4">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增/编辑弹窗 -->
+    <div class="modal fade" id="itemModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <span class="modal-title fw-bold" id="itemModalTitle">新增在库记录</span>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="fId">
+                    <div class="row g-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label req">资材品番</label>
+                            <input type="text" class="form-control" id="fKscPno" maxlength="50" placeholder="扫码或输入">
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">业体品番</label>
+                            <input type="text" class="form-control" id="fCorpPno" maxlength="100">
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">位置</label>
+                            <input type="text" class="form-control" id="fLocation" maxlength="100">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">初始数量</label>
+                            <input type="number" class="form-control" id="fInitialQty" min="0" step="1" inputmode="numeric" value="0">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">入库数量</label>
+                            <input type="number" class="form-control" id="fInboundQty" min="0" step="1" inputmode="numeric" value="0">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">出库数量</label>
+                            <input type="number" class="form-control" id="fOutboundQty" min="0" step="1" inputmode="numeric" value="0">
+                        </div>
+                        <div class="col-12">
+                            <div class="alert alert-light border mb-0 small">
+                                剩余量 = 初始数量 + 入库数量 - 出库数量 =
+                                <span class="fw-bold text-primary" id="fBalancePreview">0</span>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">备注</label>
+                            <textarea class="form-control" id="fRemark" rows="2" maxlength="500" placeholder="选填"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer py-2">
+                    <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button class="btn btn-primary btn-sm" id="btnSaveItem">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Excel 导入弹窗 -->
+    <div class="modal fade" id="importModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <span class="modal-title fw-bold"><i class="fa fa-upload me-1"></i>Excel导入在库数据</span>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info small mb-3">
+                        按「资材品番」匹配：已存在则更新，不存在则新增。表头需包含
+                        <b>资材品番</b>、业体品番、位置、初始数量、入库数量、出库数量、备注。
+                    </div>
+                    <a class="btn btn-outline-success btn-sm mb-3" href="{{ url_for('main.inventory_stock_template') }}">
+                        <i class="fa fa-download me-1"></i>下载导入模板
+                    </a>
+                    <input type="file" class="form-control" id="importFile" accept=".xlsx,.xlsm">
+                    <div class="small text-muted mt-2" id="importResult"></div>
+                </div>
+                <div class="modal-footer py-2">
+                    <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">关闭</button>
+                    <button class="btn btn-primary btn-sm" id="btnDoImport">开始导入</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自定义确认框（兼容 WebView，替代原生 confirm） -->
+    <div class="modal fade" id="confirmModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-body py-3"><div id="confirmText" class="mb-0"></div></div>
+                <div class="modal-footer py-2">
+                    <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button class="btn btn-danger btn-sm" id="btnConfirmYes">确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    <script>
+    (function () {
+        var CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+        var CAN_DELETE = {{ 'true' if can_delete else 'false' }};
+        var URLS = {
+            data: '{{ url_for("main.inventory_stock_data") }}',
+            save: '{{ url_for("main.inventory_stock_save") }}',
+            del: '{{ url_for("main.inventory_stock_delete") }}',
+            importUrl: '{{ url_for("main.inventory_stock_import") }}',
+            labels: '{{ url_for("main.inventory_stock_labels") }}',
+            exportUrl: '{{ url_for("main.inventory_stock_export") }}'
+        };
+        var items = {};       // id -> 记录，编辑/删除时取原始值
+        var confirmCallback = null;
+
+        function esc(s) {
+            return String(s === null || s === undefined ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+        function toast(msg, ok) {
+            var div = document.createElement('div');
+            div.className = 'alert alert-' + (ok ? 'success' : 'danger') + ' position-fixed top-0 start-50 translate-middle-x mt-3 shadow';
+            div.style.zIndex = 3000;
+            div.textContent = msg;
+            document.body.appendChild(div);
+            setTimeout(function () { div.remove(); }, 2600);
+        }
+        function confirmBox(msg, cb) {
+            document.getElementById('confirmText').textContent = msg;
+            confirmCallback = cb;
+            new bootstrap.Modal(document.getElementById('confirmModal')).show();
+        }
+        document.getElementById('btnConfirmYes').addEventListener('click', function () {
+            bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+            if (confirmCallback) { confirmCallback(); }
+            confirmCallback = null;
+        });
+
+        // 数值单元格：负数异常黄底红字，正数加粗，0 普通
+        // 使用内联样式，避免 Bootstrap 5 表格单元格样式覆盖颜色/背景
+        function qtyCell(v) {
+            var n = parseInt(v, 10) || 0;
+            var style = '';
+            var cls = 'text-end';
+            if (n < 0) {
+                cls += ' qty-neg';
+                style = 'background-color:#fff3cd;color:#dc3545;font-weight:700;';
+            } else if (n > 0) {
+                cls += ' qty-pos';
+                style = 'color:#212529;font-weight:700;';
+            } else {
+                cls += ' qty-zero';
+                style = 'color:#212529;font-weight:400;';
+            }
+            return '<td class="' + cls + '" style="' + style + '">' + n + '</td>';
+        }
+
+        var hideZero = false;      // 是否隐藏剩余量为 0 的品番
+        var lastData = null;       // 最近一次查询结果，供切换显示时复用
+
+        function render(data) {
+            lastData = data;
+            var body = document.getElementById('stockBody');
+            var all = data.items || [];
+            // 按开关过滤剩余量为 0 的行
+            var list = hideZero
+                ? all.filter(function (it) { return (parseInt(it.balance_qty, 10) || 0) !== 0; })
+                : all;
+            items = {};
+            document.getElementById('checkAll').checked = false;
+            list.forEach(function (it) { items[it.id] = it; });
+
+            document.getElementById('statCount').textContent = data.summary.count;
+            document.getElementById('statInitial').textContent = data.summary.initial_qty;
+            document.getElementById('statIn').textContent = data.summary.inbound_qty;
+            document.getElementById('statOut').textContent = data.summary.outbound_qty;
+
+            if (!list.length) {
+                var tip = (hideZero && all.length) ? '已隐藏剩余量为 0 的品番' : '暂无数据';
+                body.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-4">' + tip + '</td></tr>';
+                return;
+            }
+            body.innerHTML = list.map(function (it) {
+                var ops = '';
+                if (CAN_EDIT || CAN_DELETE) {
+                    ops = '<td class="text-center text-nowrap">';
+                    if (CAN_EDIT) {
+                        ops += '<button class="btn btn-sm btn-outline-primary me-1" data-act="edit" data-id="' + it.id + '"><i class="fa fa-pencil"></i></button>';
+                    }
+                    if (CAN_DELETE) {
+                        ops += '<button class="btn btn-sm btn-outline-danger" data-act="del" data-id="' + it.id + '"><i class="fa fa-trash"></i></button>';
+                    }
+                    ops += '</td>';
+                }
+                return '<tr>' +
+                    '<td class="text-center"><input type="checkbox" class="row-check" value="' + it.id + '"></td>' +
+                    '<td class="text-center pno-cell">' + esc(it.ksc_pno) + '</td>' +
+                    '<td class="text-center">' + esc(it.corp_pno) + '</td>' +
+                    '<td class="text-center">' + esc(it.location) + '</td>' +
+                    qtyCell(it.initial_qty) +
+                    qtyCell(it.inbound_qty) +
+                    qtyCell(it.outbound_qty) +
+                    qtyCell(it.balance_qty) +
+                    '<td class="text-center text-truncate" style="max-width:160px;" title="' + esc(it.remark) + '">' + esc(it.remark) + '</td>' +
+                    '<td class="text-center">' + esc(it.operator_name) + '</td>' +
+                    '<td class="text-center text-muted" style="font-size:0.8rem;">' + esc(it.updated_at) + '</td>' +
+                    ops + '</tr>';
+            }).join('');
+        }
+
+        function load() {
+            var kw = document.getElementById('keyword').value.trim();
+            fetch(URLS.data + '?keyword=' + encodeURIComponent(kw), { credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (!d.success) { toast(d.error || '查询失败', false); return; }
+                    render(d);
+                })
+                .catch(function () { toast('网络异常，查询失败', false); });
+        }
+
+        // 关键字输入防抖，避免每次按键都请求
+        var timer = null;
+        document.getElementById('keyword').addEventListener('input', function () {
+            if (timer) { clearTimeout(timer); }
+            timer = setTimeout(load, 300);
+        });
+        document.getElementById('btnRefresh').addEventListener('click', load);
+        // 清除关键字并恢复完整列表
+        document.getElementById('btnClearKeyword').addEventListener('click', function () {
+            document.getElementById('keyword').value = '';
+            load();
+        });
+        // 隐藏/显示剩余量为 0 的品番
+        document.getElementById('btnHideZero').addEventListener('click', function () {
+            hideZero = !hideZero;
+            this.classList.toggle('btn-outline-secondary', !hideZero);
+            this.classList.toggle('btn-secondary', hideZero);
+            this.textContent = hideZero ? '显示全部' : '隐藏剩余0';
+            if (lastData) { render(lastData); }
+        });
+
+        // ---------- 新增 / 编辑 ----------
+        var itemModal = new bootstrap.Modal(document.getElementById('itemModal'));
+
+        function previewBalance() {
+            var v = (parseInt(document.getElementById('fInitialQty').value, 10) || 0)
+                + (parseInt(document.getElementById('fInboundQty').value, 10) || 0)
+                - (parseInt(document.getElementById('fOutboundQty').value, 10) || 0);
+            document.getElementById('fBalancePreview').textContent = v;
+        }
+        ['fInitialQty', 'fInboundQty', 'fOutboundQty'].forEach(function (id) {
+            document.getElementById(id).addEventListener('input', previewBalance);
+        });
+
+        function openItemModal(it) {
+            document.getElementById('itemModalTitle').textContent = it ? '编辑在库记录' : '新增在库记录';
+            document.getElementById('fId').value = it ? it.id : '';
+            document.getElementById('fKscPno').value = it ? it.ksc_pno : '';
+            document.getElementById('fCorpPno').value = it ? it.corp_pno : '';
+            document.getElementById('fLocation').value = it ? it.location : '';
+            document.getElementById('fInitialQty').value = it ? it.initial_qty : 0;
+            document.getElementById('fInboundQty').value = it ? it.inbound_qty : 0;
+            document.getElementById('fOutboundQty').value = it ? it.outbound_qty : 0;
+            document.getElementById('fRemark').value = it ? it.remark : '';
+            previewBalance();
+            itemModal.show();
+        }
+
+        document.getElementById('btnAdd').addEventListener('click', function () { openItemModal(null); });
+
+        // ---------- Excel下载（按当前筛选） ----------
+        document.getElementById('btnExport').addEventListener('click', function () {
+            var kw = document.getElementById('keyword').value.trim();
+            window.location.href = URLS.exportUrl + '?keyword=' + encodeURIComponent(kw);
+        });
+
+        // ---------- 看板打印 ----------
+        document.getElementById('checkAll').addEventListener('change', function () {
+            var checked = this.checked;
+            document.querySelectorAll('.row-check').forEach(function (cb) { cb.checked = checked; });
+        });
+        document.getElementById('btnPrintLabels').addEventListener('click', function () {
+            var ids = [];
+            document.querySelectorAll('.row-check:checked').forEach(function (cb) { ids.push(cb.value); });
+            if (!ids.length) { toast('请先勾选要打印的品番', false); return; }
+            // 新窗口打开标签页，由浏览器调用打印机（可连续打印多张）
+            window.open(URLS.labels + '?ids=' + ids.join(','), '_blank');
+        });
+
+        document.getElementById('btnSaveItem').addEventListener('click', function () {
+            var payload = {
+                id: document.getElementById('fId').value || null,
+                ksc_pno: document.getElementById('fKscPno').value.trim(),
+                corp_pno: document.getElementById('fCorpPno').value.trim(),
+                location: document.getElementById('fLocation').value.trim(),
+                initial_qty: document.getElementById('fInitialQty').value || 0,
+                inbound_qty: document.getElementById('fInboundQty').value || 0,
+                outbound_qty: document.getElementById('fOutboundQty').value || 0,
+                remark: document.getElementById('fRemark').value.trim()
+            };
+            if (!payload.ksc_pno) { toast('请填写资材品番', false); return; }
+            fetch(URLS.save, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).then(function (r) { return r.json(); }).then(function (d) {
+                if (!d.success) { toast(d.error || '保存失败', false); return; }
+                itemModal.hide();
+                toast('保存成功', true);
+                load();
+            }).catch(function () { toast('网络异常，保存失败', false); });
+        });
+
+        // ---------- 表格操作（编辑/删除，事件委托） ----------
+        document.getElementById('stockBody').addEventListener('click', function (e) {
+            var btn = e.target.closest('button[data-act]');
+            if (!btn) { return; }
+            var it = items[btn.getAttribute('data-id')];
+            if (!it) { return; }
+            if (btn.getAttribute('data-act') === 'edit') {
+                openItemModal(it);
+                return;
+            }
+            confirmBox('确定删除在库记录「' + it.ksc_pno + '」？', function () {
+                fetch(URLS.del, {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: it.id })
+                }).then(function (r) { return r.json(); }).then(function (d) {
+                    if (!d.success) { toast(d.error || '删除失败', false); return; }
+                    toast('删除成功', true);
+                    load();
+                }).catch(function () { toast('网络异常，删除失败', false); });
+            });
+        });
+
+        // ---------- Excel 导入 ----------
+        var importModal = new bootstrap.Modal(document.getElementById('importModal'));
+        document.getElementById('btnImport').addEventListener('click', function () {
+            document.getElementById('importResult').textContent = '';
+            document.getElementById('importFile').value = '';   // 复位，便于重复导入
+            importModal.show();
+        });
+        document.getElementById('btnDoImport').addEventListener('click', function () {
+            var fileInput = document.getElementById('importFile');
+            if (!fileInput.files.length) { toast('请选择 Excel 文件', false); return; }
+            var fd = new FormData();
+            fd.append('file', fileInput.files[0]);
+            var resultEl = document.getElementById('importResult');
+            resultEl.textContent = '导入中，请稍候...';
+            fetch(URLS.importUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (!d.success) { resultEl.textContent = d.error || '导入失败'; toast(d.error || '导入失败', false); return; }
+                    resultEl.textContent = d.message + (d.errors && d.errors.length ? '；异常：' + d.errors.join('；') : '');
+                    toast(d.message, true);
+                    load();
+                    // 导入完成后自动关闭弹窗（留 500ms 让用户看到结果文字）
+                    setTimeout(function () { importModal.hide(); }, 500);
+                })
+                .catch(function () { resultEl.textContent = '网络异常，导入失败'; });
+        });
+
+        load();
+    })();
+    </script>
+</body>
+</html>

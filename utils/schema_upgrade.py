@@ -80,6 +80,10 @@ COLUMN_UPGRADES = {
     'inventory_check': [
         ('created_by_name', 'VARCHAR(80)'),
     ],
+    'stock_item': [
+        # 最后操作人快照：新增/编辑在库记录时更新
+        ('updated_by_name', 'VARCHAR(80)'),
+    ],
     'wire_scan_record': [
         ('part_no', 'VARCHAR(100)'),
         ('jx_eo', 'VARCHAR(50)'),
@@ -396,6 +400,8 @@ def _import_all_models():
     from models.material_inbound import MaterialInboundDaily
     from models.inventory_check import InventoryTeam, InventoryCheck
     from models.inventory_pno_dict import InventoryPnoDict
+    from models.stock_management import StockItem, StockMovement
+    from models.page_visit import PageVisitStat
     from models.defective_login import DefectiveLogin
     from models.system_setting import SystemSetting
     from models.mes_group import MesGroup

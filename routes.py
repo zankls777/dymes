@@ -92,6 +92,9 @@ from models.rbac import UserPermissionOverride
 from models.material_inbound import MaterialInboundDaily
 from models.inventory_check import InventoryTeam, InventoryCheck
 from models.inventory_pno_dict import InventoryPnoDict
+from models.stock_management import (StockItem, StockMovement,
+                                     MOVEMENT_IN, MOVEMENT_OUT,
+                                     MOVEMENT_TYPE_LABELS)
 from models.defective_login import DefectiveLogin, DEFECTIVE_REASONS
 from utils.time_utils import get_utc8_time, format_utc8_time
 from models.operation_log import OperationLog
@@ -214,7 +217,7 @@ LANDING_PAGE_ORDER = [
     ('can_wire_data_download', 'main.wire_data_download', '数据下载'),
     ('can_material_inbound_daily', 'main.material_inbound_daily', '资材每日入库'),
     ('can_material_inbound', 'main.material_inbound', '资材入库'),
-    ('can_inventory_login', 'main.inventory_login', '盘点数据登录'),
+    ('can_inventory_login', 'main.inventory_summary', '盘点数据登录/汇总'),
     ('can_inventory_check', 'main.inventory_check', '盘点实查'),
     ('can_inventory_summary', 'main.inventory_summary', '数据汇总'),
     ('can_defective_login', 'main.defective_login_page', '不良品登录'),
@@ -11789,6 +11792,18 @@ def reset_sidebar_menu_config():
         return jsonify({'success': False, 'error': '恢复失败，请稍后重试'}), 500
 
 # 根路由 - 已登录用户重定向到文件管理首页，未登录用户重定向到登录页面
+@main_bp.before_request
+def _track_home_card_visit():
+    """记录首页功能卡片的访问次数，供「常用功能」按使用频率自动排序"""
+    from utils.quick_access import CARD_ENDPOINTS, record_visit
+    if request.method != 'GET':
+        return
+    endpoint = request.endpoint or ''
+    uid = session.get('user_id')
+    if uid and endpoint in CARD_ENDPOINTS:
+        record_visit(uid, endpoint)
+
+
 @main_bp.route('/')
 def index():
     """网站主页（仪表盘）：登录用户均可访问，无权限的功能入口不展示"""
@@ -11801,7 +11816,14 @@ def index():
             for code, value in get_effective_permissions(session['user_id']).items()
             if code.startswith('can_')
         }
-    return render_template('index.html', developer_info=get_developer_info())
+    # 常用功能：按当前用户的历史访问频率排序，越常用越靠前
+    from utils.quick_access import get_home_cards, sort_cards_by_usage
+    cards = get_home_cards(bool(session.get('is_admin')), session.get('user_permissions'))
+    cards = sort_cards_by_usage(session['user_id'], cards)
+    # 卡片位置映射：数字越小越靠前（模板用 CSS order 控制显示顺序）
+    card_order = {c['key']: i for i, c in enumerate(cards)}
+    return render_template('index.html', developer_info=get_developer_info(),
+                           card_order=card_order)
 
 
 def get_developer_info():
@@ -20588,28 +20610,29 @@ def inventory_check():
 @main_bp.route('/inventory/login')
 @login_required
 def inventory_login():
-    """盘点数据登录页面（页面1：盘点班组维护）"""
-    if 'user_id' not in session:
-        return redirect(url_for('main.login', next=request.url))
-    uid = session.get('user_id')
-    if not check_permission(uid, 'can_inventory_login'):
-        return forbidden_page('您没有盘点数据登录页面的访问权限')
-    can_edit = bool(session.get('is_admin') or check_permission(uid, 'can_inventory_login_edit'))
-    return render_template('inventory_login.html', can_edit=can_edit)
+    """已与数据汇总页面合并：保留旧地址，统一跳转到合并后的页面"""
+    return redirect(url_for('main.inventory_summary'))
 
 
 @main_bp.route('/inventory/summary')
 @login_required
 def inventory_summary():
-    """数据汇总页面（页面3：盘点实况大屏 + 班组盘点柱状图）"""
+    """盘点数据登录 + 数据汇总（合并页：班组维护 + 盘点实况 + 清单）"""
     if 'user_id' not in session:
         return redirect(url_for('main.login', next=request.url))
     uid = session.get('user_id')
-    if not check_permission(uid, 'can_inventory_summary'):
-        return forbidden_page('您没有数据汇总页面的访问权限')
+    is_admin = bool(session.get('is_admin'))
+    can_login = is_admin or check_permission(uid, 'can_inventory_login')
+    can_summary = is_admin or check_permission(uid, 'can_inventory_summary')
+    if not (can_login or can_summary):
+        return forbidden_page('您没有盘点数据登录/数据汇总页面的访问权限')
     return render_template('inventory_summary.html',
-                           is_admin=bool(session.get('is_admin')),
-                           can_delete=check_permission(uid, 'can_inventory_summary_delete'))
+                           is_admin=is_admin,
+                           can_delete=is_admin or check_permission(uid, 'can_inventory_summary_delete'),
+                           # 班组维护沿用原盘点数据登录的编辑权限
+                           can_edit_team=is_admin or check_permission(uid, 'can_inventory_login_edit'),
+                           # 仅无汇总权限时只显示班组维护区
+                           can_view_summary=can_summary)
 
 
 @main_bp.route('/inventory/teams', methods=['GET'])
@@ -20907,6 +20930,1047 @@ def inventory_check_data():
     except Exception as e:
         current_app.logger.error(f"盘点实查记录查询失败: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': '查询失败'}), 500
+
+
+# ==================== 在库管理 / 出入库管理 ====================
+# 在库管理（PC）：资材品番主数据维护 + Excel 导入
+# 出入库管理（移动端）：选班组 → 多品番扫码录入 → 提交 → 自动累计在库数量
+# 数量口径：剩余量 = 初始数量 + 累计入库 - 累计出库（允许负库存）
+
+# Excel 导入表头别名（统一去空格/转小写后匹配，兼容中英文与常见写法）
+_STOCK_IMPORT_ALIASES = {
+    'ksc_pno': ('资材品番', '品番', 'ksc品番', 'ksc_pno', 'kscpno', 'partno', 'part_no'),
+    'corp_pno': ('业体品番', '業体品番', '业体品番号', 'corp_pno', 'corppno'),
+    'location': ('位置', '库位', 'location'),
+    'initial_qty': ('初始数量', '期初数量', 'initial_qty', 'initialqty'),
+    'inbound_qty': ('入库数量', 'inbound_qty', 'inboundqty'),
+    'outbound_qty': ('出库数量', 'outbound_qty', 'outboundqty'),
+    'remark': ('备注', 'remark'),
+}
+
+
+def _stock_operator_name():
+    """当前登录操作人姓名（优先 full_name，其次 username）"""
+    uid = session.get('user_id')
+    if not uid:
+        return None
+    user = db.session.get(UserInfo, int(uid))
+    if user is None:
+        return None
+    return (user.full_name or '').strip() or (user.username or '').strip() or None
+
+
+def _stock_can_view_mobile():
+    """出入库页面/接口访问判断（管理员或具备页面权限）"""
+    uid = session.get('user_id')
+    return bool(session.get('is_admin')) or bool(uid and check_permission(uid, 'can_inventory_stock_mobile'))
+
+
+def _stock_usage_lookup(pno):
+    """核实品番是否在 usage_list 中，返回 (是否存在, 品名)。
+
+    先查同步字典（约 1.4 千行，毫秒级）；未命中再回源 usage_list。
+    回源必须强制走 KscPno 索引：SQLite 会误选 deleted 索引导致百万行全表扫描
+    （实测单次可达 2 分钟以上）。
+    """
+    dict_row = InventoryPnoDict.query.filter(InventoryPnoDict.ksc_pno == pno).first()
+    if dict_row is not None:
+        return True, (dict_row.part_name or '')
+    try:
+        row = db.session.execute(
+            db.text('SELECT Part_Name FROM usage_list INDEXED BY idx_usage_list_kscpno '
+                    'WHERE KscPno = :pno AND deleted = 0 LIMIT 1'),
+            {'pno': pno}).first()
+        return (row is not None), ((row[0] or '') if row else '')
+    except Exception:
+        # 索引不存在等异常时降级为普通查询（兜底，不阻断业务）
+        usage_row = UsageList.query.filter(
+            UsageList.KscPno == pno, UsageList.deleted.is_(False)).first()
+        return (usage_row is not None), ((usage_row.Part_Name or '') if usage_row else '')
+
+
+def _stock_pno_in_usage(pno):
+    """核实资材品番是否存在于 usage_list"""
+    return _stock_usage_lookup(pno)[0]
+
+
+def _stock_comp_kind(pno):
+    """取 usage_list 中的 Comp_Kind（ITEM），强制索引避免全表扫描"""
+    try:
+        row = db.session.execute(
+            db.text('SELECT Comp_Kind FROM usage_list INDEXED BY idx_usage_list_kscpno '
+                    'WHERE KscPno = :pno AND deleted = 0 LIMIT 1'),
+            {'pno': pno}).first()
+        return (row[0] or '') if row else ''
+    except Exception:
+        usage_row = UsageList.query.filter(
+            UsageList.KscPno == pno, UsageList.deleted.is_(False)).first()
+        return (usage_row.Comp_Kind or '') if usage_row else ''
+
+
+@main_bp.route('/inventory/stock')
+@login_required
+def inventory_stock():
+    """在库管理页面（PC，品番主数据维护与 Excel 导入）"""
+    if 'user_id' not in session:
+        return redirect(url_for('main.login', next=request.url))
+    uid = session.get('user_id')
+    if not check_permission(uid, 'can_inventory_stock'):
+        return forbidden_page('您没有在库管理页面的访问权限')
+    return render_template(
+        'inventory_stock.html',
+        can_edit=check_permission(uid, 'can_inventory_stock_edit'),
+        can_delete=check_permission(uid, 'can_inventory_stock_delete'),
+        can_import=check_permission(uid, 'can_inventory_stock_import'),
+    )
+
+
+@main_bp.route('/inventory/stock/mobile')
+@login_required
+def inventory_stock_mobile():
+    """出入库管理页面（移动端，出库/入库多品番扫码录入）"""
+    if 'user_id' not in session:
+        return redirect(url_for('main.login', next=request.url))
+    if not _stock_can_view_mobile():
+        return forbidden_page('您没有出入库管理页面的访问权限')
+    uid = session.get('user_id')
+    return render_template(
+        'inventory_stock_mobile.html',
+        operator_name=_stock_operator_name() or '',
+        can_submit=bool(session.get('is_admin')) or bool(
+            uid and check_permission(uid, 'can_inventory_stock_mobile_submit')),
+    )
+
+
+@main_bp.route('/inventory/stock/data', methods=['GET'])
+@login_required
+def inventory_stock_data():
+    """在库记录查询：关键字（品番/业体品番/品名/位置）+ 汇总"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_inventory_stock'):
+        return jsonify({'success': False, 'error': '没有访问权限'}), 403
+    try:
+        keyword = (request.args.get('keyword') or '').strip()
+        try:
+            limit = min(int(request.args.get('limit', 500)), 2000)
+        except ValueError:
+            limit = 500
+
+        query = StockItem.query
+        if keyword:
+            like = f'%{keyword}%'
+            query = query.filter(db.or_(
+                StockItem.ksc_pno.like(like), StockItem.corp_pno.like(like),
+                StockItem.location.like(like)))
+        items = query.order_by(StockItem.ksc_pno.asc()).limit(limit).all()
+
+        # 汇总按当前筛选结果统计，便于页面顶部概览
+        summary = {
+            'count': len(items),
+            'initial_qty': sum(int(i.initial_qty or 0) for i in items),
+            'inbound_qty': sum(int(i.inbound_qty or 0) for i in items),
+            'outbound_qty': sum(int(i.outbound_qty or 0) for i in items),
+            'balance_qty': sum(i.balance_qty for i in items),
+        }
+        return jsonify({'success': True, 'items': [i.to_dict() for i in items], 'summary': summary})
+    except Exception as e:
+        current_app.logger.error(f"在库记录查询失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '查询失败'}), 500
+
+
+@main_bp.route('/inventory/stock/labels')
+@login_required
+def inventory_stock_labels():
+    """看板打印：按勾选的品番生成标签页，支持一次连续打印多个"""
+    uid = session.get('user_id')
+    if not (session.get('is_admin') or check_permission(uid, 'can_inventory_stock')
+            or check_permission(uid, 'can_inventory_stock_mobile')):
+        return '没有访问权限', 403
+    ids = []
+    for part in (request.args.get('ids') or '').split(','):
+        part = part.strip()
+        if part.isdigit():
+            ids.append(int(part))
+    if not ids:
+        return '请先勾选要打印的品番', 400
+    rows = StockItem.query.filter(StockItem.id.in_(ids)).order_by(StockItem.ksc_pno.asc()).all()
+    labels = [{
+        'ksc_pno': it.ksc_pno or '',
+        'corp_pno': it.corp_pno or '',
+        'location': it.location or '',
+        # ITEM 取 usage_list 的 Comp_Kind
+        'item_kind': _stock_comp_kind(it.ksc_pno or ''),
+    } for it in rows]
+    return render_template('inventory_stock_label.html', labels=labels)
+
+
+@main_bp.route('/inventory/stock/export')
+@login_required
+def inventory_stock_export():
+    """在库清单 Excel 下载：按当前关键字筛选，全字段导出"""
+    uid = session.get('user_id')
+    if not (session.get('is_admin') or check_permission(uid, 'can_inventory_stock')):
+        return '没有访问权限', 403
+    try:
+        keyword = (request.args.get('keyword') or '').strip()
+        query = StockItem.query
+        if keyword:
+            like = f'%{keyword}%'
+            query = query.filter(db.or_(
+                StockItem.ksc_pno.like(like), StockItem.corp_pno.like(like),
+                StockItem.location.like(like)))
+        items = query.order_by(StockItem.ksc_pno.asc()).all()
+
+        from io import BytesIO
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = '在库清单'
+        headers = ['资材品番', '业体品番', '位置', '初始数量', '入库数量',
+                   '出库数量', '剩余量', '备注', '操作人', '操作时间']
+        ws.append(headers)
+
+        # 表头样式与边框
+        header_fill = PatternFill('solid', fgColor='D9E1F2')
+        thin = Side(style='thin', color='BFBFBF')
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = border
+
+        for it in items:
+            ws.append([
+                it.ksc_pno or '', it.corp_pno or '', it.location or '',
+                int(it.initial_qty or 0), int(it.inbound_qty or 0),
+                int(it.outbound_qty or 0), it.balance_qty,
+                it.remark or '', it.updated_by_name or it.created_by_name or '',
+                format_utc8_time(it.updated_at) if it.updated_at else '',
+            ])
+            for cell in ws[ws.max_row]:
+                cell.border = border
+
+        for idx, width in enumerate([18, 18, 14, 10, 10, 10, 10, 24, 12, 20], start=1):
+            ws.column_dimensions[get_column_letter(idx)].width = width
+        ws.freeze_panes = 'A2'
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = f"在库清单_{get_utc8_time().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return send_file(output, as_attachment=True, download_name=filename,
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    except Exception as e:
+        current_app.logger.error(f"在库清单导出失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '导出失败'}), 500
+
+
+@main_bp.route('/inventory/stock/save', methods=['POST'])
+@login_required
+@csrf_exempt_route
+def inventory_stock_save():
+    """新增/编辑在库记录（资材品番唯一）"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_inventory_stock_edit'):
+        return jsonify({'success': False, 'error': '您没有维护在库记录的权限'}), 403
+    try:
+        data = request.get_json(silent=True) or {}
+        item_id = data.get('id')
+        ksc_pno = str(data.get('ksc_pno', '') or '').strip()
+        if not ksc_pno:
+            return jsonify({'success': False, 'error': '资材品番不能为空'}), 400
+        if len(ksc_pno) > 50:
+            return jsonify({'success': False, 'error': '资材品番长度不能超过 50 个字符'}), 400
+
+        qty_fields = {}
+        for field, label in (('initial_qty', '初始数量'), ('inbound_qty', '入库数量'),
+                             ('outbound_qty', '出库数量')):
+            qty = _inv_parse_qty(data.get(field))
+            if qty is None or qty < 0:
+                return jsonify({'success': False, 'error': f'{label}必须为非负整数'}), 400
+            qty_fields[field] = qty
+
+        # 品番唯一性校验（排除自身）
+        dup = StockItem.query.filter(StockItem.ksc_pno == ksc_pno)
+        if item_id:
+            dup = dup.filter(StockItem.id != int(item_id))
+        if dup.first():
+            return jsonify({'success': False, 'error': '该资材品番已存在'}), 400
+
+        values = {
+            'ksc_pno': ksc_pno,
+            'corp_pno': str(data.get('corp_pno', '') or '').strip()[:100] or None,
+            'location': str(data.get('location', '') or '').strip()[:100] or None,
+            'remark': str(data.get('remark', '') or '').strip()[:500] or None,
+        }
+        values.update(qty_fields)
+        operator = _stock_operator_name()
+
+        if item_id:
+            item = db.session.get(StockItem, int(item_id))
+            if item is None:
+                return jsonify({'success': False, 'error': '在库记录不存在'}), 404
+            for key, val in values.items():
+                setattr(item, key, val)
+            item.updated_by_name = operator
+            action_text = '编辑'
+        else:
+            item = StockItem(created_by=session['user_id'],
+                             created_by_name=operator,
+                             updated_by_name=operator, **values)
+            db.session.add(item)
+            action_text = '新增'
+        db.session.commit()
+
+        try:
+            from utils.operation_logger import log_action
+            log_action(OperationType.SAVE_STOCK_ITEM,
+                       f"{action_text}在库记录: {ksc_pno}（剩余 {item.balance_qty}）",
+                       TargetType.STOCK, item.id, ksc_pno)
+        except Exception as _le:
+            current_app.logger.warning(f"记录在库保存日志失败: {_le}")
+        return jsonify({'success': True, 'item': item.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"在库记录保存失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'保存失败: {str(e)}'}), 500
+
+
+@main_bp.route('/inventory/stock/delete', methods=['POST'])
+@login_required
+@csrf_exempt_route
+def inventory_stock_delete():
+    """删除在库记录；已有出入库流水的记录禁止删除，避免历史失真"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_inventory_stock_delete'):
+        return jsonify({'success': False, 'error': '您没有删除在库记录的权限'}), 403
+    try:
+        data = request.get_json(silent=True) or {}
+        item_id = data.get('id')
+        if not item_id:
+            return jsonify({'success': False, 'error': '缺少记录ID'}), 400
+
+        item = db.session.get(StockItem, int(item_id))
+        if item is None:
+            return jsonify({'success': False, 'error': '在库记录不存在'}), 404
+        if StockMovement.query.filter_by(stock_item_id=item.id).first():
+            return jsonify({'success': False, 'error': '该品番已有出入库记录，不能删除'}), 400
+
+        pno = item.ksc_pno
+        db.session.delete(item)
+        db.session.commit()
+        try:
+            from utils.operation_logger import log_action
+            log_action(OperationType.DELETE_STOCK_ITEM, f"删除在库记录: {pno}",
+                       TargetType.STOCK, int(item_id), pno)
+        except Exception as _le:
+            current_app.logger.warning(f"记录在库删除日志失败: {_le}")
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"在库记录删除失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '删除失败'}), 500
+
+
+@main_bp.route('/inventory/stock/template', methods=['GET'])
+@login_required
+def inventory_stock_template():
+    """下载在库数据导入模板（Excel）"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_inventory_stock_import'):
+        return jsonify({'success': False, 'error': '没有模板下载权限'}), 403
+    from io import BytesIO
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = '在库数据'
+    headers = ['资材品番', '业体品番', '位置', '初始数量', '入库数量', '出库数量', '备注']
+    ws.append(headers)
+    ws.append(['KSC0001', 'CORP-001', 'A-01', 100, 20, 5, '示例行，导入前请删除'])
+    for idx, _ in enumerate(headers, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = 16
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    return send_file(stream, as_attachment=True,
+                     download_name='在库数据导入模板.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@main_bp.route('/inventory/stock/import', methods=['POST'])
+@login_required
+@csrf_exempt_route
+def inventory_stock_import():
+    """Excel 导入在库数据：按资材品番 upsert（存在则更新，不存在则新增）"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_inventory_stock_import'):
+        return jsonify({'success': False, 'error': '您没有导入在库数据的权限'}), 403
+
+    file = request.files.get('file')
+    if file is None or not file.filename:
+        return jsonify({'success': False, 'error': '请选择要导入的 Excel 文件'}), 400
+    if not file.filename.lower().endswith(('.xlsx', '.xlsm')):
+        return jsonify({'success': False, 'error': '仅支持 .xlsx / .xlsm 文件'}), 400
+
+    from openpyxl import load_workbook
+
+    try:
+        wb = load_workbook(file, read_only=True, data_only=True)
+        ws = wb.active
+        rows = ws.iter_rows(values_only=True)
+
+        # 表头定位：首行按中英文别名映射列下标
+        header_row = next(rows, None)
+        if not header_row:
+            return jsonify({'success': False, 'error': 'Excel 内容为空'}), 400
+        col_map = {}
+        for idx, cell in enumerate(header_row):
+            key = re.sub(r'\s+', '', str(cell or '')).lower()
+            for field, aliases in _STOCK_IMPORT_ALIASES.items():
+                if key and key in aliases and field not in col_map:
+                    col_map[field] = idx
+        if 'ksc_pno' not in col_map:
+            return jsonify({'success': False, 'error': '未找到「资材品番」列，请使用模板表头'}), 400
+
+        def cell(row, field):
+            idx = col_map.get(field)
+            if idx is None or idx >= len(row):
+                return None
+            return row[idx]
+
+        existing = {i.ksc_pno: i for i in StockItem.query.all()}
+        operator = _stock_operator_name()
+        added = updated = skipped = 0
+        errors = []
+        for line_no, row in enumerate(rows, start=2):
+            if not row or all(v is None or str(v).strip() == '' for v in row):
+                continue
+            pno = str(cell(row, 'ksc_pno') or '').strip()
+            if not pno:
+                skipped += 1
+                continue
+            if len(pno) > 50:
+                errors.append(f'第{line_no}行：资材品番超过 50 字符')
+                continue
+
+            qty_values = {}
+            invalid = False
+            for field, label in (('initial_qty', '初始数量'), ('inbound_qty', '入库数量'),
+                                 ('outbound_qty', '出库数量')):
+                raw = cell(row, field)
+                if raw is None or str(raw).strip() == '':
+                    qty_values[field] = None  # 空值：新增按 0，更新保留原值
+                    continue
+                qty = _inv_parse_qty(raw)
+                if qty is None or qty < 0:
+                    errors.append(f'第{line_no}行：{label}必须为非负整数')
+                    invalid = True
+                    break
+                qty_values[field] = qty
+            if invalid:
+                continue
+
+            item = existing.get(pno)
+            if item is None:
+                item = StockItem(ksc_pno=pno, created_by=session['user_id'],
+                                 created_by_name=operator)
+                db.session.add(item)
+                existing[pno] = item
+                added += 1
+            else:
+                updated += 1
+
+            # 文本字段：有值才覆盖，空值保留原值，避免误清空
+            for field, max_len in (('corp_pno', 100), ('location', 100), ('remark', 500)):
+                val = str(cell(row, field) or '').strip()
+                if val:
+                    setattr(item, field, val[:max_len])
+            for field, qty in qty_values.items():
+                if qty is not None:
+                    setattr(item, field, qty)
+
+        db.session.commit()
+        try:
+            from utils.operation_logger import log_action
+            log_action(OperationType.IMPORT_STOCK_ITEM,
+                       f"导入在库数据：新增 {added}、更新 {updated}、跳过 {skipped}",
+                       TargetType.STOCK, None, f'{added + updated}条')
+        except Exception as _le:
+            current_app.logger.warning(f"记录在库导入日志失败: {_le}")
+        return jsonify({'success': True, 'added': added, 'updated': updated,
+                        'skipped': skipped, 'errors': errors[:20],
+                        'message': f'导入完成：新增 {added} 条，更新 {updated} 条，跳过 {skipped} 条'})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"在库数据导入失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'导入失败: {str(e)}'}), 500
+
+
+@main_bp.route('/inventory/stock/item', methods=['GET'])
+@login_required
+def inventory_stock_item_lookup():
+    """按品番精确查询在库信息（移动端扫码后带出品名/位置/剩余量）"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    uid = session.get('user_id')
+    if not (session.get('is_admin') or check_permission(uid, 'can_inventory_stock_mobile')
+            or check_permission(uid, 'can_inventory_stock')):
+        return jsonify({'success': False, 'error': '没有访问权限'}), 403
+    try:
+        pno = (request.args.get('ksc_pno') or '').strip()
+        if not pno:
+            return jsonify({'success': False, 'error': '缺少品番'}), 400
+        item = StockItem.query.filter(StockItem.ksc_pno == pno).first()
+        if item is not None:
+            return jsonify({'success': True, 'found': True, 'item': item.to_dict()})
+        # 未建档：核实 usage_list（字典优先，未命中时强制索引回源）
+        in_usage, usage_part_name = _stock_usage_lookup(pno)
+        return jsonify({'success': True, 'found': False, 'in_usage': in_usage,
+                        'part_name': usage_part_name})
+    except Exception as e:
+        current_app.logger.error(f"在库品番查询失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '查询失败'}), 500
+
+
+@main_bp.route('/inventory/stock/pno-search', methods=['GET'])
+@login_required
+def inventory_stock_pno_search():
+    """品番下拉模糊搜索：在库记录优先，其次品番字典（不扫描 usage_list 大表）"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    uid = session.get('user_id')
+    if not (session.get('is_admin') or check_permission(uid, 'can_inventory_stock_mobile')
+            or check_permission(uid, 'can_inventory_stock')):
+        return jsonify({'success': False, 'error': '没有访问权限'}), 403
+    try:
+        kw = (request.args.get('keyword') or '').strip()
+        limit = 20
+        items = []
+        seen = set()
+
+        # 在库表体积小，可安全模糊匹配；空关键字时返回最近更新的品番
+        stock_query = StockItem.query
+        if kw:
+            like = f'%{kw}%'
+            stock_query = stock_query.filter(db.or_(
+                StockItem.ksc_pno.like(like), StockItem.corp_pno.like(like)))
+            stock_rows = stock_query.order_by(StockItem.ksc_pno.asc()).limit(limit).all()
+        else:
+            stock_rows = stock_query.order_by(StockItem.updated_at.desc()).limit(10).all()
+        for it in stock_rows:
+            seen.add(it.ksc_pno)
+            items.append({
+                'ksc_pno': it.ksc_pno or '',
+                'part_name': it.part_name or '',
+                'location': it.location or '',
+                'balance_qty': it.balance_qty,
+                'in_stock': True,
+            })
+
+        # 字典约 1.4 千行，模糊匹配毫秒级；用于补足新规品番
+        if kw and len(items) < limit:
+            like = f'%{kw}%'
+            dict_rows = InventoryPnoDict.query.filter(
+                InventoryPnoDict.ksc_pno.like(like)
+            ).order_by(InventoryPnoDict.ksc_pno.asc()).limit(limit * 2).all()
+            for r in dict_rows:
+                if r.ksc_pno in seen:
+                    continue
+                seen.add(r.ksc_pno)
+                items.append({
+                    'ksc_pno': r.ksc_pno,
+                    'part_name': r.part_name or '',
+                    'location': '',
+                    'balance_qty': None,
+                    'in_stock': False,
+                })
+                if len(items) >= limit:
+                    break
+
+        # 前缀命中优先，其次按品番排序
+        if kw:
+            items.sort(key=lambda x: (0 if x['ksc_pno'].startswith(kw) else 1, x['ksc_pno']))
+        return jsonify({'success': True, 'items': items})
+    except Exception as e:
+        current_app.logger.error(f"品番下拉搜索失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '搜索失败'}), 500
+
+
+@main_bp.route('/inventory/stock/movement', methods=['POST'])
+@login_required
+@csrf_exempt_route
+def inventory_stock_movement():
+    """提交出入库：多品番一次提交，同一批次共享 batch_no，并自动累计在库数量"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not (session.get('is_admin') or check_permission(
+            session.get('user_id'), 'can_inventory_stock_mobile_submit')):
+        return jsonify({'success': False, 'error': '您没有提交出入库的权限'}), 403
+    try:
+        data = request.get_json(silent=True) or {}
+        movement_type = str(data.get('movement_type', '') or '').strip()
+        if movement_type not in (MOVEMENT_IN, MOVEMENT_OUT):
+            return jsonify({'success': False, 'error': '请选择出库或入库'}), 400
+
+        team_id = data.get('team_id')
+        if not team_id:
+            return jsonify({'success': False, 'error': '请选择班组'}), 400
+        team = db.session.get(InventoryTeam, int(team_id))
+        if team is None:
+            return jsonify({'success': False, 'error': '班组不存在'}), 404
+
+        # 日期：默认当天（UTC+8）
+        date_str = str(data.get('movement_date', '') or '').strip()
+        try:
+            movement_date = (datetime.strptime(date_str, '%Y-%m-%d').date()
+                             if date_str else get_utc8_time().date())
+        except ValueError:
+            return jsonify({'success': False, 'error': '日期格式应为 YYYY-MM-DD'}), 400
+
+        # 合并重复品番，避免同一品番在一次提交内被多次累计
+        merged = {}
+        for idx, row in enumerate(data.get('rows') or [], start=1):
+            pno = str(row.get('ksc_pno', '') or '').strip()
+            qty = _inv_parse_qty(row.get('qty'))
+            if not pno:
+                return jsonify({'success': False, 'error': f'第{idx}行品番不能为空'}), 400
+            if len(pno) > 50:
+                return jsonify({'success': False, 'error': f'第{idx}行品番长度不能超过 50 个字符'}), 400
+            if qty is None or qty <= 0:
+                return jsonify({'success': False, 'error': f'第{idx}行数量必须为正整数'}), 400
+            merged[pno] = merged.get(pno, 0) + qty
+        if not merged:
+            return jsonify({'success': False, 'error': '请至少录入一条品番'}), 400
+
+        # 新规品番核实：未建档且 usage_list 中也不存在时，需前端二次确认后再提交
+        if not bool(data.get('confirmed_new')):
+            unverified = []
+            for pno in merged:
+                if StockItem.query.filter(StockItem.ksc_pno == pno).first() is not None:
+                    continue
+                if _stock_pno_in_usage(pno):
+                    continue
+                unverified.append(pno)
+            if unverified:
+                return jsonify({'success': False, 'need_confirm': True,
+                                'missing': unverified,
+                                'error': '部分品番在 usage_list 中未找到，请二次核实'})
+
+        remark = str(data.get('remark', '') or '').strip()[:500] or None
+        batch_no = get_utc8_time().strftime('%Y%m%d%H%M%S%f')[:20]
+        operator = _stock_operator_name()
+        total_qty = 0
+
+        for pno, qty in merged.items():
+            item = StockItem.query.filter(StockItem.ksc_pno == pno).first()
+            if item is None:
+                # 自动建档：初始数量 0，品名尽量从品番字典带出
+                dict_row = InventoryPnoDict.query.filter(
+                    InventoryPnoDict.ksc_pno == pno).first()
+                item = StockItem(ksc_pno=pno,
+                                 part_name=dict_row.part_name if dict_row else None,
+                                 initial_qty=0, inbound_qty=0, outbound_qty=0,
+                                 created_by=session['user_id'],
+                                 created_by_name=operator)
+                db.session.add(item)
+                db.session.flush()  # 取得主键，供流水关联
+
+            if movement_type == MOVEMENT_IN:
+                item.inbound_qty = int(item.inbound_qty or 0) + qty
+            else:
+                item.outbound_qty = int(item.outbound_qty or 0) + qty
+            total_qty += qty
+
+            db.session.add(StockMovement(
+                movement_date=movement_date, movement_type=movement_type,
+                team_id=team.id, team_name=team.name,
+                stock_item_id=item.id, ksc_pno=pno,
+                part_name=item.part_name, location=item.location,
+                qty=qty, balance_after=item.balance_qty, remark=remark,
+                batch_no=batch_no, created_by=session['user_id'],
+                created_by_name=operator))
+
+        db.session.commit()
+        type_label = MOVEMENT_TYPE_LABELS[movement_type]
+        try:
+            from utils.operation_logger import log_action
+            log_action(OperationType.SUBMIT_STOCK_MOVEMENT,
+                       f"提交{type_label}：{len(merged)} 个品番，合计 {total_qty}（班组 {team.name}）",
+                       TargetType.STOCK, None, batch_no)
+        except Exception as _le:
+            current_app.logger.warning(f"记录出入库提交日志失败: {_le}")
+        return jsonify({'success': True, 'batch_no': batch_no, 'count': len(merged),
+                        'total_qty': total_qty, 'type_label': type_label,
+                        'message': f'{type_label}提交成功：{len(merged)} 个品番，合计 {total_qty}'})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"出入库提交失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'提交失败: {str(e)}'}), 500
+
+
+def _stock_movement_filtered_query(args):
+    """构造出入库查询：支持时间段区间（start_date/end_date）、单日、类型、关键字"""
+    date_str = (args.get('movement_date') or '').strip()
+    start_str = (args.get('start_date') or '').strip()
+    end_str = (args.get('end_date') or '').strip()
+    type_str = (args.get('movement_type') or '').strip()
+    keyword = (args.get('keyword') or '').strip()
+
+    query = StockMovement.query
+    if start_str or end_str:
+        # 时间段区间筛选（含首尾两天）
+        if start_str:
+            try:
+                query = query.filter(StockMovement.movement_date
+                                     >= datetime.strptime(start_str, '%Y-%m-%d').date())
+            except ValueError:
+                raise ValueError('开始日期格式应为 YYYY-MM-DD')
+        if end_str:
+            try:
+                query = query.filter(StockMovement.movement_date
+                                     <= datetime.strptime(end_str, '%Y-%m-%d').date())
+            except ValueError:
+                raise ValueError('结束日期格式应为 YYYY-MM-DD')
+    elif date_str and date_str != 'all':
+        try:
+            query = query.filter(StockMovement.movement_date
+                                 == datetime.strptime(date_str, '%Y-%m-%d').date())
+        except ValueError:
+            raise ValueError('日期格式应为 YYYY-MM-DD')
+    if type_str in (MOVEMENT_IN, MOVEMENT_OUT):
+        query = query.filter(StockMovement.movement_type == type_str)
+    if keyword:
+        like = f'%{keyword}%'
+        query = query.filter(db.or_(StockMovement.ksc_pno.like(like),
+                                    StockMovement.part_name.like(like),
+                                    StockMovement.team_name.like(like),
+                                    StockMovement.remark.like(like)))
+    return query
+
+
+@main_bp.route('/inventory/stock/movements', methods=['GET'])
+@login_required
+def inventory_stock_movements():
+    """出入库清单查询：按日期/时间段、类型、关键字筛选"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not _stock_can_view_mobile():
+        return jsonify({'success': False, 'error': '没有访问权限'}), 403
+    try:
+        query = _stock_movement_filtered_query(request.args)
+        items = query.order_by(StockMovement.id.desc()).limit(500).all()
+        summary = {
+            'count': len(items),
+            'in_qty': sum(int(i.qty or 0) for i in items if i.movement_type == MOVEMENT_IN),
+            'out_qty': sum(int(i.qty or 0) for i in items if i.movement_type == MOVEMENT_OUT),
+        }
+        return jsonify({'success': True, 'items': [i.to_dict() for i in items], 'summary': summary})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        current_app.logger.error(f"出入库清单查询失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '查询失败'}), 500
+
+
+@main_bp.route('/inventory/stock/movements/export')
+@login_required
+def inventory_stock_movements_export():
+    """出入库清单 Excel 下载：筛选条件与页面一致"""
+    if 'user_id' not in session:
+        return '未登录', 401
+    if not _stock_can_view_mobile():
+        return '没有访问权限', 403
+    try:
+        query = _stock_movement_filtered_query(request.args)
+        rows = query.order_by(StockMovement.id.desc()).limit(20000).all()
+
+        from io import BytesIO
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = '出入库清单'
+        headers = ['日期', '类型', '班组', '资材品番', '品名', '数量',
+                   '操作后剩余', '备注', '操作人', '时间']
+        ws.append(headers)
+
+        header_fill = PatternFill('solid', fgColor='D9E1F2')
+        thin = Side(style='thin', color='BFBFBF')
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = border
+
+        for it in rows:
+            ws.append([
+                it.movement_date.strftime('%Y-%m-%d') if it.movement_date else '',
+                '入库' if it.movement_type == MOVEMENT_IN else '出库',
+                it.team_name or '', it.ksc_pno or '', it.part_name or '',
+                int(it.qty or 0), it.balance_after,
+                it.remark or '', it.created_by_name or '',
+                format_utc8_time(it.created_at) if it.created_at else '',
+            ])
+            for cell in ws[ws.max_row]:
+                cell.border = border
+
+        for idx, width in enumerate([12, 8, 14, 18, 14, 8, 10, 24, 12, 20], start=1):
+            ws.column_dimensions[get_column_letter(idx)].width = width
+        ws.freeze_panes = 'A2'
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = f"出入库清单_{get_utc8_time().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return send_file(output, as_attachment=True, download_name=filename,
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    except ValueError as e:
+        return str(e), 400
+    except Exception as e:
+        current_app.logger.error(f"出入库清单导出失败: {str(e)}", exc_info=True)
+        return '导出失败', 500
+
+
+@main_bp.route('/inventory/stock/movements/import-template')
+@login_required
+def inventory_stock_movements_import_template():
+    """批量出入库导入模板下载"""
+    if 'user_id' not in session:
+        return '未登录', 401
+    if not (session.get('is_admin') or check_permission(
+            session.get('user_id'), 'can_inventory_stock_mobile_submit')):
+        return '没有访问权限', 403
+    try:
+        from io import BytesIO
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = '出入库明细'
+        headers = ['类型', '班组', '日期', '资材品番', '数量', '备注']
+        ws.append(headers)
+
+        header_fill = PatternFill('solid', fgColor='D9E1F2')
+        thin = Side(style='thin', color='BFBFBF')
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = border
+        for idx, width in enumerate([10, 16, 14, 22, 10, 28], start=1):
+            ws.column_dimensions[get_column_letter(idx)].width = width
+        ws.freeze_panes = 'A2'
+
+        # 填写说明单独一页，避免示例行被误导入
+        ws2 = wb.create_sheet('填写说明')
+        notes = [
+            ['字段', '说明'],
+            ['类型', '必填：入库 或 出库'],
+            ['班组', '必填：需与「盘点班组维护」中的班组名称一致'],
+            ['日期', '选填：格式 YYYY-MM-DD；留空按当天'],
+            ['资材品番', '必填：品番存在于在库或 usage_list；否则该行跳过并提示二次核实'],
+            ['数量', '必填：正整数'],
+            ['备注', '选填：最长 500 字'],
+            ['示例', '入库 / 组立1 / 2026-11-24 / IKU02-12181 / 10 / 补料'],
+        ]
+        for r in notes:
+            ws2.append(r)
+        ws2.column_dimensions['A'].width = 14
+        ws2.column_dimensions['B'].width = 70
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return send_file(
+            output, as_attachment=True,
+            download_name='出入库批量导入模板.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    except Exception as e:
+        current_app.logger.error(f"出入库导入模板生成失败: {str(e)}", exc_info=True)
+        return '模板生成失败', 500
+
+
+@main_bp.route('/inventory/stock/movements/import', methods=['POST'])
+@login_required
+@csrf_exempt_route
+def inventory_stock_movements_import():
+    """批量出入库 Excel 导入：逐行校验，合法行一次性入账，异常行跳过并返回明细"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not (session.get('is_admin') or check_permission(
+            session.get('user_id'), 'can_inventory_stock_mobile_submit')):
+        return jsonify({'success': False, 'error': '您没有提交出入库的权限'}), 403
+    file = request.files.get('file')
+    if file is None or not file.filename:
+        return jsonify({'success': False, 'error': '请选择 Excel 文件'}), 400
+    try:
+        from datetime import date as _date
+
+        from openpyxl import load_workbook
+
+        wb = load_workbook(file, data_only=True, read_only=True)
+        ws = wb.active
+        rows = ws.iter_rows(values_only=True)
+        header = next(rows, None)
+        header_map = {}
+        for i, h in enumerate(header or []):
+            name = str(h or '').strip()
+            if name:
+                header_map[name] = i
+        missing = [c for c in ['类型', '班组', '资材品番', '数量'] if c not in header_map]
+        if missing:
+            return jsonify({'success': False,
+                            'error': f"表头缺少：{', '.join(missing)}，请使用导入模板"}), 400
+
+        teams = {t.name.strip(): t for t in InventoryTeam.query.all()}
+        type_map = {'入库': MOVEMENT_IN, '入': MOVEMENT_IN, 'in': MOVEMENT_IN,
+                    '出库': MOVEMENT_OUT, '出': MOVEMENT_OUT, 'out': MOVEMENT_OUT}
+
+        valid_rows = []
+        errors = []
+        max_rows = 2000
+
+        def cell(row, name):
+            idx = header_map.get(name)
+            if idx is None or idx >= len(row) or row[idx] is None:
+                return ''
+            return str(row[idx]).strip()
+
+        for line_no, row in enumerate(rows, start=2):
+            if line_no - 1 > max_rows:
+                errors.append(f'超过单次导入上限 {max_rows} 行，后续行已忽略')
+                break
+            if not row or all(str(v or '').strip() == '' for v in row):
+                continue   # 跳过空行
+
+            type_key = cell(row, '类型').lower()
+            movement_type = type_map.get(type_key) or type_map.get(cell(row, '类型'))
+            if movement_type not in (MOVEMENT_IN, MOVEMENT_OUT):
+                errors.append(f'第{line_no}行：类型须为「入库」或「出库」')
+                continue
+
+            team = teams.get(cell(row, '班组'))
+            if team is None:
+                errors.append(f'第{line_no}行：班组「{cell(row, "班组")}」不存在')
+                continue
+
+            # 日期：支持 Excel 日期或文本，留空按当天
+            movement_date = get_utc8_time().date()
+            date_raw = row[header_map['日期']] if '日期' in header_map and header_map['日期'] < len(row) else None
+            if isinstance(date_raw, datetime):
+                movement_date = date_raw.date()
+            elif isinstance(date_raw, _date):
+                movement_date = date_raw
+            elif str(date_raw or '').strip():
+                date_txt = str(date_raw).strip().replace('/', '-').replace('.', '-')
+                try:
+                    movement_date = datetime.strptime(date_txt, '%Y-%m-%d').date()
+                except ValueError:
+                    errors.append(f'第{line_no}行：日期格式应为 YYYY-MM-DD')
+                    continue
+
+            pno = cell(row, '资材品番')
+            if not pno:
+                errors.append(f'第{line_no}行：资材品番不能为空')
+                continue
+            if len(pno) > 50:
+                errors.append(f'第{line_no}行：品番长度不能超过 50 个字符')
+                continue
+
+            qty = _inv_parse_qty(cell(row, '数量'))
+            if qty is None or qty <= 0:
+                errors.append(f'第{line_no}行：数量必须为正整数')
+                continue
+
+            # 新规品番核实：未建档且 usage_list 中也不存在则跳过，避免误建档
+            if StockItem.query.filter(StockItem.ksc_pno == pno).first() is None \
+                    and not _stock_pno_in_usage(pno):
+                errors.append(f'第{line_no}行：{pno} 在 usage_list 中未找到，请二次核实')
+                continue
+
+            valid_rows.append((movement_type, team, movement_date, pno, qty,
+                               cell(row, '备注')[:500] or None))
+
+        if not valid_rows:
+            return jsonify({'success': False, 'error': '没有可导入的有效数据',
+                            'errors': errors[:50]}), 400
+
+        batch_no = get_utc8_time().strftime('%Y%m%d%H%M%S%f')[:20]
+        operator = _stock_operator_name()
+        in_count = out_count = 0
+        in_qty = out_qty = 0
+
+        for movement_type, team, movement_date, pno, qty, remark in valid_rows:
+            item = StockItem.query.filter(StockItem.ksc_pno == pno).first()
+            if item is None:
+                # 自动建档：初始数量 0，品名尽量从品番字典带出
+                dict_row = InventoryPnoDict.query.filter(
+                    InventoryPnoDict.ksc_pno == pno).first()
+                item = StockItem(ksc_pno=pno,
+                                 part_name=dict_row.part_name if dict_row else None,
+                                 initial_qty=0, inbound_qty=0, outbound_qty=0,
+                                 created_by=session['user_id'],
+                                 created_by_name=operator)
+                db.session.add(item)
+                db.session.flush()
+
+            if movement_type == MOVEMENT_IN:
+                item.inbound_qty = int(item.inbound_qty or 0) + qty
+                in_count += 1
+                in_qty += qty
+            else:
+                item.outbound_qty = int(item.outbound_qty or 0) + qty
+                out_count += 1
+                out_qty += qty
+
+            db.session.add(StockMovement(
+                movement_date=movement_date, movement_type=movement_type,
+                team_id=team.id, team_name=team.name,
+                stock_item_id=item.id, ksc_pno=pno,
+                part_name=item.part_name, location=item.location,
+                qty=qty, balance_after=item.balance_qty, remark=remark,
+                batch_no=batch_no, created_by=session['user_id'],
+                created_by_name=operator))
+
+        db.session.commit()
+        try:
+            from utils.operation_logger import log_action
+            log_action(OperationType.SUBMIT_STOCK_MOVEMENT,
+                       f"Excel批量导入：成功 {len(valid_rows)} 行（入库 {in_count} 条/{in_qty}，"
+                       f"出库 {out_count} 条/{out_qty}），跳过 {len(errors)} 行",
+                       TargetType.STOCK, None, batch_no)
+        except Exception as _le:
+            current_app.logger.warning(f"记录批量导入日志失败: {_le}")
+
+        return jsonify({
+            'success': True, 'batch_no': batch_no,
+            'count': len(valid_rows), 'in_count': in_count, 'out_count': out_count,
+            'in_qty': in_qty, 'out_qty': out_qty,
+            'skipped': len(errors), 'errors': errors[:50],
+            'message': f'导入完成：成功 {len(valid_rows)} 行；入库 {in_qty}，出库 {out_qty}'
+                       + (f'；跳过 {len(errors)} 行' if errors else '')
+        })
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"出入库批量导入失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'导入失败: {str(e)}'}), 500
 
 
 # ==================== 不良品登录（盘点查询 - 移动端） ====================

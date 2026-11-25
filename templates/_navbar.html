@@ -11,21 +11,29 @@
         {# 菜单数据由 utils/sidebar_menu.py 注入（context_processor: sidebar_menu）：
            已按当前用户权限过滤，分组标题与条目归属可由管理员在“菜单管理”页调整。 #}
         {% for group in (sidebar_menu or []) %}
-        <div class="app-nav-group">{{ group.title }}</div>
-        {% for item in group.entries %}
-            {% if item.type == 'sub' %}
-            <div class="app-nav-sub">
-                <a class="app-nav-link app-nav-toggle" href="#" title="{{ item.title }}"><i class="fa {{ item.icon }}"></i><span>{{ item.title }}</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
-                <div class="app-nav-submenu">
-                    {% for child in item.children %}
-                    <a class="app-nav-link app-nav-sub-link" href="{{ child.url }}" data-tab-title="{{ child.tab }}" title="{{ child.title }}"><span>{{ child.title }}</span></a>
-                    {% endfor %}
+        <div class="app-nav-section" data-group="{{ group.title }}">
+            <button type="button" class="app-nav-group app-nav-group-toggle" aria-expanded="false" title="展开/收起分组">
+                <span>{{ group.title }}</span><i class="fa fa-chevron-down app-nav-group-arrow"></i>
+            </button>
+            <div class="app-nav-section-body">
+            {% for item in group.entries %}
+                {% if item.type == 'sub' %}
+                <div class="app-nav-sub">
+                    <a class="app-nav-link app-nav-toggle" href="#" title="{{ item.title }}"><i class="fa {{ item.icon }}"></i><span>{{ item.title }}</span><i class="fa fa-chevron-down app-nav-arrow"></i></a>
+                    <div class="app-nav-submenu">
+                        {% for child in item.children %}
+                        <a class="app-nav-link app-nav-sub-link" href="{{ child.url }}" data-tab-title="{{ child.tab }}" title="{{ child.title }}"><span>{{ child.title }}</span></a>
+                        {% endfor %}
+                    </div>
                 </div>
+                {% elif item.type == 'flat' %}
+                <a class="app-nav-link app-nav-sub-link" href="{{ item.url }}" data-tab-title="{{ item.tab }}" title="{{ item.title }}"><i class="fa {{ item.icon }} app-nav-flat-icon"></i><span>{{ item.title }}</span></a>
+                {% else %}
+                <a class="app-nav-link" href="{{ item.url }}" data-tab-title="{{ item.tab }}" title="{{ item.title }}"><i class="fa {{ item.icon }}"></i><span>{{ item.title }}</span></a>
+                {% endif %}
+            {% endfor %}
             </div>
-            {% else %}
-            <a class="app-nav-link" href="{{ item.url }}" data-tab-title="{{ item.tab }}" title="{{ item.title }}"><i class="fa {{ item.icon }}"></i><span>{{ item.title }}</span></a>
-            {% endif %}
-        {% endfor %}
+        </div>
         {% endfor %}
     </nav>
 
@@ -49,9 +57,9 @@
 </button>
 <div class="app-sidebar-backdrop" id="appSidebarBackdrop"></div>
 
-<link rel="stylesheet" href="{{ url_for('static', filename='css/sidebar.css') }}?v=20261107b">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/sidebar.css') }}?v=20261125b">
 <script src="{{ url_for('static', filename='js/sidebar-init.js') }}?v=20261107b"></script>
-<script defer src="{{ url_for('static', filename='js/sidebar.js') }}?v=20261107b"></script>
+<script defer src="{{ url_for('static', filename='js/sidebar.js') }}?v=20261125a"></script>
 {# PDA 扫码桥：APK 壳收到扫描器广播后调用 window.__bomPdaScan，全站页面通用 #}
 <script defer src="{{ url_for('static', filename='js/pda_bridge.js') }}?v=20261120a"></script>
 

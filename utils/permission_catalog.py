@@ -38,6 +38,8 @@ MODULES = [
     ('wire_return_confirm', '补线打端子 - 补线返回确认', 215),
     ('material_inbound_daily', '资材每日入库', 220),
     ('material_inbound', '资材入库', 230),
+    ('inventory_stock', '在库管理', 235),
+    ('inventory_stock_mobile', '出入库管理', 236),
     ('inventory_login', '盘点数据登录', 240),
     ('inventory_check', '盘点实查', 250),
     ('inventory_summary', '盘点数据汇总', 260),
@@ -212,6 +214,16 @@ PERMISSION_CATALOG = [
     _p('can_material_inbound_scan', '扫码入库', 'material_inbound', 'action', 20),
     _p('can_material_inbound_submit', '提交入库', 'material_inbound', 'action', 30),
     _p('can_material_inbound_revoke', '撤销入库', 'material_inbound', 'action', 40),
+
+    # ---------- 在库管理 ----------
+    _p('can_inventory_stock', '在库管理页面访问', 'inventory_stock', 'page', 10),
+    _p('can_inventory_stock_edit', '新增/编辑在库记录', 'inventory_stock', 'action', 20),
+    _p('can_inventory_stock_delete', '删除在库记录', 'inventory_stock', 'action', 30),
+    _p('can_inventory_stock_import', '导入在库数据', 'inventory_stock', 'action', 40),
+
+    # ---------- 出入库管理 ----------
+    _p('can_inventory_stock_mobile', '出入库管理页面访问', 'inventory_stock_mobile', 'page', 10),
+    _p('can_inventory_stock_mobile_submit', '提交出入库', 'inventory_stock_mobile', 'action', 20),
 
     # ---------- 盘点数据登录 ----------
     _p('can_inventory_login', '盘点数据登录页面访问', 'inventory_login', 'page', 10),

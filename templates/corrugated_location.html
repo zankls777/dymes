@@ -89,6 +89,27 @@
         {% endif %}
     </div>
 
+    <!-- 单行编辑弹窗：一次性编辑该行全部字段 -->
+    <div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fa fa-edit text-warning me-1"></i>编辑该行数据</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="editForm" class="row g-2"></div>
+                    <div id="editError" class="text-danger small mt-2"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="editSaveBtn">
+                        <i class="fa fa-save me-1"></i>保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
     <script>
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -135,6 +156,73 @@
         document.getElementById('saveBar').style.display = 'flex';
     }
 
+    // ---------------- 单行编辑弹窗 ----------------
+    let editingId = null;
+    const editModalEl = document.getElementById('editModal');
+    const editModal = new bootstrap.Modal(editModalEl);
+
+    // 打开弹窗：按该行的列动态生成输入框，一次性编辑全部字段
+    function openEditModal(row) {
+        editingId = row.id;
+        const form = document.getElementById('editForm');
+        document.getElementById('editError').textContent = '';
+        form.innerHTML = '';
+        const data = row.data || {};
+        Object.keys(data).forEach(col => {
+            const wrap = document.createElement('div');
+            wrap.className = 'col-12 col-md-6';
+            const label = document.createElement('label');
+            label.className = 'form-label small mb-1';
+            label.textContent = col;            // 用 textContent 防止字段名注入
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'form-control form-control-sm edit-field';
+            input.dataset.col = col;
+            input.value = data[col] ?? '';
+            wrap.appendChild(label);
+            wrap.appendChild(input);
+            form.appendChild(wrap);
+        });
+        editModal.show();
+    }
+
+    // 保存弹窗中的全部字段
+    function saveEdit() {
+        if (editingId === null) return;
+        const errBox = document.getElementById('editError');
+        const data = {};
+        document.querySelectorAll('#editForm .edit-field').forEach(inp => {
+            data[inp.dataset.col] = inp.value;
+        });
+        if (!Object.keys(data).length) { errBox.textContent = '没有可保存的字段'; return; }
+        const btn = document.getElementById('editSaveBtn');
+        btn.disabled = true;
+        fetch('/corrugated_location/edit', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ id: editingId, data })
+        }).then(r => r.json()).then(res => {
+            btn.disabled = false;
+            if (res.success) { editModal.hide(); alert(res.message); appRefreshPage(); }
+            else errBox.textContent = res.error || '编辑失败';
+        }).catch(e => {
+            btn.disabled = false;
+            errBox.textContent = '请求失败：' + e.message;
+        });
+    }
+
+    document.getElementById('editSaveBtn').onclick = saveEdit;
+    // 弹窗内按回车直接保存
+    editModalEl.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && e.target.classList.contains('edit-field')) {
+            e.preventDefault();
+            saveEdit();
+        }
+    });
+    editModalEl.addEventListener('shown.bs.modal', () => {
+        const first = editModalEl.querySelector('.edit-field');
+        if (first) first.focus();
+    });
+
     // 未保存时行内点击只提示（未入库行不可编辑）
     function bindEditEvents() {
         document.querySelectorAll('.row-edit').forEach(btn => btn.onclick = () => {
@@ -144,18 +232,7 @@
             // 否则找不到行会提交空数据，把整行内容清空。
             const row = INIT.items.find(x => String(x.id) === String(id));
             if (!row) { alert('未找到该行数据，请刷新页面后重试'); return; }
-            const cols = Object.keys(row.data || {});
-            if (!cols.length) { alert('该行没有可编辑的字段，请刷新页面后重试'); return; }
-            const kv = cols.map(c => prompt('修改「' + c + '」：', row.data[c] ?? ''));
-            if (kv.includes(null)) return;
-            const data = Object.fromEntries(cols.map((c, i) => [c, kv[i] ?? '']));
-            fetch('/corrugated_location/edit', {
-                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-                body: JSON.stringify({ id, data })
-            }).then(r => r.json()).then(res => {
-                if (res.success) { alert(res.message); appRefreshPage(); }
-                else alert(res.error || '编辑失败');
-            }).catch(e => alert('请求失败：' + e.message));
+            openEditModal(row);
         });
         document.querySelectorAll('.row-del').forEach(btn => btn.onclick = () => {
             const id = btn.dataset.id;

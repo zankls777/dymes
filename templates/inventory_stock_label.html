@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>看板打印</title>
+<style>
+    /* 标签纸尺寸：70mm × 45mm，一张一页，便于连续打印 */
+    @page { size: 70mm 45mm; margin: 0; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body { font-family: "Microsoft YaHei", "SimSun", Arial, sans-serif; background: #e9ecef; }
+
+    .toolbar { position: fixed; top: 10px; right: 12px; z-index: 10; }
+    .toolbar button {
+        font-size: 14px; padding: 6px 14px; margin-left: 6px; cursor: pointer;
+        border: 1px solid #0d6efd; background: #0d6efd; color: #fff; border-radius: 4px;
+    }
+    .toolbar button.plain { background: #fff; color: #333; border-color: #bbb; }
+
+    .label {
+        width: 70mm; height: 45mm; padding: 1.2mm; background: #fff;
+        border: 1px solid #000; margin: 10px auto; overflow: hidden;
+        display: flex; flex-direction: column;
+        page-break-after: always; break-after: page;
+    }
+    .label:last-child { page-break-after: auto; break-after: auto; }
+
+    .company {
+        text-align: center; font-size: 8.5pt; font-weight: 700; letter-spacing: 0.5px;
+        border-bottom: 1px solid #000; padding: 0.8mm 0;
+    }
+    .lb-table { width: 100%; border-collapse: collapse; table-layout: fixed; flex: 1 1 auto; }
+    .lb-table th, .lb-table td {
+        border-bottom: 1px solid #000; font-size: 8pt; padding: 0.4mm 0.6mm;
+        overflow: hidden;
+    }
+    .lb-table tr:last-child th, .lb-table tr:last-child td { border-bottom: none; }
+    .lb-table th { width: 16mm; text-align: left; font-weight: 700; white-space: nowrap; }
+    .lb-table td.center { text-align: center; }
+    .lb-table td.pno {
+        text-align: center; font-weight: 700; color: #e60000;
+        font-size: 16pt; font-family: Arial, "Microsoft YaHei", sans-serif;
+        white-space: nowrap; text-overflow: ellipsis;
+    }
+    .lb-table td.bc { text-align: center; padding: 0.3mm 1mm 0; }
+    .barcode { display: block; width: 100%; height: 7.5mm; }
+    .bc-text { font-size: 6.5pt; letter-spacing: 0.4px; line-height: 1.1; }
+    .loc { font-size: 8pt; font-weight: 700; padding: 0.5mm 0.6mm 0; white-space: nowrap; }
+
+    /* 打印时去掉屏幕装饰 */
+    @media print {
+        body { background: #fff; }
+        .toolbar { display: none !important; }
+        .label { margin: 0; border: 1px solid #000; box-shadow: none; }
+    }
+</style>
+</head>
+<body>
+<div class="toolbar">
+    <button type="button" onclick="window.print()">打印</button>
+    <button type="button" class="plain" onclick="window.close()">关闭</button>
+</div>
+
+{% for lb in labels %}
+<div class="label">
+    <div class="company">临沂大焱电子配件有限公司</div>
+    <table class="lb-table">
+        <tr>
+            <th>资材品番</th>
+            <td class="pno">{{ lb.ksc_pno }}</td>
+        </tr>
+        <tr>
+            <th>ITEM</th>
+            <td class="center">{{ lb.item_kind or '-' }}</td>
+        </tr>
+        <tr>
+            <th>业体PNO</th>
+            <td class="center">{{ lb.corp_pno or '-' }}</td>
+        </tr>
+        <tr>
+            <th>条码</th>
+            <td class="bc">
+                <svg class="barcode" data-code="{{ lb.ksc_pno }}" xmlns="http://www.w3.org/2000/svg"></svg>
+                <div class="bc-text">{{ lb.ksc_pno }}</div>
+            </td>
+        </tr>
+    </table>
+    <div class="loc">{{ lb.location }}</div>
+</div>
+{% endfor %}
+
+<script>
+(function () {
+    // Code128 编码表（0-105 数据/起始/校验，106 停止）
+    var CODE128 = [
+        "212222","222122","222221","121223","121322","131222","122213","122312","132212","221213",
+        "221312","231212","112232","122132","122231","113222","123122","123221","223211","221132",
+        "221231","213212","223112","312131","311222","321122","321221","312212","322112","322211",
+        "212123","212321","232121","111323","131123","131321","112313","132113","132311","211313",
+        "231113","231311","112133","112331","132131","113123","113321","133121","313121","211331",
+        "231131","213113","213311","213131","311123","311321","331121","312113","312311","332111",
+        "314111","221411","431111","111224","111422","121124","121421","141122","141221","112214",
+        "112412","122114","122411","142112","142211","241211","221114","413111","241112","134111",
+        "111242","121142","121241","114212","124112","124211","411212","421112","421211","212141",
+        "214121","412121","111143","111341","131141","114113","114311","411113","411311","113141",
+        "114131","311141","411131","211412","211214","211232","2331112"
+    ];
+
+    // 生成 Code128B 条形码（仅支持 ASCII 32~126；非 ASCII 返回 false）
+    function drawBarcode(svg) {
+        var code = svg.getAttribute('data-code') || '';
+        if (!code) { return false; }
+        var values = [104];                       // Start B
+        for (var i = 0; i < code.length; i++) {
+            var cc = code.charCodeAt(i);
+            if (cc < 32 || cc > 126) { return false; }
+            values.push(cc - 32);
+        }
+        // 校验位：StartB + Σ(值 × 位置)，位置从 1 开始
+        var sum = 104;
+        for (var j = 1; j < values.length; j++) { sum += values[j] * j; }
+        values.push(sum % 103);
+        values.push(106);                         // Stop
+
+        var widths = '';
+        for (var k = 0; k < values.length; k++) { widths += CODE128[values[k]]; }
+
+        var quiet = 10;                           // 两侧静区（模块数）
+        var x = quiet;
+        var total = quiet * 2;
+        for (var m = 0; m < widths.length; m++) { total += parseInt(widths.charAt(m), 10); }
+
+        var rects = '';
+        for (var n = 0; n < widths.length; n++) {
+            var w = parseInt(widths.charAt(n), 10);
+            // 偶数索引为黑条，奇数索引为空白
+            if (n % 2 === 0) {
+                rects += '<rect x="' + x + '" y="0" width="' + w + '" height="100"/>';
+            }
+            x += w;
+        }
+        svg.setAttribute('viewBox', '0 0 ' + total + ' 100');
+        svg.setAttribute('preserveAspectRatio', 'none');
+        svg.innerHTML = rects;
+        return true;
+    }
+
+    var allOk = true;
+    document.querySelectorAll('.barcode').forEach(function (svg) {
+        if (!drawBarcode(svg)) { allOk = false; }
+    });
+    if (!allOk) {
+        document.querySelectorAll('.bc-text').forEach(function (el) {
+            el.textContent += '（含非ASCII字符，未生成条码）';
+        });
+    }
+
+    // 资材品番过长时自动缩小字号，避免溢出
+    document.querySelectorAll('.lb-table td.pno').forEach(function (el) {
+        var len = (el.textContent || '').trim().length;
+        el.style.fontSize = (len > 16 ? '11pt' : len > 12 ? '13pt' : '16pt');
+    });
+
+    // 打开即调起打印（可在预览窗口取消），打印完关闭窗口更顺手
+    window.addEventListener('load', function () {
+        setTimeout(function () { window.print(); }, 350);
+    });
+})();
+</script>
+</body>
+</html>

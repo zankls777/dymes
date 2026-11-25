@@ -2,7 +2,7 @@
  * 侧边栏分组管理（菜单管理页）
  * 数据来源：GET /api/sidebar_menu → { layout, catalog }
  * 保存方式：POST /api/sidebar_menu，仅提交 { groups: [{key, title, entries: []}] }
- * 说明：页面标题、图标、权限由后端内置目录控制，此处只调整归类与顺序。
+ * 交互：分组卡片、菜单条目均通过拖拽调整顺序与归属（HTML5 Drag & Drop，无外部依赖）
  */
 (function () {
     'use strict';
@@ -10,6 +10,7 @@
     var API_BASE = '/api/sidebar_menu';
     var catalog = {};                 // 条目 key -> {title, icon, kind, summary}
     var layout = { groups: [] };      // 当前编辑中的分组布局
+    var drag = null;                  // 拖拽中数据：{type:'group'|'entry', groupIndex, entryIndex}
 
     var groupsEl = document.getElementById('mmGroups');
     var statusEl = document.getElementById('mmStatus');
@@ -32,7 +33,15 @@
         });
     }
 
-    /** 生成小图标按钮（上移/下移/删除） */
+    /** 清理所有拖拽高亮，避免残留样式 */
+    function clearDropHints() {
+        document.querySelectorAll('.mm-group.drag-over, .mm-entries.drop-into, .mm-entry.drop-before, .mm-entry.drop-after, .dragging')
+            .forEach(function (el) {
+                el.classList.remove('drag-over', 'drop-into', 'drop-before', 'drop-after', 'dragging');
+            });
+    }
+
+    /** 生成小图标按钮（删除分组等） */
     function iconButton(icon, title, disabled, danger, onClick) {
         var btn = document.createElement('button');
         btn.type = 'button';
@@ -47,7 +56,7 @@
         return btn;
     }
 
-    /** 分组卡片：可改名、上下移动、删除（至少保留一个分组） */
+    /** 分组卡片：拖动手柄排序、改名、删除；菜单可在卡片间拖拽 */
     function renderGroup(group, index) {
         var card = document.createElement('div');
         card.className = 'mm-group';
@@ -55,6 +64,22 @@
 
         var head = document.createElement('div');
         head.className = 'mm-group-head';
+
+        // 拖动手柄：仅通过手柄拖动整个分组，避免与输入框选择文字冲突
+        var grip = document.createElement('i');
+        grip.className = 'fa fa-bars mm-grip';
+        grip.title = '拖动调整分组顺序';
+        grip.draggable = true;
+        grip.addEventListener('dragstart', function (e) {
+            drag = { type: 'group', groupIndex: index };
+            card.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', 'group');
+        });
+        grip.addEventListener('dragend', function () {
+            drag = null;
+            clearDropHints();
+        });
 
         var input = document.createElement('input');
         input.className = 'mm-title-input';
@@ -73,22 +98,36 @@
         var actions = document.createElement('div');
         actions.className = 'd-flex';
         actions.style.gap = '4px';
-        actions.appendChild(iconButton('fa-arrow-up', '上移分组', index === 0, false, function () {
-            swapGroups(index, index - 1);
-        }));
-        actions.appendChild(iconButton('fa-arrow-down', '下移分组', index === layout.groups.length - 1, false, function () {
-            swapGroups(index, index + 1);
-        }));
         actions.appendChild(iconButton('fa-trash', '删除分组', layout.groups.length <= 1, true, function () {
             removeGroup(index);
         }));
 
+        head.appendChild(grip);
         head.appendChild(input);
         head.appendChild(count);
         head.appendChild(actions);
 
         var entries = document.createElement('div');
         entries.className = 'mm-entries';
+
+        // 菜单拖入空白区域：追加到本分组末尾
+        entries.addEventListener('dragover', function (e) {
+            if (!drag || drag.type !== 'entry') { return; }
+            e.preventDefault();
+            e.stopPropagation();
+            entries.classList.add('drop-into');
+        });
+        entries.addEventListener('dragleave', function (e) {
+            if (!entries.contains(e.relatedTarget)) { entries.classList.remove('drop-into'); }
+        });
+        entries.addEventListener('drop', function (e) {
+            if (!drag || drag.type !== 'entry') { return; }
+            e.preventDefault();
+            e.stopPropagation();
+            entries.classList.remove('drop-into');
+            moveEntry(drag.groupIndex, drag.entryIndex, index, layout.groups[index].entries.length);
+        });
+
         if (group.entries.length) {
             group.entries.forEach(function (entryKey, entryIndex) {
                 entries.appendChild(renderEntry(entryKey, index, entryIndex));
@@ -96,22 +135,78 @@
         } else {
             var empty = document.createElement('div');
             empty.className = 'mm-empty';
-            empty.textContent = '暂无菜单，可从其它分组移动进来';
+            empty.textContent = '暂无菜单，把菜单拖到这里';
             entries.appendChild(empty);
         }
+
+        // 分组整体作为拖放目标：拖动分组时调整分组顺序
+        card.addEventListener('dragover', function (e) {
+            if (!drag || drag.type !== 'group') { return; }
+            e.preventDefault();
+            card.classList.add('drag-over');
+        });
+        card.addEventListener('dragleave', function (e) {
+            if (!card.contains(e.relatedTarget)) { card.classList.remove('drag-over'); }
+        });
+        card.addEventListener('drop', function (e) {
+            if (!drag || drag.type !== 'group') { return; }
+            e.preventDefault();
+            e.stopPropagation();
+            card.classList.remove('drag-over');
+            // 按卡片中线判断插入到目标分组之前/之后
+            var rect = card.getBoundingClientRect();
+            var after = (e.clientY - rect.top) > rect.height / 2;
+            moveGroup(drag.groupIndex, index + (after ? 1 : 0));
+        });
 
         card.appendChild(head);
         card.appendChild(entries);
         return card;
     }
 
-    /** 单个菜单条目：上下移动 + 跨分组移动 */
+    /** 单个菜单条目：整行可拖动，同组排序或跨组移动 */
     function renderEntry(entryKey, groupIndex, entryIndex) {
         var meta = catalog[entryKey] || { title: entryKey, icon: 'fa-circle-o', summary: '' };
-        var group = layout.groups[groupIndex];
 
         var row = document.createElement('div');
         row.className = 'mm-entry';
+        row.draggable = true;
+        row.dataset.key = entryKey;
+
+        row.addEventListener('dragstart', function (e) {
+            drag = { type: 'entry', groupIndex: groupIndex, entryIndex: entryIndex };
+            row.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', 'entry');
+        });
+        row.addEventListener('dragend', function () {
+            drag = null;
+            clearDropHints();
+        });
+
+        // 拖到条目上：按鼠标位置判断插入到前半（前）还是后半（后）
+        row.addEventListener('dragover', function (e) {
+            if (!drag || drag.type !== 'entry') { return; }
+            e.preventDefault();
+            e.stopPropagation();
+            var rect = row.getBoundingClientRect();
+            var after = (e.clientY - rect.top) > rect.height / 2;
+            row.classList.toggle('drop-after', after);
+            row.classList.toggle('drop-before', !after);
+        });
+        row.addEventListener('dragleave', function () {
+            row.classList.remove('drop-before', 'drop-after');
+        });
+        row.addEventListener('drop', function (e) {
+            if (!drag || drag.type !== 'entry') { return; }
+            e.preventDefault();
+            e.stopPropagation();
+            var rect = row.getBoundingClientRect();
+            var after = (e.clientY - rect.top) > rect.height / 2;
+            var insertIndex = entryIndex + (after ? 1 : 0);
+            row.classList.remove('drop-before', 'drop-after');
+            moveEntry(drag.groupIndex, drag.entryIndex, groupIndex, insertIndex);
+        });
 
         var icon = document.createElement('i');
         icon.className = 'fa ' + meta.icon;
@@ -125,38 +220,9 @@
         summary.textContent = meta.summary || '';
         summary.title = meta.summary || '';
 
-        var upBtn = iconButton('fa-arrow-up', '上移菜单', entryIndex === 0, false, function () {
-            moveEntryWithinGroup(groupIndex, entryIndex, entryIndex - 1);
-        });
-        var downBtn = iconButton('fa-arrow-down', '下移菜单', entryIndex === group.entries.length - 1, false, function () {
-            moveEntryWithinGroup(groupIndex, entryIndex, entryIndex + 1);
-        });
-
-        var moveSelect = document.createElement('select');
-        moveSelect.className = 'mm-move';
-        moveSelect.setAttribute('aria-label', '移动到其他分组');
-        var placeholder = document.createElement('option');
-        placeholder.value = '';
-        placeholder.textContent = '移动到…';
-        moveSelect.appendChild(placeholder);
-        layout.groups.forEach(function (otherGroup, otherIndex) {
-            if (otherIndex === groupIndex) { return; }
-            var option = document.createElement('option');
-            option.value = String(otherIndex);
-            option.textContent = otherGroup.title || '未命名分组';
-            moveSelect.appendChild(option);
-        });
-        moveSelect.addEventListener('change', function () {
-            if (!moveSelect.value) { return; }
-            moveEntryToGroup(groupIndex, entryIndex, parseInt(moveSelect.value, 10));
-        });
-
         row.appendChild(icon);
         row.appendChild(title);
         row.appendChild(summary);
-        row.appendChild(upBtn);
-        row.appendChild(downBtn);
-        row.appendChild(moveSelect);
         return row;
     }
 
@@ -171,11 +237,24 @@
         });
     }
 
-    function swapGroups(from, to) {
-        if (to < 0 || to >= layout.groups.length) { return; }
+    /** 分组排序：to 为目标插入位置（0 ~ groups.length） */
+    function moveGroup(from, to) {
+        if (from === to) { return; }
         var moved = layout.groups.splice(from, 1)[0];
+        if (from < to) { to -= 1; }
         layout.groups.splice(to, 0, moved);
         render();
+        setStatus('已调整分组顺序，请保存后生效');
+    }
+
+    /** 菜单排序/跨组：toIndex 为目标分组内的插入位置 */
+    function moveEntry(fromGroup, fromIndex, toGroup, toIndex) {
+        if (fromGroup === toGroup && (toIndex === fromIndex || toIndex === fromIndex + 1)) { return; }
+        var moved = layout.groups[fromGroup].entries.splice(fromIndex, 1)[0];
+        if (fromGroup === toGroup && fromIndex < toIndex) { toIndex -= 1; }
+        layout.groups[toGroup].entries.splice(toIndex, 0, moved);
+        render();
+        setStatus('已调整菜单归属/顺序，请保存后生效');
     }
 
     function removeGroup(index) {
@@ -187,21 +266,6 @@
         layout.groups.splice(index, 1);
         render();
         setStatus('已删除分组，菜单已合并到“' + receiver.title + '”，请保存后生效');
-    }
-
-    function moveEntryWithinGroup(groupIndex, from, to) {
-        var entries = layout.groups[groupIndex].entries;
-        if (to < 0 || to >= entries.length) { return; }
-        var moved = entries.splice(from, 1)[0];
-        entries.splice(to, 0, moved);
-        render();
-    }
-
-    function moveEntryToGroup(fromGroup, entryIndex, toGroup) {
-        var entries = layout.groups[fromGroup].entries;
-        var moved = entries.splice(entryIndex, 1)[0];
-        layout.groups[toGroup].entries.push(moved);
-        render();
     }
 
     function addGroup() {
@@ -270,6 +334,16 @@
             setStatus('网络异常，加载失败', true);
         });
     }
+
+    // 拖动分组到卡片之间的空白区域：移动到末尾
+    groupsEl.addEventListener('dragover', function (e) {
+        if (drag && drag.type === 'group') { e.preventDefault(); }
+    });
+    groupsEl.addEventListener('drop', function (e) {
+        if (!drag || drag.type !== 'group') { return; }
+        e.preventDefault();
+        moveGroup(drag.groupIndex, layout.groups.length);
+    });
 
     addBtn.addEventListener('click', addGroup);
     saveBtn.addEventListener('click', save);

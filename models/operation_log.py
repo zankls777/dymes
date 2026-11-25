@@ -127,6 +127,11 @@ class OperationType:
     SYNC_PNO = 'sync_pno'  # 同步品番字典
     SUBMIT_INVENTORY_CHECK = 'submit_inventory_check'  # 提交盘点
     DELETE_INVENTORY_CHECK = 'delete_inventory_check'  # 删除盘点记录
+    # 在库与出入库
+    SAVE_STOCK_ITEM = 'save_stock_item'  # 保存在库记录
+    DELETE_STOCK_ITEM = 'delete_stock_item'  # 删除在库记录
+    IMPORT_STOCK_ITEM = 'import_stock_item'  # 导入在库数据
+    SUBMIT_STOCK_MOVEMENT = 'submit_stock_movement'  # 提交出入库
     # 不良品
     SET_DEFECTIVE_ACCESS_MODE = 'set_defective_access_mode'  # 设置不良品免登录开关
     SUBMIT_DEFECTIVE = 'submit_defective'  # 提交不良品登记
@@ -146,4 +151,5 @@ class TargetType:
     GROUP = 'group'  # 权限组
     INBOUND = 'inbound'  # 资材入库
     INVENTORY = 'inventory'  # 盘点
+    STOCK = 'stock'  # 在库与出入库
     DEFECTIVE = 'defective'  # 不良品

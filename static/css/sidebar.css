@@ -170,7 +170,7 @@ body .container-fluid {
 /* 分组标题：小字号 + 字距，弱化层级但不抢视线 */
 .app-nav-group {
     padding: 14px 18px 6px;
-    font-size: 0.72rem;
+    font-size: 0.85rem;
     font-weight: 600;
     letter-spacing: 0.08em;
     color: var(--sb-text-soft);
@@ -503,6 +503,39 @@ html.app-sidebar-nav-init .app-nav-submenu { transition: none; }
     .app-nav-link { padding: 10px 12px; font-size: 0.9rem; }
     .app-nav-sub-link { padding: 8px 12px 8px 34px; font-size: 0.84rem; }
     .app-nav-group:first-of-type { padding-top: 10px; }
+}
+
+/* ---------------- 分组折叠：标题可点击展开/收起，状态由 sidebar.js 持久化 ---------------- */
+.app-nav-group-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.app-nav-group-toggle > span { flex: 1 1 auto; min-width: 0; }
+.app-nav-group-toggle:hover { color: #fff; }
+.app-nav-group-arrow { flex: 0 0 auto; font-size: 0.62rem; opacity: 0.7; transition: transform 0.2s ease; }
+.app-nav-section.open .app-nav-group-arrow { transform: rotate(180deg); }
+
+/* 默认收起，open 时展开；max-height 取足够大值容纳分组内全部二级页面 */
+.app-nav-section-body { max-height: 0; overflow: hidden; }
+.app-nav-section.open .app-nav-section-body { max-height: 1600px; }
+/* 仅用户交互后启用过渡，首屏直接落位避免"滑下"动画 */
+body.app-sidebar-anim .app-nav-section-body { transition: max-height 0.25s ease; }
+
+/* 二级页面的图标仅在折叠成图标栏时显示，展开态保持圆点 + 文案的原样式 */
+.app-nav-flat-icon { display: none; }
+
+@media (min-width: 768px) {
+    .app-sidebar.collapsed .app-nav-section-body { max-height: none; overflow: visible; }
+    .app-sidebar.collapsed .app-nav-sub-link { justify-content: center; padding: 11px 0; margin: 3px 10px; }
+    .app-sidebar.collapsed .app-nav-sub-link::before { display: none; }
+    .app-sidebar.collapsed .app-nav-flat-icon { display: inline-block; width: auto; font-size: 1rem; }
 }
 
 /* ---------------- 弱动效偏好：尊重系统设置 ---------------- */

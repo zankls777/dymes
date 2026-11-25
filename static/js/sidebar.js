@@ -200,6 +200,64 @@
             });
         });
 
+        /* 顶部分组（如"资材与文件"）：点击分组标题展开/收起该组全部二级页面。
+         * 展开状态用 localStorage 记住，刷新/切页后保持；当前页所在分组自动展开，
+         * 不做互斥，允许多个分组同时展开。 */
+        var SECTION_KEY = 'appSidebarOpenSections';
+
+        function readOpenSections() {
+            try {
+                var raw = localStorage.getItem(SECTION_KEY);
+                var arr = raw ? JSON.parse(raw) : [];
+                return Array.isArray(arr) ? arr : [];
+            } catch (e) { return []; }
+        }
+
+        function writeOpenSections(sections) {
+            try { localStorage.setItem(SECTION_KEY, JSON.stringify(sections)); } catch (e) { /* 隐私模式忽略 */ }
+        }
+
+        var openSections = readOpenSections();
+        var currentPath = window.location.pathname;
+
+        document.querySelectorAll('.app-nav-section').forEach(function (section, index) {
+            var toggle = section.querySelector('.app-nav-group-toggle');
+            if (!toggle) { return; }
+            var id = section.getAttribute('data-group') || ('section-' + index);
+
+            /* 恢复上次展开的分组 */
+            if (openSections.indexOf(id) !== -1) {
+                section.classList.add('open');
+                toggle.setAttribute('aria-expanded', 'true');
+            }
+
+            /* 当前页所在分组自动展开：优先看 active 标记，否则按链接地址匹配 */
+            var activeLink = section.querySelector('.app-nav-link.active');
+            if (!activeLink) {
+                section.querySelectorAll('a.app-nav-link[href]').forEach(function (link) {
+                    if (!activeLink && link.pathname === currentPath) { activeLink = link; }
+                });
+            }
+            if (activeLink) {
+                section.classList.add('open');
+                toggle.setAttribute('aria-expanded', 'true');
+            }
+
+            toggle.addEventListener('click', function () {
+                enableAnim();
+                /* 折叠图标栏下分组标题不可见，此处无需处理 collapsed 场景 */
+                var isOpen = section.classList.toggle('open');
+                toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+                var idx = openSections.indexOf(id);
+                if (isOpen) {
+                    if (idx === -1) { openSections.push(id); }
+                } else if (idx !== -1) {
+                    openSections.splice(idx, 1);
+                }
+                writeOpenSections(openSections);
+            });
+        });
+
         /* Alt+S 快捷键：桌面折叠/展开 */
         document.addEventListener('keydown', function (e) {
             if (e.altKey && (e.key === 's' || e.key === 'S')) {
