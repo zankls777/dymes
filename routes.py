@@ -92,6 +92,7 @@ from models.rbac import UserPermissionOverride
 from models.material_inbound import MaterialInboundDaily
 from models.inventory_check import InventoryTeam, InventoryCheck
 from models.inventory_pno_dict import InventoryPnoDict
+from models.label_template import LabelTemplate
 from models.stock_management import (StockItem, StockMovement,
                                      MOVEMENT_IN, MOVEMENT_OUT,
                                      MOVEMENT_TYPE_LABELS)
@@ -22610,4 +22611,113 @@ def inventory_check_delete():
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"盘点实查记录删除失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '删除失败'}), 500
+
+
+# ================= 标签打印（自定义模版 + 批量打印） =================
+@main_bp.route('/label_print')
+@login_required
+def label_print():
+    """标签打印页面：自定义模版样式，录入或导入数据后批量打印。"""
+    if 'user_id' not in session:
+        return redirect(url_for('main.login', next=request.url))
+    return render_template('label_print.html')
+
+
+@main_bp.route('/api/label_templates', methods=['GET'])
+@login_required
+def api_label_templates_list():
+    """标签模版清单（含完整配置），按更新时间倒序。"""
+    try:
+        items = LabelTemplate.query.order_by(LabelTemplate.updated_at.desc(),
+                                             LabelTemplate.id.desc()).all()
+        return jsonify({'success': True, 'items': [it.to_dict() for it in items]})
+    except Exception as e:
+        current_app.logger.error(f"标签模版查询失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '查询失败'}), 500
+
+
+@main_bp.route('/api/label_templates', methods=['POST'])
+@login_required
+@csrf_exempt_route
+def api_label_template_save():
+    """新建或保存标签模版。
+
+    body: {"id": 可选（有则更新）, "name": 模版名称, "config": {...}}
+    名称重复时返回 409 与冲突记录 id，前端可提示覆盖。
+    """
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    try:
+        data = request.get_json(silent=True) or {}
+        name = (data.get('name') or '').strip()
+        config = data.get('config')
+        tid = data.get('id')
+        if not name:
+            return jsonify({'success': False, 'error': '请填写模版名称'}), 400
+        if len(name) > 80:
+            return jsonify({'success': False, 'error': '模版名称不能超过 80 个字符'}), 400
+        if not isinstance(config, dict) or not isinstance(config.get('elements'), list):
+            return jsonify({'success': False, 'error': '模版配置无效'}), 400
+
+        cfg_text = json.dumps(config, ensure_ascii=False)
+        operator = session.get('username') or ''
+        uid = session.get('user_id')
+        try:
+            uid = int(uid) if uid else None
+        except (TypeError, ValueError):
+            uid = None
+
+        item = None
+        if tid:
+            try:
+                item = db.session.get(LabelTemplate, int(tid))
+            except (TypeError, ValueError):
+                item = None
+            if not item:
+                return jsonify({'success': False, 'error': '模版不存在'}), 404
+
+        # 名称唯一性校验（更新时排除自身）
+        dup_q = LabelTemplate.query.filter(LabelTemplate.name == name)
+        if item:
+            dup_q = dup_q.filter(LabelTemplate.id != item.id)
+        dup = dup_q.first()
+        if dup:
+            return jsonify({'success': False,
+                            'error': f'模版名称「{name}」已存在',
+                            'conflict_id': dup.id}), 409
+
+        if item is None:
+            item = LabelTemplate(name=name, config=cfg_text, created_by=uid,
+                                 created_by_name=operator, updated_by_name=operator)
+            db.session.add(item)
+        else:
+            item.name = name
+            item.config = cfg_text
+            item.updated_by_name = operator
+        db.session.commit()
+        return jsonify({'success': True, 'item': item.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"标签模版保存失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': '保存失败'}), 500
+
+
+@main_bp.route('/api/label_templates/<int:tid>', methods=['DELETE'])
+@login_required
+@csrf_exempt_route
+def api_label_template_delete(tid):
+    """删除标签模版。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    try:
+        item = db.session.get(LabelTemplate, tid)
+        if not item:
+            return jsonify({'success': False, 'error': '模版不存在'}), 404
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"标签模版删除失败: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': '删除失败'}), 500

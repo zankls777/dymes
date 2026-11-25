@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>标签打印</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
+    {% include '_styles.html' %}
+    <link href="{{ url_for('static', filename='css/label_print.css', v='20261125b') }}" rel="stylesheet">
+</head>
+<body>
+{% include '_navbar.html' %}
+<div class="container-fluid mt-4 lp-page">
+
+    <div class="lp-head">
+        <div>
+            <h1 class="h4 mb-1">标签打印</h1>
+            <p class="lp-desc mb-0">自定义模版样式（尺寸 / 字段 / 字号 / 条码），录入或导入数据后批量打印；每个标签输出一页。</p>
+        </div>
+        <div class="lp-head-actions">
+            <button type="button" class="btn btn-outline-primary btn-sm" id="lpPreviewBtn">
+                <i class="fa fa-eye"></i> 预览
+            </button>
+            <button type="button" class="btn btn-primary btn-sm" id="lpPrintBtn">
+                <i class="fa fa-print"></i> 批量打印
+            </button>
+        </div>
+    </div>
+
+    <!-- 模版工具条 -->
+    <div class="card lp-card lp-tplbar">
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-center">
+                <div class="col-auto"><label class="lp-label mb-0" for="lpTplSelect">模版</label></div>
+                <div class="col-md-3">
+                    <select class="form-select form-select-sm" id="lpTplSelect">
+                        <option value="">（未保存的新模版）</option>
+                    </select>
+                </div>
+                <div class="col-auto"><label class="lp-label mb-0" for="lpTplName">名称</label></div>
+                <div class="col-md-3">
+                    <input type="text" class="form-control form-control-sm" id="lpTplName"
+                           maxlength="80" placeholder="模版名称（保存时必填）">
+                </div>
+                <div class="col-auto d-flex flex-wrap gap-1">
+                    <button type="button" class="btn btn-success btn-sm" id="lpSaveBtn"><i class="fa fa-save"></i> 保存</button>
+                    <button type="button" class="btn btn-outline-success btn-sm" id="lpSaveAsBtn">另存为</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="lpNewBtn"><i class="fa fa-file-o"></i> 新建</button>
+                    <button type="button" class="btn btn-outline-danger btn-sm" id="lpDeleteTplBtn"><i class="fa fa-trash"></i> 删除</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="lpExportBtn">导出</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="lpImportBtn">导入</button>
+                    <input type="file" id="lpImportFile" accept=".json,application/json" class="d-none">
+                </div>
+            </div>
+            <!-- 预设模版：一键套用常用规格，套用后可继续编辑并保存入库 -->
+            <div class="row g-2 align-items-center mt-1">
+                <div class="col-auto"><label class="lp-label mb-0" for="lpPreset"><i class="fa fa-magic"></i> 预设</label></div>
+                <div class="col-md-4">
+                    <select class="form-select form-select-sm" id="lpPreset">
+                        <option value="">选择常用规格，一键生成版式…</option>
+                    </select>
+                </div>
+                <div class="col-auto lp-hint">套用后可改尺寸 / 字段 / 样式，再点「保存」入库</div>
+            </div>
+            <div class="lp-status" id="lpStatus"></div>
+        </div>
+    </div>
+
+    <div class="row g-3 lp-main">
+        <!-- 左：模版设置 -->
+        <div class="col-xl-3 col-lg-4">
+            <div class="card lp-card">
+                <div class="card-header lp-card-head">标签设置</div>
+                <div class="card-body">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="lp-label" for="lpWidth">宽度 (mm)</label>
+                            <input type="number" class="form-control form-control-sm" id="lpWidth" min="10" max="300" step="0.5">
+                        </div>
+                        <div class="col-6">
+                            <label class="lp-label" for="lpHeight">高度 (mm)</label>
+                            <input type="number" class="form-control form-control-sm" id="lpHeight" min="10" max="300" step="0.5">
+                        </div>
+                        <div class="col-6">
+                            <label class="lp-label" for="lpZoom">缩放</label>
+                            <select class="form-select form-select-sm" id="lpZoom">
+                                <option value="1">100%</option>
+                                <option value="1.5">150%</option>
+                                <option value="2" selected>200%</option>
+                                <option value="3">300%</option>
+                                <option value="4">400%</option>
+                            </select>
+                        </div>
+                        <div class="col-6 d-flex align-items-end">
+                            <div class="form-check mb-1">
+                                <input class="form-check-input" type="checkbox" id="lpBorder" checked>
+                                <label class="form-check-label lp-label mb-0" for="lpBorder">外框线</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr class="my-3">
+                    <div class="lp-label">添加元素</div>
+                    <div class="d-flex flex-wrap gap-1">
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-add="text"><i class="fa fa-font"></i> 文本</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-add="field"><i class="fa fa-database"></i> 字段</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-add="barcode"><i class="fa fa-barcode"></i> 条码</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-add="qrcode"><i class="fa fa-qrcode"></i> 二维码</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-add="image"><i class="fa fa-image"></i> 图片</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-add="rect"><i class="fa fa-square-o"></i> 矩形</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-add="line"><i class="fa fa-minus"></i> 分隔线</button>
+                    </div>
+
+                    <hr class="my-3">
+                    <div class="lp-label">元素列表 <span class="lp-hint">（画布上可拖动 / 右下角缩放）</span></div>
+                    <div class="lp-el-list" id="lpElementList"></div>
+                </div>
+            </div>
+
+            <div class="card lp-card mt-3">
+                <div class="card-header lp-card-head">元素属性</div>
+                <div class="card-body">
+                    <div class="lp-empty" id="lpPropEmpty">请选择画布中的元素</div>
+                    <div id="lpPropForm" class="d-none">
+                        <div class="row g-2">
+                            <div class="col-12">
+                                <label class="lp-label">类型</label>
+                                <div class="lp-prop-type" id="lpPropType">-</div>
+                            </div>
+                        </div>
+
+                        <!-- 数据绑定：字段 / 条码 / 二维码 -->
+                        <div class="lp-prop-group" id="lpPropKeyWrap">
+                            <div class="lp-prop-title">数据绑定</div>
+                            <label class="lp-label" for="lpPropKey">数据字段</label>
+                            <input type="text" class="form-control form-control-sm" id="lpPropKey"
+                                   placeholder="如 part_no / lot / qty">
+                        </div>
+
+                        <!-- 文本内容：文本 / 二维码 -->
+                        <div class="lp-prop-group" id="lpPropTextWrap">
+                            <div class="lp-prop-title">文本内容</div>
+                            <label class="lp-label" for="lpPropText">内容 <span class="lp-hint">（可用 {字段} 占位）</span></label>
+                            <input type="text" class="form-control form-control-sm" id="lpPropText">
+                        </div>
+
+                        <!-- 位置与尺寸 -->
+                        <div class="lp-prop-group">
+                            <div class="lp-prop-title">位置与尺寸 (mm)</div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropX">X</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropX" step="0.5">
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropY">Y</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropY" step="0.5">
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropW">宽</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropW" step="0.5">
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropH">高</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropH" step="0.5">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 文字样式 -->
+                        <div class="lp-prop-group" id="lpPropTextGroup">
+                            <div class="lp-prop-title">文字样式</div>
+                            <div class="row g-2">
+                                <div class="col-6" id="lpPropFontWrap">
+                                    <label class="lp-label" for="lpPropFont">字号 (pt)</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropFont" min="4" max="72" step="0.5">
+                                </div>
+                                <div class="col-6" id="lpPropFamilyWrap">
+                                    <label class="lp-label" for="lpPropFamily">字体</label>
+                                    <select class="form-select form-select-sm" id="lpPropFamily">
+                                        <option value="">默认</option>
+                                        <option value="Microsoft YaHei">微软雅黑</option>
+                                        <option value="SimSun">宋体</option>
+                                        <option value="SimHei">黑体</option>
+                                        <option value="KaiTi">楷体</option>
+                                        <option value="Arial">Arial</option>
+                                        <option value="Times New Roman">Times New Roman</option>
+                                        <option value="Courier New">Courier New</option>
+                                        <option value="monospace">等宽</option>
+                                    </select>
+                                </div>
+                                <div class="col-6" id="lpPropAlignWrap">
+                                    <label class="lp-label" for="lpPropAlign">水平对齐</label>
+                                    <select class="form-select form-select-sm" id="lpPropAlign">
+                                        <option value="left">左对齐</option>
+                                        <option value="center">居中</option>
+                                        <option value="right">右对齐</option>
+                                    </select>
+                                </div>
+                                <div class="col-6" id="lpPropValignWrap">
+                                    <label class="lp-label" for="lpPropValign">垂直对齐</label>
+                                    <select class="form-select form-select-sm" id="lpPropValign">
+                                        <option value="top">顶部</option>
+                                        <option value="middle">居中</option>
+                                        <option value="bottom">底部</option>
+                                    </select>
+                                </div>
+                                <div class="col-6" id="lpPropLineHeightWrap">
+                                    <label class="lp-label" for="lpPropLineHeight">行高</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropLineHeight" min="0.6" max="3" step="0.05">
+                                </div>
+                                <div class="col-6" id="lpPropLetterSpacingWrap">
+                                    <label class="lp-label" for="lpPropLetterSpacing">字间距 (pt)</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropLetterSpacing" min="-2" max="20" step="0.1">
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropColor">颜色</label>
+                                    <input type="color" class="form-control form-control-sm form-control-color" id="lpPropColor" value="#000000">
+                                </div>
+                                <div class="col-6 d-flex align-items-end">
+                                    <div class="d-flex gap-2 mb-1">
+                                        <div class="form-check" id="lpPropBoldWrap">
+                                            <input class="form-check-input" type="checkbox" id="lpPropBold">
+                                            <label class="form-check-label lp-label mb-0" for="lpPropBold">加粗</label>
+                                        </div>
+                                        <div class="form-check" id="lpPropItalicWrap">
+                                            <input class="form-check-input" type="checkbox" id="lpPropItalic">
+                                            <label class="form-check-label lp-label mb-0" for="lpPropItalic">斜体</label>
+                                        </div>
+                                        <div class="form-check" id="lpPropUnderlineWrap">
+                                            <input class="form-check-input" type="checkbox" id="lpPropUnderline">
+                                            <label class="form-check-label lp-label mb-0" for="lpPropUnderline">下划线</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-12" id="lpPropWrapWrap">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="lpPropWrap" checked>
+                                        <label class="form-check-label lp-label mb-0" for="lpPropWrap">自动换行</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 条码 / 二维码：显示文字 -->
+                        <div class="lp-prop-group" id="lpPropShowTextWrap">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="lpPropShowText" checked>
+                                <label class="form-check-label lp-label mb-0" for="lpPropShowText">下方显示文字</label>
+                            </div>
+                        </div>
+
+                        <!-- 二维码参数 -->
+                        <div class="lp-prop-group" id="lpPropQrGroup">
+                            <div class="lp-prop-title">二维码</div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropEc">纠错级别</label>
+                                    <select class="form-select form-select-sm" id="lpPropEc">
+                                        <option value="L">L (7%)</option>
+                                        <option value="M">M (15%)</option>
+                                        <option value="Q">Q (25%)</option>
+                                        <option value="H">H (30%)</option>
+                                    </select>
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropQrMargin">留白 (模块)</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropQrMargin" min="0" max="10" step="1">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 图片 -->
+                        <div class="lp-prop-group" id="lpPropImgGroup">
+                            <div class="lp-prop-title">图片</div>
+                            <label class="lp-label" for="lpPropImgUrl">图片地址 <span class="lp-hint">（http/https）</span></label>
+                            <input type="text" class="form-control form-control-sm" id="lpPropImgUrl" placeholder="https://... 或留空使用本地上传">
+                            <div class="d-flex gap-1 mt-2">
+                                <button type="button" class="btn btn-outline-primary btn-sm flex-fill" id="lpPropImgUpload">
+                                    <i class="fa fa-upload"></i> 本地上传
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm flex-fill" id="lpPropImgClear">清除</button>
+                            </div>
+                            <div class="mt-2">
+                                <label class="lp-label" for="lpPropImgFit">填充方式</label>
+                                <select class="form-select form-select-sm" id="lpPropImgFit">
+                                    <option value="contain">完整显示</option>
+                                    <option value="cover">裁剪填满</option>
+                                    <option value="fill">拉伸填满</option>
+                                </select>
+                            </div>
+                            <div class="lp-hint mt-1" id="lpPropImgTip">未设置图片</div>
+                            <input type="file" id="lpPropImgFile" accept="image/*" class="d-none">
+                        </div>
+
+                        <!-- 外观：通用盒子样式 -->
+                        <div class="lp-prop-group" id="lpPropBoxGroup">
+                            <div class="lp-prop-title">外观</div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropBg">背景色</label>
+                                    <input type="color" class="form-control form-control-sm form-control-color" id="lpPropBg" value="#ffffff">
+                                </div>
+                                <div class="col-6 d-flex align-items-end">
+                                    <div class="form-check mb-1">
+                                        <input class="form-check-input" type="checkbox" id="lpPropBgNone">
+                                        <label class="form-check-label lp-label mb-0" for="lpPropBgNone">无填充</label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropBorderW">边框 (mm)</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropBorderW" min="0" max="3" step="0.05">
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropBorderColor">边框色</label>
+                                    <input type="color" class="form-control form-control-sm form-control-color" id="lpPropBorderColor" value="#000000">
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropRadius">圆角 (mm)</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropRadius" min="0" max="20" step="0.5">
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropRotate">旋转 (°)</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropRotate" min="-180" max="180" step="1">
+                                </div>
+                                <div class="col-6">
+                                    <label class="lp-label" for="lpPropOpacity">不透明度 (%)</label>
+                                    <input type="number" class="form-control form-control-sm" id="lpPropOpacity" min="10" max="100" step="5">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex gap-1 mt-3">
+                            <button type="button" class="btn btn-outline-secondary btn-sm flex-fill" id="lpDupElBtn">复制</button>
+                            <button type="button" class="btn btn-outline-danger btn-sm flex-fill" id="lpDelElBtn">删除元素</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中：画布 -->
+        <div class="col-xl-5 col-lg-8">
+            <div class="card lp-card h-100">
+                <div class="card-header lp-card-head d-flex justify-content-between align-items-center">
+                    <span>模版设计</span>
+                    <span class="lp-hint" id="lpCanvasSizeTip">-</span>
+                </div>
+                <div class="card-body">
+                    <div class="lp-canvas-scroll">
+                        <div class="lp-canvas-holder" id="lpCanvasHolder">
+                            <div class="lp-canvas" id="lpCanvas"></div>
+                        </div>
+                    </div>
+                    <div class="lp-tip">
+                        <i class="fa fa-info-circle"></i>
+                        拖动元素移动位置，拖动右下角小方块调整大小；坐标与尺寸单位为毫米（mm），字号为磅（pt），与打印结果一致。
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右：数据 -->
+        <div class="col-xl-4 col-12">
+            <div class="card lp-card h-100">
+                <div class="card-header lp-card-head d-flex justify-content-between align-items-center">
+                    <span>打印数据</span>
+                    <span class="lp-hint" id="lpRowTip">0 行</span>
+                </div>
+                <div class="card-body d-flex flex-column">
+                    <div class="d-flex flex-wrap gap-1 mb-2">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="lpAddRowBtn"><i class="fa fa-plus"></i> 添加行</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="lpPasteBtn"><i class="fa fa-clipboard"></i> 粘贴导入</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="lpCsvBtn">CSV 导入</button>
+                        <button type="button" class="btn btn-outline-danger btn-sm" id="lpClearRowsBtn">清空</button>
+                        <input type="file" id="lpCsvFile" accept=".csv,text/csv" class="d-none">
+                    </div>
+                    <div class="lp-data-wrap">
+                        <table class="table table-sm lp-data-table mb-0" id="lpDataTable">
+                            <thead id="lpDataHead"></thead>
+                            <tbody id="lpDataBody"></tbody>
+                        </table>
+                        <div class="lp-empty" id="lpDataEmpty">暂无数据，请添加行或粘贴导入</div>
+                    </div>
+                    <div class="lp-tip mt-2">
+                        <i class="fa fa-info-circle"></i>
+                        表格列由模版中的「字段 / 条码」元素自动生成；「份数」为每个标签重复打印的张数。
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 打印输出根节点：必须是 body 直接子元素，打印时只显示它 -->
+<div id="lpPrintRoot"></div>
+
+<!-- 粘贴导入 -->
+<div class="modal fade" id="lpPasteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">粘贴导入数据</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <p class="lp-hint mb-2">从 Excel / WPS 复制单元格后粘贴到下方（列顺序与表格一致，Tab 分隔；也支持逗号分隔）。</p>
+                <textarea class="form-control" id="lpPasteText" rows="10" placeholder="part_no	lot	qty&#10;A-001	L20260101	5"></textarea>
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="lpPasteHeader">
+                    <label class="form-check-label lp-label mb-0" for="lpPasteHeader">首行为标题行，按列名匹配字段</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary btn-sm" id="lpPasteConfirm">导入</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 预览 -->
+<div class="modal fade" id="lpPreviewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">打印预览</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <div class="lp-preview-tip" id="lpPreviewTip"></div>
+                <div class="lp-preview-box" id="lpPreviewBox"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary btn-sm" id="lpPreviewPrint"><i class="fa fa-print"></i> 打印</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+<!-- v= 版本号用于强制浏览器刷新缓存：静态脚本更新后只需改这里 -->
+<script src="{{ url_for('static', filename='js/qrcode_gen.js', v='20261125c') }}"></script>
+<script src="{{ url_for('static', filename='js/label_presets.js', v='20261125c') }}"></script>
+<script src="{{ url_for('static', filename='js/label_print.js', v='20261125c') }}"></script>
+</body>
+</html>

@@ -411,6 +411,7 @@ def _import_all_models():
     from models.unit_price import UnitPrice
     from models.price_multiplier import PriceMultiplier
     from models.customer import Customer
+    from models.label_template import LabelTemplate
     from models.rbac import (  # noqa: F401
         Permission, UserPermissionOverride,
         PermissionGroup, GroupPermission, UserGroup,

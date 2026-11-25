@@ -65,6 +65,7 @@ PAGE_DEFS = {
     'data_management': {'title': '数据备份管理', 'endpoint': 'main.data_management', 'tab': '数据备份管理', 'perm': 'can_data_management'},
     'menu_management': {'title': '菜单管理', 'endpoint': 'main.menu_management', 'tab': '菜单管理', 'perm': 'can_page'},
     'shortcut_settings': {'title': '快捷键设置', 'endpoint': 'main.shortcut_settings', 'tab': '快捷键设置', 'perm': 'can_system_management'},
+    'label_print': {'title': '标签打印', 'endpoint': 'main.label_print', 'tab': '标签打印', 'perm': None},
 }
 
 # 一级条目定义：page=直接跳转页面；children=可展开的子菜单页面
@@ -109,6 +110,7 @@ ENTRY_DEFS = {
     'data_management': {'title': '数据备份管理', 'icon': 'fa-database', 'page': 'data_management', 'flat': True},
     'menu_management': {'title': '菜单管理', 'icon': 'fa-list', 'page': 'menu_management', 'flat': True},
     'shortcut_settings': {'title': '快捷键设置', 'icon': 'fa-link', 'page': 'shortcut_settings', 'flat': True},
+    'label_print': {'title': '标签打印', 'icon': 'fa-tags', 'page': 'label_print', 'flat': True},
 }
 
 # 默认分组：按实际业务域归类（管理员可在菜单管理页拖拽调整）
@@ -129,7 +131,7 @@ DEFAULT_GROUPS = [
     ]},
     {'key': 'production', 'title': '生产与 MES', 'entries': [
         'invest_tidy', 'auto_loading', 'mes_plan', 'mes_production',
-        'mes_quality', 'mes_price', 'mes_group',
+        'mes_quality', 'mes_price', 'mes_group', 'label_print',
     ]},
     {'key': 'system', 'title': '系统管理', 'entries': [
         'user_management', 'operation_logs', 'data_management',
