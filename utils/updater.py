@@ -451,55 +451,146 @@ def _overlay_source(src_root, stamp, progress=None, base=70, span=20):
             'errors': errors, 'backup_dir': backup_dir if backup_bytes else ''}
 
 
+def _git_clone(url, dest, timeout=300):
+    """浅克隆仓库到指定目录，返回 HEAD 提交号（公开仓库无需账号）。"""
+    exe = shutil.which('git')
+    if not exe:
+        raise RuntimeError('未安装 git')
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0')
+    proc = subprocess.run(
+        [exe, 'clone', '--depth', '1', '--single-branch', '--branch', BRANCH, url, dest],
+        capture_output=True, text=True, timeout=timeout, env=env)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or '').strip()
+        raise RuntimeError(detail[:300] or 'git clone 失败')
+    head = subprocess.run([exe, '-C', dest, 'rev-parse', 'HEAD'],
+                          capture_output=True, text=True, timeout=30, env=env)
+    return (head.stdout or '').strip()
+
+
+def _update_via_clone(report, stamp):
+    """git 浅克隆后覆盖源码：绕开归档页反爬，Gitee 公开仓库可直接拉取。"""
+    temp_dir = tempfile.mkdtemp(prefix='bom3_clone_')
+    errors = []
+    try:
+        for url in (GIT_URL, GITEE_GIT_URL):
+            dest = os.path.join(temp_dir, 'repo')
+            shutil.rmtree(dest, ignore_errors=True)
+            try:
+                report('download', 30, f'正在从 {url} 拉取源码...')
+                commit = _git_clone(url, dest)
+                report('apply', 70, '正在替换源码文件...')
+                stats = _overlay_source(dest, stamp, progress=report)
+                stats.update({'commit': commit, 'source': url})
+                return stats
+            except Exception as exc:
+                errors.append(f'{url} -> {exc}')
+        raise RuntimeError('；'.join(errors[-2:]))
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _detect_package(path):
+    """识别下载内容格式（gzip/zip）；被登录页或网关拦截时给出可读原因。"""
+    try:
+        with open(path, 'rb') as f:
+            magic = f.read(4)
+    except OSError as exc:
+        raise RuntimeError(f'读取更新包失败：{exc}')
+    if magic[:2] == b'\x1f\x8b':
+        return 'gzip'
+    if magic[:2] == b'PK':
+        return 'zip'
+    with open(path, 'rb') as f:
+        preview = f.read(160).decode('utf-8', 'ignore').replace('\n', ' ')
+    raise RuntimeError('下载内容不是压缩包（可能被登录页/网关拦截）：' + preview[:120])
+
+
+def _safe_extract_zip(zf, dest):
+    """安全解压 zip：拒绝路径穿越。"""
+    root = os.path.realpath(dest)
+    for info in zf.infolist():
+        target = os.path.realpath(os.path.join(dest, info.filename))
+        if target != root and not target.startswith(root + os.sep):
+            continue
+        if info.is_dir():
+            os.makedirs(target, exist_ok=True)
+            continue
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with zf.open(info) as src, open(target, 'wb') as out:
+            shutil.copyfileobj(src, out)
+
+
+def _archive_result(before, stats, commit, source):
+    """统一整理覆盖更新的结果。"""
+    if stats['failed'] and not stats['copied']:
+        raise RuntimeError('更新写入失败：' + '；'.join(stats['errors'][:3]))
+    msg = f"更新完成：覆盖 {stats['copied']} 个文件"
+    if stats['failed']:
+        msg += f"，{stats['failed']} 个文件写入失败（可能被占用）"
+    return {'updated': True, 'from': before, 'commit': commit,
+            'file_count': stats['copied'], 'failed': stats['failed'],
+            'errors': stats['errors'], 'backup_dir': stats['backup_dir'],
+            'source': source, 'message': msg}
+
+
 def _update_archive(progress=None):
     report = progress or (lambda *args, **kwargs: None)
     before = _read_state().get('commit', '')
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    temp_dir = tempfile.mkdtemp(prefix='bom3_update_')
-    archive_path = os.path.join(temp_dir, 'update.tar.gz')
-    errors = []
-    used_url = ''
-    for url in (GITHUB_ARCHIVE, GITEE_ARCHIVE):
-        try:
-            report('download', 8, '正在连接远端下载更新包...')
-            _download(url, archive_path, progress=report, base=10, span=45)
-            used_url = url
-            break
-        except (URLError, OSError, Exception) as exc:
-            errors.append(f'{url} -> {exc}')
-    if not used_url:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        raise RuntimeError('下载更新包失败：' + '；'.join(errors[-2:]))
+    failures = []
 
+    # 1) 优先 git 浅克隆：公开仓库无需账号，且不受归档页反爬影响
+    if shutil.which('git'):
+        try:
+            stats = _update_via_clone(report, stamp)
+            _write_state(stats.get('commit', ''), stats.get('source', ''))
+            return _archive_result(before, stats, stats.get('commit', ''),
+                                   stats.get('source', ''))
+        except Exception as exc:
+            failures.append('git 拉取失败: ' + str(exc))
+            report('download', 10, 'git 拉取失败，尝试下载压缩包...')
+    else:
+        failures.append('服务器未安装 git')
+
+    # 2) 回退 HTTP 压缩包（tar.gz / zip），并校验文件头防止保存到登录页
+    temp_dir = tempfile.mkdtemp(prefix='bom3_update_')
     try:
-        report('extract', 58, '正在解压并校验更新包...')
-        with tarfile.open(archive_path, 'r:gz') as tar:
-            _safe_extract(tar, temp_dir)
-        # 压缩包内通常只有一层仓库目录
-        entries = [e for e in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, e))]
-        if len(entries) != 1:
-            raise RuntimeError('更新包结构异常：未找到唯一的源码根目录')
-        src_root = os.path.join(temp_dir, entries[0])
-        report('apply', 70, '正在替换源码文件...')
-        stats = _overlay_source(src_root, stamp, progress=report)
+        for url in (GITHUB_ARCHIVE, GITEE_ARCHIVE):
+            pkg = os.path.join(temp_dir, 'update.pkg')
+            try:
+                report('download', 10, '正在下载更新包...')
+                _download(url, pkg, progress=report, base=10, span=45)
+                kind = _detect_package(pkg)
+                report('extract', 58, '正在解压并校验更新包...')
+                if kind == 'gzip':
+                    with tarfile.open(pkg, 'r:gz') as tar:
+                        _safe_extract(tar, temp_dir)
+                else:
+                    import zipfile
+                    with zipfile.ZipFile(pkg) as zf:
+                        _safe_extract_zip(zf, temp_dir)
+                # 压缩包内通常只有一层仓库目录
+                entries = [e for e in os.listdir(temp_dir)
+                           if os.path.isdir(os.path.join(temp_dir, e))]
+                if len(entries) != 1:
+                    raise RuntimeError('更新包结构异常：未找到唯一的源码根目录')
+                src_root = os.path.join(temp_dir, entries[0])
+                report('apply', 70, '正在替换源码文件...')
+                stats = _overlay_source(src_root, stamp, progress=report)
+                remote = _fetch_remote_commit() or {}
+                commit = remote.get('commit', '')
+                _write_state(commit, url)
+                return _archive_result(before, stats, commit, url)
+            except Exception as exc:
+                failures.append(f'{url} -> {exc}')
+                try:
+                    os.remove(pkg)
+                except OSError:
+                    pass
+        raise RuntimeError('更新包获取失败：' + '；'.join(failures[-3:]))
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-
-    report('apply', 92, '文件替换完成，正在记录版本信息...')
-    remote = _fetch_remote_commit() or {}
-    _write_state(remote.get('commit', ''), used_url)
-
-    if stats['failed'] and not stats['copied']:
-        raise RuntimeError('更新写入失败：' + '；'.join(stats['errors'][:3]))
-
-    msg = f"更新完成：覆盖 {stats['copied']} 个文件"
-    if stats['failed']:
-        msg += f"，{stats['failed']} 个文件写入失败（可能被占用）"
-    return {'updated': True, 'from': before, 'commit': remote.get('commit', ''),
-            'file_count': stats['copied'],
-            'failed': stats['failed'], 'errors': stats['errors'],
-            'backup_dir': stats['backup_dir'], 'source': used_url,
-            'message': msg}
 
 
 # ---------------------------------------------------------------- 自动重启

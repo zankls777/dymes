@@ -338,7 +338,8 @@
             if (stageText) $('stageText').textContent = stageText;
             if (message) $('progressMsg').textContent = message;
             if (stageKey) {
-                lastStage = stageKey;
+                // 失败时保留出错前的阶段，便于把红色标记落在实际失败步骤上
+                if (stageKey !== 'error') lastStage = stageKey;
                 $('progressStage').textContent = stageLabel(stageKey);
                 markSteps(stageKey);
             }
