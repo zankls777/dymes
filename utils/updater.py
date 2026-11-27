@@ -468,6 +468,25 @@ def _git_clone(url, dest, timeout=300):
     return (head.stdout or '').strip()
 
 
+def _dulwich_clone(url, dest, timeout=600):
+    """纯 Python 克隆（无需系统 git）：依赖 dulwich，公开仓库可匿名拉取。"""
+    try:
+        from dulwich import porcelain
+    except Exception:
+        raise RuntimeError('服务器未安装 git，也未安装 dulwich')
+    with open(os.devnull, 'wb') as devnull:
+        repo = porcelain.clone(url, dest, depth=1, branch=BRANCH.encode('utf-8'),
+                               errstream=devnull)
+    return repo.head().decode('ascii')
+
+
+def _clone_repo(url, dest, timeout=300):
+    """优先系统 git；缺失时回退 dulwich。返回 HEAD 提交号。"""
+    if shutil.which('git'):
+        return _git_clone(url, dest, timeout=timeout)
+    return _dulwich_clone(url, dest, timeout=timeout)
+
+
 def _update_via_clone(report, stamp):
     """git 浅克隆后覆盖源码：绕开归档页反爬，Gitee 公开仓库可直接拉取。"""
     temp_dir = tempfile.mkdtemp(prefix='bom3_clone_')
@@ -478,7 +497,7 @@ def _update_via_clone(report, stamp):
             shutil.rmtree(dest, ignore_errors=True)
             try:
                 report('download', 30, f'正在从 {url} 拉取源码...')
-                commit = _git_clone(url, dest)
+                commit = _clone_repo(url, dest)
                 report('apply', 70, '正在替换源码文件...')
                 stats = _overlay_source(dest, stamp, progress=report)
                 stats.update({'commit': commit, 'source': url})
@@ -540,8 +559,15 @@ def _update_archive(progress=None):
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     failures = []
 
-    # 1) 优先 git 浅克隆：公开仓库无需账号，且不受归档页反爬影响
-    if shutil.which('git'):
+    # 1) 优先克隆仓库：公开仓库无需账号，且不受归档页反爬影响
+    can_clone = bool(shutil.which('git'))
+    if not can_clone:
+        try:
+            import dulwich  # noqa: F401  纯 Python git，作为无 git 环境的回退
+            can_clone = True
+        except Exception:
+            can_clone = False
+    if can_clone:
         try:
             stats = _update_via_clone(report, stamp)
             _write_state(stats.get('commit', ''), stats.get('source', ''))
@@ -551,7 +577,7 @@ def _update_archive(progress=None):
             failures.append('git 拉取失败: ' + str(exc))
             report('download', 10, 'git 拉取失败，尝试下载压缩包...')
     else:
-        failures.append('服务器未安装 git')
+        failures.append('服务器未安装 git，也未安装 dulwich（可执行 pip install dulwich）')
 
     # 2) 回退 HTTP 压缩包（tar.gz / zip），并校验文件头防止保存到登录页
     temp_dir = tempfile.mkdtemp(prefix='bom3_update_')
