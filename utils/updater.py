@@ -25,7 +25,8 @@ import threading
 import time
 from datetime import datetime
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 GITHUB_OWNER = 'zankls777'
 GITHUB_REPO = 'dymes'
@@ -36,6 +37,9 @@ GIT_URL = f'{REPO_URL}.git'
 GITEE_GIT_URL = f'https://gitee.com/{GITHUB_OWNER}/{GITHUB_REPO}.git'
 GITHUB_ARCHIVE = (f'https://codeload.github.com/{GITHUB_OWNER}/{GITHUB_REPO}'
                   f'/tar.gz/refs/heads/{BRANCH}')
+# github.com 归档地址：加速源（如 gh-proxy）通常只代理这种路径形式
+GITHUB_ARCHIVE_WEB = (f'https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}'
+                      f'/archive/refs/heads/{BRANCH}.tar.gz')
 GITEE_ARCHIVE = (f'https://gitee.com/{GITHUB_OWNER}/{GITHUB_REPO}'
                  f'/repository/archive/{BRANCH}.tar.gz')
 GITHUB_COMMIT_API = (f'https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}'
@@ -59,6 +63,7 @@ _SKIP_FILES = {'.secret_key', 'server.log', 'debug.log', '.DS_Store'}
 _BACKUP_LIMIT = 50 * 1024 * 1024
 
 HISTORY_FILE = os.path.join(APP_ROOT, 'instance', 'update_history.json')
+CONFIG_FILE = os.path.join(APP_ROOT, 'instance', 'update_config.json')
 
 _UPDATE_LOCK = threading.Lock()
 
@@ -106,8 +111,8 @@ def _git(args, timeout=60):
     exe = shutil.which('git')
     if not exe:
         raise RuntimeError('未安装 git，无法使用 Git 模式更新')
-    # 禁止 git 弹出账号密码提示，避免后台请求挂起
-    env = dict(os.environ, GIT_TERMINAL_PROMPT='0')
+    # 禁止 git 弹出账号密码提示，避免后台请求挂起；代理通过环境变量注入
+    env = _network_env({'GIT_TERMINAL_PROMPT': '0'})
     proc = subprocess.run([exe, '-C', APP_ROOT] + list(args), env=env,
                           capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
@@ -153,6 +158,163 @@ def _write_state(commit='', source=''):
         pass
 
 
+def _read_config():
+    """读取更新配置（代理等）；文件不存在时返回空字典。"""
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def get_proxy():
+    """当前生效的代理地址：优先配置文件，其次系统环境变量。"""
+    proxy = str(_read_config().get('proxy') or '').strip()
+    if proxy:
+        return proxy
+    for key in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'):
+        value = os.environ.get(key)
+        if value:
+            return value.strip()
+    return ''
+
+
+def normalize_proxy(value):
+    """校验代理地址：留空表示不使用；支持 host:port 或 http(s)://host:port。"""
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    if '://' not in text:
+        text = 'http://' + text
+    parsed = urlparse(text)
+    if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+        raise ValueError('代理地址格式应为 http://主机:端口')
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ValueError('代理端口无效')
+    if not port:
+        raise ValueError('代理地址需包含端口，例如 http://127.0.0.1:7890')
+    return text
+
+
+def save_proxy(value):
+    """保存代理地址到 instance/update_config.json（空字符串表示清除）。"""
+    proxy = normalize_proxy(value)
+    cfg = _read_config()
+    cfg['proxy'] = proxy
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    return proxy
+
+
+def get_accelerator():
+    """GitHub 加速源前缀（如 https://gh-proxy.com/），空表示未启用。"""
+    return str(_read_config().get('accelerator') or '').strip()
+
+
+def normalize_accelerator(value):
+    """校验加速源：留空表示不使用；必须以 http(s):// 开头，自动补结尾斜杠。"""
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    if not text.startswith(('http://', 'https://')):
+        raise ValueError('加速源需以 http:// 或 https:// 开头')
+    if not urlparse(text).hostname:
+        raise ValueError('加速源地址无效')
+    if not text.endswith('/'):
+        text += '/'
+    return text
+
+
+def save_accelerator(value):
+    """保存加速源到 instance/update_config.json（空字符串表示清除）。"""
+    accel = normalize_accelerator(value)
+    cfg = _read_config()
+    cfg['accelerator'] = accel
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    return accel
+
+
+def _with_accelerator(urls):
+    """给 GitHub 地址拼接加速源前缀，并保留原始地址作为回退候选。"""
+    accel = get_accelerator()
+    result = []
+    for url in urls:
+        if accel and ('github.com' in url or 'githubusercontent.com' in url):
+            result.append(accel + url)
+        result.append(url)
+    return result
+
+
+def test_accelerator(value=None):
+    """测试加速源连通性：拉取一个公开的 GitHub 原始文件。"""
+    try:
+        accel = normalize_accelerator(value) if value is not None else get_accelerator()
+    except ValueError as exc:
+        return {'ok': False, 'message': str(exc)}
+    if not accel:
+        return {'ok': False, 'message': '尚未配置加速源'}
+    target = accel + 'https://raw.githubusercontent.com/torvalds/linux/master/README'
+    try:
+        req = Request(target, headers={'User-Agent': 'BOM3-Updater'})
+        with _urlopen(req, timeout=12) as resp:
+            resp.read(64)
+            return {'ok': True, 'message': f'加速源可用（HTTP {resp.status}）'}
+    except Exception as exc:
+        return {'ok': False, 'message': '加速源不可用：' + str(exc)[:150]}
+
+
+def _proxy_opener(proxy):
+    """构造带代理的 urllib opener。"""
+    return build_opener(ProxyHandler({'http': proxy, 'https': proxy}))
+
+
+def _urlopen(req, timeout=15):
+    """统一外网请求入口：配置了代理时全部走代理。"""
+    proxy = get_proxy()
+    if proxy:
+        return _proxy_opener(proxy).open(req, timeout=timeout)
+    return urlopen(req, timeout=timeout)
+
+
+def _network_env(extra=None):
+    """构造子进程环境：注入代理变量，供 git / dulwich 使用。"""
+    env = dict(os.environ, **(extra or {}))
+    proxy = get_proxy()
+    if proxy:
+        for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'):
+            env[key] = proxy
+    return env
+
+
+def test_proxy(value=None):
+    """测试代理连通性：GitHub 可达即成功，否则尝试 Gitee。"""
+    try:
+        proxy = normalize_proxy(value) if value is not None else get_proxy()
+    except ValueError as exc:
+        return {'ok': False, 'message': str(exc)}
+    if not proxy:
+        return {'ok': False, 'message': '尚未配置代理地址'}
+    opener = _proxy_opener(proxy)
+    headers = {'User-Agent': 'BOM3-Updater', 'Accept': 'application/json'}
+    targets = [('GitHub', 'https://api.github.com'),
+               ('Gitee', 'https://gitee.com/api/v5/version')]
+    errors = []
+    for label, url in targets:
+        try:
+            with opener.open(Request(url, headers=headers), timeout=10) as resp:
+                return {'ok': True,
+                        'message': f'代理可用：{label} 已连通（HTTP {resp.status}）'}
+        except Exception as exc:
+            errors.append(f'{label}: {str(exc)[:120]}')
+    return {'ok': False, 'message': '代理不可用：' + '；'.join(errors)}
+
+
 def _local_git_version():
     """读取 Git 工作区的当前提交信息；失败返回空字典。"""
     try:
@@ -184,10 +346,10 @@ def _local_version(mode=None):
 def _fetch_remote_commit():
     """通过 API 获取远端最新提交；GitHub 不通时自动回退 Gitee。"""
     headers = {'User-Agent': 'BOM3-Updater', 'Accept': 'application/json'}
-    for api in (GITHUB_COMMIT_API, GITEE_COMMIT_API):
+    for api in _with_accelerator([GITHUB_COMMIT_API]) + [GITEE_COMMIT_API]:
         try:
             req = Request(api, headers=headers)
-            with urlopen(req, timeout=8) as resp:
+            with _urlopen(req, timeout=8) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
             sha = data.get('sha') or ''
             commit = data.get('commit') or {}
@@ -232,6 +394,8 @@ def get_system_info(app_config=None):
                        if started else ''),
         'uptime_seconds': int(time.time() - started) if started else 0,
         'server_time': _now_text(),
+        'proxy': get_proxy(),
+        'accelerator': get_accelerator(),
     }
 
 
@@ -247,7 +411,7 @@ def check_update():
 def _git_fetch_any(timeout=90):
     """依次尝试 GitHub、Gitee 拉取；返回 (实际使用的地址, FETCH_HEAD 提交号)。"""
     errors = []
-    for url in (GIT_URL, GITEE_GIT_URL):
+    for url in _with_accelerator([GIT_URL]) + [GITEE_GIT_URL]:
         try:
             _git(['fetch', '--prune', '--quiet', url, BRANCH], timeout=timeout)
             return url, _git(['rev-parse', 'FETCH_HEAD'])
@@ -357,7 +521,7 @@ def _update_git(progress=None):
 def _download(url, dest, timeout=180, progress=None, base=10, span=45):
     """下载更新包到本地文件；progress(stage, percent, message) 汇报下载进度。"""
     req = Request(url, headers={'User-Agent': 'BOM3-Updater'})
-    with urlopen(req, timeout=timeout) as resp, open(dest, 'wb') as out:
+    with _urlopen(req, timeout=timeout) as resp, open(dest, 'wb') as out:
         total = int(resp.headers.get('Content-Length') or 0)
         done = 0
         last_percent = -1
@@ -456,7 +620,7 @@ def _git_clone(url, dest, timeout=300):
     exe = shutil.which('git')
     if not exe:
         raise RuntimeError('未安装 git')
-    env = dict(os.environ, GIT_TERMINAL_PROMPT='0')
+    env = _network_env({'GIT_TERMINAL_PROMPT': '0'})
     proc = subprocess.run(
         [exe, 'clone', '--depth', '1', '--single-branch', '--branch', BRANCH, url, dest],
         capture_output=True, text=True, timeout=timeout, env=env)
@@ -475,8 +639,22 @@ def _dulwich_clone(url, dest, timeout=600):
     except Exception:
         raise RuntimeError('服务器未安装 git，也未安装 dulwich')
     with open(os.devnull, 'wb') as devnull:
-        repo = porcelain.clone(url, dest, depth=1, branch=BRANCH.encode('utf-8'),
-                               errstream=devnull)
+        # dulwich 读取 https_proxy/http_proxy/all_proxy 环境变量
+        proxy = get_proxy()
+        saved = {}
+        if proxy:
+            for key in ('https_proxy', 'http_proxy', 'all_proxy'):
+                saved[key] = os.environ.get(key)
+                os.environ[key] = proxy
+        try:
+            repo = porcelain.clone(url, dest, depth=1, branch=BRANCH.encode('utf-8'),
+                                   errstream=devnull)
+        finally:
+            for key, old in saved.items():
+                if old is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old
     return repo.head().decode('ascii')
 
 
@@ -492,7 +670,7 @@ def _update_via_clone(report, stamp):
     temp_dir = tempfile.mkdtemp(prefix='bom3_clone_')
     errors = []
     try:
-        for url in (GIT_URL, GITEE_GIT_URL):
+        for url in _with_accelerator([GIT_URL]) + [GITEE_GIT_URL]:
             dest = os.path.join(temp_dir, 'repo')
             shutil.rmtree(dest, ignore_errors=True)
             try:
@@ -582,7 +760,7 @@ def _update_archive(progress=None):
     # 2) 回退 HTTP 压缩包（tar.gz / zip），并校验文件头防止保存到登录页
     temp_dir = tempfile.mkdtemp(prefix='bom3_update_')
     try:
-        for url in (GITHUB_ARCHIVE, GITEE_ARCHIVE):
+        for url in _with_accelerator([GITHUB_ARCHIVE_WEB, GITHUB_ARCHIVE]) + [GITEE_ARCHIVE]:
             pkg = os.path.join(temp_dir, 'update.pkg')
             try:
                 report('download', 10, '正在下载更新包...')
@@ -750,16 +928,16 @@ def get_update_history():
 def _fetch_remote_commits(limit=30):
     """通过 API 获取远端提交列表（GitHub 不通回退 Gitee）。"""
     headers = {'User-Agent': 'BOM3-Updater', 'Accept': 'application/json'}
-    apis = [
-        (f'https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}'
-         f'/commits?sha={BRANCH}&per_page={limit}', 'GitHub'),
+    apis = [(u, 'GitHub') for u in _with_accelerator([
+        f'https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}'
+        f'/commits?sha={BRANCH}&per_page={limit}'])] + [
         (f'https://gitee.com/api/v5/repos/{GITHUB_OWNER}/{GITHUB_REPO}'
          f'/commits?sha={BRANCH}&per_page={limit}', 'Gitee'),
     ]
     for api, label in apis:
         try:
             req = Request(api, headers=headers)
-            with urlopen(req, timeout=10) as resp:
+            with _urlopen(req, timeout=10) as resp:
                 rows = json.loads(resp.read().decode('utf-8'))
             commits = []
             for row in rows if isinstance(rows, list) else []:

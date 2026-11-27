@@ -151,6 +151,57 @@
             </div>
         </div>
 
+        {% if is_admin_user %}
+        <div class="card mb-3">
+            <div class="card-header bg-info text-white py-2">
+                <h6 class="mb-0 small"><i class="fa fa-globe me-2"></i>网络与加速设置</h6>
+            </div>
+            <div class="card-body py-3">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-6">
+                        <label class="form-label small mb-1">HTTP/HTTPS 代理地址</label>
+                        <input type="text" class="form-control form-control-sm" id="proxyInput"
+                               placeholder="如 http://172.16.17.190:7890（留空表示不使用代理）">
+                    </div>
+                    <div class="col-auto d-flex gap-2">
+                        <button class="btn btn-primary btn-sm" id="proxySaveBtn" type="button">
+                            <i class="fa fa-save me-1"></i>保存
+                        </button>
+                        <button class="btn btn-outline-primary btn-sm" id="proxyTestBtn" type="button">
+                            <i class="fa fa-plug me-1"></i>测试连接
+                        </button>
+                    </div>
+                </div>
+                <div class="small text-muted mt-2">
+                    设置后，检查更新与在线更新（git / dulwich 拉取、压缩包下载）都会走该代理，用于 GitHub 无法直连的环境。
+                </div>
+                <div class="small mt-2" id="proxyState"></div>
+
+                <hr class="my-3">
+
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-6">
+                        <label class="form-label small mb-1">GitHub 加速源</label>
+                        <input type="text" class="form-control form-control-sm" id="accelInput"
+                               placeholder="如 https://gh-proxy.com/（留空表示不使用加速源）">
+                    </div>
+                    <div class="col-auto d-flex gap-2">
+                        <button class="btn btn-primary btn-sm" id="accelSaveBtn" type="button">
+                            <i class="fa fa-save me-1"></i>保存
+                        </button>
+                        <button class="btn btn-outline-primary btn-sm" id="accelTestBtn" type="button">
+                            <i class="fa fa-bolt me-1"></i>测试加速
+                        </button>
+                    </div>
+                </div>
+                <div class="small text-muted mt-2">
+                    加速源会拼接到 GitHub 原始地址前（如 https://gh-proxy.com/https://github.com/...），失败自动回退直连与 Gitee，可随时更换。
+                </div>
+                <div class="small mt-2" id="accelState"></div>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="card mb-3">
             <div class="card-header bg-dark text-white py-2 d-flex justify-content-between align-items-center">
                 <h6 class="mb-0 small"><i class="fa fa-history me-2"></i>变更修复历史</h6>
@@ -266,6 +317,8 @@
                     $('repoLink').href = data.repo_url;
                     $('repoLink').textContent = data.repo_url;
                 }
+                if ($('proxyInput')) { $('proxyInput').value = data.proxy || ''; }
+                if ($('accelInput')) { $('accelInput').value = data.accelerator || ''; }
             } catch (e) {
                 setState('读取系统信息失败：' + e.message, 'text-danger');
             }
@@ -495,6 +548,116 @@
                     `<tr><td colspan="3" class="text-center text-danger py-3">${esc(e.message)}</td></tr>`;
             }
         }
+
+        // ---- 网络代理设置（仅管理员可见） ----
+        function proxyState(msg, cls) {
+            const box = $('proxyState');
+            if (box) box.innerHTML = `<span class="${cls || 'text-muted'}">${esc(msg)}</span>`;
+        }
+
+        async function saveProxy() {
+            const input = $('proxyInput');
+            if (!input) return;
+            const btn = $('proxySaveBtn');
+            btn.disabled = true;
+            try {
+                const resp = await fetch('/api/about/proxy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ proxy: input.value.trim() })
+                });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || '保存失败');
+                input.value = data.proxy || '';
+                proxyState(data.message || '已保存', 'text-success');
+                log('代理设置已更新：' + (data.proxy || '不使用代理'));
+            } catch (e) {
+                proxyState('保存失败：' + e.message, 'text-danger');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function testProxy() {
+            const input = $('proxyInput');
+            if (!input) return;
+            const btn = $('proxyTestBtn');
+            btn.disabled = true;
+            proxyState('正在测试代理连通性...', 'text-primary');
+            try {
+                const resp = await fetch('/api/about/proxy/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ proxy: input.value.trim() })
+                });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || '测试失败');
+                proxyState(data.message || (data.ok ? '代理可用' : '代理不可用'),
+                           data.ok ? 'text-success' : 'text-danger');
+            } catch (e) {
+                proxyState('测试失败：' + e.message, 'text-danger');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        if ($('proxySaveBtn')) $('proxySaveBtn').addEventListener('click', saveProxy);
+        if ($('proxyTestBtn')) $('proxyTestBtn').addEventListener('click', testProxy);
+
+        // ---- GitHub 加速源设置（仅管理员可见） ----
+        function accelState(msg, cls) {
+            const box = $('accelState');
+            if (box) box.innerHTML = `<span class="${cls || 'text-muted'}">${esc(msg)}</span>`;
+        }
+
+        async function saveAccelerator() {
+            const input = $('accelInput');
+            if (!input) return;
+            const btn = $('accelSaveBtn');
+            btn.disabled = true;
+            try {
+                const resp = await fetch('/api/about/accelerator', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ accelerator: input.value.trim() })
+                });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || '保存失败');
+                input.value = data.accelerator || '';
+                accelState(data.message || '已保存', 'text-success');
+                log('加速源已更新：' + (data.accelerator || '不使用加速源'));
+            } catch (e) {
+                accelState('保存失败：' + e.message, 'text-danger');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function testAccelerator() {
+            const input = $('accelInput');
+            if (!input) return;
+            const btn = $('accelTestBtn');
+            btn.disabled = true;
+            accelState('正在测试加速源...', 'text-primary');
+            try {
+                const resp = await fetch('/api/about/accelerator/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ accelerator: input.value.trim() })
+                });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || '测试失败');
+                accelState(data.message || (data.ok ? '加速源可用' : '加速源不可用'),
+                           data.ok ? 'text-success' : 'text-danger');
+            } catch (e) {
+                accelState('测试失败：' + e.message, 'text-danger');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        if ($('accelSaveBtn')) $('accelSaveBtn').addEventListener('click', saveAccelerator);
+        if ($('accelTestBtn')) $('accelTestBtn').addEventListener('click', testAccelerator);
 
         if (checkBtn) checkBtn.addEventListener('click', checkUpdate);
         if (updateBtn) updateBtn.addEventListener('click', doUpdate);

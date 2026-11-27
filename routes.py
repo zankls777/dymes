@@ -22876,6 +22876,87 @@ def about_do_update():
         return jsonify({'success': False, 'error': str(e)}), 409
 
 
+@main_bp.route('/api/about/proxy', methods=['POST'])
+@login_required
+def about_save_proxy():
+    """保存外网代理（仅管理员）：GitHub 不可达时供更新/检查走代理。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not session.get('is_admin'):
+        return jsonify({'success': False, 'error': '仅管理员可修改代理设置'}), 403
+    try:
+        from utils import updater
+        data = request.get_json(silent=True) or {}
+        proxy = updater.save_proxy(data.get('proxy', ''))
+        current_app.logger.info(f'在线更新代理已更新: {proxy or "未启用"}')
+        return jsonify({'success': True, 'proxy': proxy,
+                        'message': '已保存：' + (proxy if proxy else '不使用代理')})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception as e:
+        current_app.logger.error(f'保存代理设置失败: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': '保存失败'}), 500
+
+
+@main_bp.route('/api/about/proxy/test', methods=['POST'])
+@login_required
+def about_test_proxy():
+    """测试代理连通性（GitHub 优先，失败再看 Gitee）。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not session.get('is_admin'):
+        return jsonify({'success': False, 'error': '仅管理员可测试代理'}), 403
+    try:
+        from utils import updater
+        data = request.get_json(silent=True) or {}
+        # 传入的值用于“保存前测试”，未传则测试已保存的代理
+        result = updater.test_proxy(data.get('proxy'))
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        current_app.logger.error(f'测试代理失败: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/api/about/accelerator', methods=['POST'])
+@login_required
+def about_save_accelerator():
+    """保存 GitHub 加速源（仅管理员）：如 https://gh-proxy.com/。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not session.get('is_admin'):
+        return jsonify({'success': False, 'error': '仅管理员可修改加速源'}), 403
+    try:
+        from utils import updater
+        data = request.get_json(silent=True) or {}
+        accel = updater.save_accelerator(data.get('accelerator', ''))
+        current_app.logger.info(f'GitHub 加速源已更新: {accel or "未启用"}')
+        return jsonify({'success': True, 'accelerator': accel,
+                        'message': '已保存：' + (accel if accel else '不使用加速源')})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception as e:
+        current_app.logger.error(f'保存加速源失败: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': '保存失败'}), 500
+
+
+@main_bp.route('/api/about/accelerator/test', methods=['POST'])
+@login_required
+def about_test_accelerator():
+    """测试加速源连通性（拉取公开 GitHub 文件）。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not session.get('is_admin'):
+        return jsonify({'success': False, 'error': '仅管理员可测试加速源'}), 403
+    try:
+        from utils import updater
+        data = request.get_json(silent=True) or {}
+        result = updater.test_accelerator(data.get('accelerator'))
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        current_app.logger.error(f'测试加速源失败: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @main_bp.route('/api/about/update/status')
 @login_required
 def about_update_status():
