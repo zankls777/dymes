@@ -11,10 +11,12 @@
 
 - **资料管理**：SubList / UsageList 上传、查询、对比、冻结（EO 版本管控）
 - **线束业务**：LOT 登录、扫描录入（扫码枪 + 标签拍照识别 OCR）、数据下载
-- **投入计算**：投入计划书、胶带/皮子/管换算、资材量下载、资材入库
+- **投入计算**：投入计划书、胶带/皮子/管换算、资材量下载
+- **资材入库**：资材每日入库（上传/手动/批量入库/扫码入库）、在库管理、移动端出入库、标签打印
 - **生产业务**：MES（计划登录、生产入库、品质检查、单价登录、结算清单）、盘点
 - **图纸工具**：RW 核对、RW 图纸产出（DXF 回路自动标记）
-- **系统管理**：用户/权限/权限组、数据备份（含自动备份到网盘）、操作日志
+- **系统管理**：用户/权限/权限组、侧边栏菜单管理（拖拽分组、折叠）、数据备份（含自动备份到网盘）、操作日志
+- **关于与更新**：版本信息、变更历史、在线更新（GitHub/Gitee、代理、加速源、自动重启）
 
 ## 2. 环境要求
 
@@ -38,13 +40,13 @@ bom3/
 ├── start.bat            # Windows 一键启动脚本
 ├── start.sh             # Linux 一键启动脚本
 ├── routes*.py           # 路由（主业务 / CAD / MES / NAS / RBAC / 用户管理）
+├── utils/               # 工具（标签识别、DXF 标记、侧边栏菜单、在线更新 updater.py 等）
+├── scripts/             # 运维脚本（回填、迁移、打包、restart_helper.py 更新重启助手）
 ├── models/              # 数据模型
-├── utils/               # 工具（含 image_code_reader.py 标签识别、cad/ DXF 标记）
 ├── templates/           # 页面模板
 ├── static/              # 静态资源（static/uploads 为上传文件目录）
-├── instance/            # SQLite 数据库 app.db 与备份配置
-├── logs/                # 运行日志
-├── scripts/             # 运维脚本（回填、迁移、打包）
+├── instance/            # app.db、update_config.json（代理/加速源）、初始口令文件
+├── logs/                # 运行日志（含 update_restart.log）
 └── docs/                # 本文档
 ```
 
@@ -119,12 +121,13 @@ python -c "import zxingcpp, rapidocr_onnxruntime, cv2, PIL; print('OK')"
 |----------|--------|------|
 | `APP_PORT` | `5004` | 服务端口 |
 | `ADMIN_USERNAME` | `admin` | 初始管理员账号 |
-| `ADMIN_PASSWORD` | `admin123!` | 初始管理员密码 |
+| `ADMIN_PASSWORD` | 自动生成 | 未设置时生成 16 位强随机口令，写入 `instance/admin_initial_password.txt`（重启复用） |
 | `FLASK_CONFIG` | `development` | `production`（Waitress 多线程）/ `development`（Flask 热重载调试） |
 | `DATABASE_TYPE` | `sqlite` | `sqlite` / `mysql` |
 | `SQLITE_PATH` | `instance/app.db` | SQLite 库文件路径（建议绝对路径） |
 | `MYSQL_HOST` 等 | — | DATABASE_TYPE=mysql 时生效（MYSQL_HOST/PORT/USER/PASSWORD/DATABASE） |
-| `SECRET_KEY` | 内置默认 | 生产环境建议设置随机值 |
+| `SECRET_KEY` | 自动生成 | 未设置时生成并持久化到根目录 `.secret_key`（勿提交仓库） |
+| `SESSION_LIFETIME` | `43200` | 会话有效期（秒，默认 12 小时） |
 
 端口与管理员账号也可直接在 [app.py](file:///f:/TA/bom3/app.py) 顶部修改。
 
@@ -161,10 +164,46 @@ python app.py                    # 默认 development 模式（调试热重载�
 
 浏览器访问 `http://localhost:5004`，使用管理员账号登录即搭建完成。
 
-- 默认账号：`admin / admin123!`（**上线前请立即修改密码**）
+- 默认账号：`admin`；密码为 `ADMIN_PASSWORD` 的值，未设置时见 `instance/admin_initial_password.txt`（**上线前请立即修改密码**）
 - 首次启动自动建库建表（`instance/app.db`），并预热数据缓存
 
-## 7. 常见问题（搭建类）
+## 7. 在线更新与网络配置（可选）
+
+系统内置“关于”页（`/about`）与在线更新能力，适合内网 / NAS 环境一键升级。
+
+### 7.1 更新机制
+
+| 场景 | 行为 |
+|------|------|
+| 目录含 `.git` 且系统有 git | `git fetch` + `--ff-only` 快进合并 |
+| 无 `.git`（部署包），有 git | 浅克隆源码后覆盖（GitHub → Gitee 回退） |
+| 无 git，已安装 dulwich | 纯 Python 浅克隆后覆盖 |
+| 以上均不可用 | 下载 GitHub/Gitee 压缩包覆盖（校验文件头，防止保存到登录页） |
+
+- 覆盖更新始终保留 `instance/`、`logs/`、`backups/`、`.venv/`、`.git/` 等运行数据，覆盖前自动备份到 `backups/auto_update_<时间戳>/`。
+- 更新完成后由 `scripts/restart_helper.py` 等待旧进程退出再拉起服务，日志见 `logs/update_restart.log`。
+
+### 7.2 网络加速（GitHub 无法直连时）
+
+在“关于 → 网络与加速设置”中配置，保存在 `instance/update_config.json`：
+
+| 配置 | 示例 | 说明 |
+|------|------|------|
+| 代理地址 | `http://172.16.17.190:7890` | 检查更新、git/dulwich 拉取、压缩包下载全部走代理 |
+| GitHub 加速源 | `https://gh-proxy.com/` | 拼接为 `https://gh-proxy.com/https://github.com/...`，失败自动回退直连与 Gitee |
+
+- 页面提供“测试连接 / 测试加速”按钮，可先验证再保存。
+- 代理软件需开启“允许局域网连接”，且服务器能访问代理机端口。
+- 也可通过环境变量 `HTTP_PROXY` / `HTTPS_PROXY` 提供默认代理（页面配置优先）。
+
+### 7.3 NAS 首次启用在线更新
+
+1. 将 `utils/updater.py`、`scripts/restart_helper.py`、`templates/about.html` 等新增文件同步到 NAS（部署包升级时可用整包覆盖）。
+2. 确认 `git --version` 可用；否则在虚拟环境执行 `./.venv/bin/python -m pip install dulwich`。
+3. `bash start.sh` 启动后，用管理员登录“关于”页，配置代理 / 加速源并测试。
+4. 点击“检查更新 → 更新并重启”，观察进度与 `logs/update_restart.log`。
+
+## 8. 常见问题（搭建类）
 
 | 现象 | 原因与处理 |
 |------|-----------|
@@ -174,9 +213,12 @@ python app.py                    # 默认 development 模式（调试热重载�
 | 改了模板/代码不生效 | 生产模式（Waitress）启动时缓存 Jinja 模板，**必须重启服务**才生效 |
 | 冷启动较慢（首次请求 10s+） | 属正常现象，应用启动时后台线程自动预热缓存，之后热请求为毫秒级 |
 | 想升级/迁移数据库 | 使用 `scripts/` 下脚本或 Flask-Migrate；升级前先在「数据备份管理」做全量备份 |
+| 在线更新超时 / 连接重置 | 在“关于”页配置代理或 GitHub 加速源并测试；无 git 时安装 git 或 `pip install dulwich` |
+| 在线更新提示“不是压缩包” | 归档下载被登录页/网关拦截，改用 git/dulwich 拉取，或配置代理后重试 |
+| 更新后服务未自动拉起 | 查看 `logs/update_restart.log`，确认 `scripts/restart_helper.py` 存在 |
 | Win7 部署 | 不支持（Python 3.10+ 不再兼容 Win7）。Win7 机器仅作为浏览器访问端使用 |
 
-## 8. 数据备份建议
+## 9. 数据备份建议
 
 - 系统内置两套备份：**数据备份管理**页面的手动备份/恢复，以及**自动备份到网盘**（SQLite 在线快照全量 + 增量 Excel，定时调度）。
 - 建议开启自动备份并指向网盘/UNC 目录，保留份数按需设置（默认全量 30 份、增量 90 份）。

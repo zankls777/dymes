@@ -1,160 +1,85 @@
-# 大焱资料管理系统 - 蓝图文档
+# 大焱资料管理系统 — 代码结构说明
 
-## 1. 蓝图概览
+> 适用版本：2026-11 现行版本。本文档描述实际代码结构，便于二次开发与维护。
 
-### 1.1 主蓝图 (main_bp)
+## 1. 蓝图划分
 
-**名称**: `main`
-**模块**: `routes.py`
-**功能**: 系统的主要路由集合，包含所有核心功能的访问入口
+应用入口为 `app.py` → `app_factory.create_app()`，按模块注册下列蓝图：
 
-## 2. 路由列表
+| 蓝图 | 变量名 | 模块 | 前缀 | 职责 |
+|------|--------|------|------|------|
+| main | `main_bp` | `routes.py` | — | 核心业务：资料、线束、投入、资材入库、在库/出入库、MES 入口、盘点、标签打印、菜单管理、关于与在线更新 |
+| cad | `cad_bp` | `routes_cad.py` | — | RW 图纸核对与 DXF 标记产出 |
+| rbac | `rbac_bp` | `routes_rbac.py` | `/rbac` | 权限项、权限组、用户覆盖 |
+| nas | `nas_bp` | `routes_nas.py` | `/nas` | 共享盘文件检索 |
+| mes | `mes_bp` | `routes_mes.py` | `/mes` | MES 主流程（计划、生产入库、品质、单价、结算） |
+| mes_mod | `mes_mod_bp` | `routes_mes_modules.py` | `/mes` | MES 子模块接口 |
+| user_mgmt | `user_mgmt_bp` | `routes_user_mgmt.py` | `/api/user-mgmt` | 用户增删改、批量导入、权限分配 |
 
-### 2.1 认证相关路由
+## 2. 关键目录
 
-| 路由 | 方法 | 功能描述 | 权限要求 |
-|------|------|----------|----------|
-| `/login` | GET/POST | 用户登录页面 | 无 |
-| `/logout` | GET | 用户登出 | 已登录 |
+```
+bom3/
+├── app.py                  # 启动入口（端口、管理员账号、密钥初始化）
+├── app_factory.py          # 应用工厂：蓝图注册、CSRF、日志、结构升级、缓存预热、备份调度
+├── config.py               # 开发/生产/测试配置
+├── models/                 # SQLAlchemy 模型（资料、线束、资材入库、库存、标签模版、盘点等）
+├── utils/                  # 工具库
+│   ├── sidebar_menu.py     # 侧边栏菜单定义、分组布局与迁移
+│   ├── updater.py          # 在线更新（版本检查、git/dulwich 克隆、覆盖、代理/加速源）
+│   ├── permission_catalog.py # 权限项目录（页面/按钮）
+│   ├── operation_logger.py # 操作日志
+│   └── time_utils.py       # UTC+8 时间格式化
+├── scripts/
+│   ├── restart_helper.py   # 更新后等待旧进程退出并重启
+│   └── check_deploy.sh     # 部署前环境检查
+├── templates/              # Jinja2 页面
+├── static/                 # 静态资源（uploads 为上传文件目录）
+├── instance/               # app.db、admin_initial_password.txt、update_config.json、update_state.json
+├── logs/                   # dayan.log、server.log、update_restart.log
+└── docs/                   # SETUP.md / USER_GUIDE.md
+```
 
-### 2.2 核心功能路由
+## 3. 权限体系
 
-| 路由 | 方法 | 功能描述 | 权限要求 |
-|------|------|----------|----------|
-| `/` | GET | 系统首页 | 已登录 |
-| `/sub_list` | GET/POST | SubList管理页面 | 管理员或有 `can_sub_list` 权限 |
-| `/usage_list` | GET/POST | UsageList管理页面 | 管理员或有 `can_usage_list` 权限 |
-| `/file_management` | GET/POST | 文件管理页面 | 管理员或有 `can_file_management` 权限 |
-| `/file_comparison` | GET | 数据差异对比页面 | 管理员或有 `can_file_comparison` 权限 |
-| `/rw_comparison` | GET | RW核对页面 | 管理员或有 `can_file_comparison` 权限 |
-| `/products` | GET/POST | 成品管理页面 | 管理员或有 `can_products` 权限 |
-| `/material_download` | GET/POST | 资材量下载页面 | 管理员或有 `can_material_download` 权限 |
-| `/material_calculator` | GET | 资材换算页面 | 已登录 |
-| `/material_calculator/tape` | GET | 胶带换算页面 | 已登录 |
-| `/material_calculator/sheet` | GET | 皮子换算页面 | 已登录 |
-| `/vehicle_types` | GET/POST | 车种管理页面 | 管理员或有 `can_vehicle_types` 权限 |
+采用 RBAC，由五张表组成：`Permission`（权限项）、`PermissionGroup`（权限组）、`GroupPermission`（组-权限）、`UserGroup`（用户-组）、`UserPermissionOverride`（用户级 allow/deny）。最终权限 = 权限组并集 + 用户覆盖；管理员恒为全部权限。
 
-### 2.3 管理员路由
+- 权限项集中定义于 `utils/permission_catalog.py`，页面与按钮均按 `can_*` 编码登记。
+- 路由内使用 `check_permission(user_id, 'can_xxx')`；模板使用 `session.get('is_admin')` 或路由显式传入的权限变量。
+- 新增页面时需同时：注册菜单项（`utils/sidebar_menu.py`）、登记权限项、在用户管理页展示对应开关。
 
-| 路由 | 方法 | 功能描述 | 权限要求 |
-|------|------|----------|----------|
-| `/user_management` | GET/POST | 用户与权限管理页面 | 管理员 |
-| `/permission_management` | GET/POST | 权限管理页面 | 管理员 |
-| `/operation_logs` | GET | 操作记录页面 | 管理员 |
+## 4. 侧边栏菜单
 
-### 2.4 API路由
+- `ENTRY_DEFS` 定义全部页面（当前 39 项，均按二级扁平项渲染），`DEFAULT_GROUPS` 定义默认分组。
+- 布局保存在数据库/配置中（版本 `v: 3`），`normalize_layout()` 负责补齐缺失分组、清理空分组。
+- 菜单管理页（`/menu_management`）通过 `/api/sidebar_menu` 读写布局，支持拖拽分组与条目。
+- 前端 `static/js/sidebar.js` 负责分组折叠、展开状态记忆（`appSidebarOpenSections`）与当前页自动展开。
 
-| 路由 | 方法 | 功能描述 | 权限要求 |
-|------|------|----------|----------|
-| `/api/files` | GET | 获取上传文件列表 | 已登录 |
-| `/api/files/ids` | GET | 获取所有文件ID | 已登录 |
-| `/api/file_headers` | POST | 获取文件表头信息 | 已登录 |
-| `/api/file_compare` | POST | 执行文件对比 | 已登录 |
-| `/api/rw_comparison/upload` | POST | 上传RW对比文件 | 已登录 |
-| `/api/rw_comparison/manual_add` | POST | 手动添加RW对比数据 | 已登录 |
-| `/api/rw_comparison/download` | GET | 下载RW对比结果 | 已登录 |
-| `/api/vehicle_types/add` | POST | 添加单个车种 | 已登录 |
-| `/api/vehicle_types/batch_add` | POST | 批量添加车种 | 已登录 |
-| `/api/vehicle_types/delete` | POST | 删除车种 | 已登录 |
-| `/api/vehicle_types/update` | POST | 更新车种 | 已登录 |
-| `/api/vehicle_types/search` | GET | 搜索车种 | 已登录 |
-| `/api/products/add` | POST | 添加单个成品 | 已登录 |
-| `/api/products/batch_add` | POST | 批量添加成品 | 已登录 |
-| `/api/products/delete` | POST | 删除成品 | 已登录 |
-| `/api/products/update` | POST | 更新成品 | 已登录 |
-| `/api/products/search` | GET | 搜索成品 | 已登录 |
-| `/api/products/import` | POST | 导入成品(Excel) | 已登录 |
-| `/api/users/<int:user_id>/permissions` | GET | 获取用户权限 | 已登录 |
-| `/api/users/<int:user_id>/permissions` | POST | 更新用户权限 | 管理员 |
-| `/api/tape_calculator/upload` | POST | 上传胶带换算文件 | 已登录 |
-| `/api/tape_calculator/skip` | POST | 跳过胶带换算资料上传 | 已登录 |
-| `/api/tape_calculator/get` | GET | 获取胶带换算结果 | 已登录 |
-| `/api/tape_calculator/delete` | DELETE | 删除胶带换算结果 | 已登录 |
-| `/api/sheet_calculator/upload` | POST | 上传皮子换算文件 | 已登录 |
-| `/api/sheet_calculator/skip` | POST | 跳过皮子换算资料上传 | 已登录 |
-| `/api/sheet_calculator/get` | GET | 获取皮子换算结果 | 已登录 |
-| `/api/sheet_calculator/delete` | DELETE | 删除皮子换算结果 | 已登录 |
+## 5. 在线更新模块
 
-## 3. 权限系统
+| 文件 | 职责 |
+|------|------|
+| `utils/updater.py` | 读取本地/远端版本、检查更新、执行更新、进度状态、变更历史、代理与加速源配置 |
+| `scripts/restart_helper.py` | 独立进程等待旧进程退出，按原解释器与启动参数重启 |
+| `templates/about.html` | 关于页：系统信息、进度、变更历史、代理/加速源设置 |
+| `routes.py` | `/about` 与 `/api/about/*` 路由（info/check/update/status/history/proxy/accelerator） |
 
-### 3.1 权限模型
+更新策略：
+1. Git 仓库 + git：`fetch` + `--ff-only` 合并；
+2. 无 `.git` 但有 git/dulwich：浅克隆后覆盖源码；
+3. 最后回退压缩包下载（校验 gzip/zip 文件头）。
 
-权限采用 RBAC 模型，由 `Permission`（权限项）、`PermissionGroup`（权限组）、`GroupPermission`（组-权限绑定）、`UserGroup`（用户-组绑定）、`UserPermissionOverride`（用户级覆盖）五张表构成。有效权限由权限组与用户级覆盖（allow / deny）共同计算，管理员恒为全部权限。下列 `can_*` 编码用于兼容历史调用：
+覆盖时固定保留 `instance/`、`logs/`、`backups/`、`.venv/`、`.git/`，并先备份到 `backups/auto_update_<时间戳>/`。
 
-| 权限字段 | 描述 | 默认值 |
-|----------|------|--------|
-| `can_upload` | 上传权限 | False |
-| `can_delete` | 删除权限 | False |
-| `can_batch_delete` | 批量删除权限 | False |
-| `can_page` | 页面访问权限 | False |
-| `can_vehicle_types` | 车种管理页面访问权限 | False |
-| `can_products` | 成品管理页面访问权限 | False |
-| `can_material_download` | 资材量下载页面访问权限 | False |
-| `can_file_management` | 文件管理页面访问权限 | False |
-| `can_file_comparison` | 数据对比页面访问权限 | False |
-| `can_sub_list` | SubList页面访问权限 | False |
-| `can_usage_list` | UsageList页面访问权限 | False |
-| `can_system_management` | 系统管理权限 | False |
+## 6. 已知问题与建议
 
-### 3.2 权限检查
+1. `routes.py` 体量很大（约 1MB），建议按业务（资料/线束/资材/库存/盘点/关于）继续拆分为子蓝图。
+2. `routes.py` 顶部 `main_bp = Blueprint('main', __name__)` 定义重复（第 185、201 行），结果等价但建议删除其一。
+3. 新增数据库字段优先通过 `app_factory` 的结构升级逻辑或 Flask-Migrate 完成，变更前先做全量备份。
 
-权限检查主要通过以下方式实现：
+## 7. 维护约定
 
-1. **装饰器检查**：使用 `@login_required` 装饰器确保用户已登录
-2. **代码检查**：在路由函数中检查用户是否为管理员或具有特定权限
-3. **模板检查**：在模板中通过 `session.get('is_admin')` 或 `permissions.get('can_xxx')` 检查权限
-
-## 4. 蓝图结构优化建议
-
-### 4.1 现有问题
-
-1. **单一蓝图过大**：所有路由都集中在一个 `main_bp` 蓝图中，导致 `routes.py` 文件过大，难以维护
-2. **路由组织混乱**：路由按功能分组不明显，查找和管理不便
-3. **蓝图重复定义**：`main_bp` 在 `routes.py` 中被定义了两次
-
-### 4.2 优化建议
-
-1. **拆分为多个蓝图**：
-   - `auth_bp`：认证相关路由
-   - `core_bp`：核心业务功能路由
-   - `admin_bp`：管理员功能路由
-   - `api_bp`：API接口路由
-   - `calculator_bp`：资材换算相关路由
-
-2. **目录结构调整**：
-   ```
-   routes/
-   ├── __init__.py
-   ├── auth.py          # 认证路由
-   ├── core.py          # 核心功能路由
-   ├── admin.py         # 管理员路由
-   ├── api.py           # API路由
-   └── calculator.py    # 资材换算路由
-   ```
-
-3. **路由注册优化**：
-   - 在 `routes/__init__.py` 中集中注册所有蓝图
-   - 使用蓝图前缀区分不同功能模块
-
-## 5. 路由处理流程
-
-### 5.1 典型请求流程
-
-1. **请求到达**：Flask接收HTTP请求
-2. **蓝图匹配**：根据URL匹配到对应的蓝图和路由
-3. **权限检查**：执行登录验证和权限检查
-4. **业务处理**：执行路由函数中的业务逻辑
-5. **响应返回**：返回HTML页面或JSON数据
-
-### 5.2 错误处理
-
-系统使用装饰器 `handle_db_errors` 统一处理数据库操作错误，确保：
-- 错误信息被记录到日志
-- 数据库事务被正确回滚
-- 向用户返回友好的错误提示
-
-## 6. 总结
-
-当前系统使用单一蓝图管理所有路由，虽然实现简单，但在系统规模扩大时会带来维护困难。通过合理拆分蓝图，可以提高代码的可维护性和可读性，同时为未来的功能扩展做好准备。
-
-蓝图文档将随着系统的发展不断更新，确保与实际代码保持一致。
+- 时间统一 UTC+8：入库/操作时间用 `format_utc8_time()`，业务日期用 `yyyy-MM-dd`。
+- 大数据表（如 `usage_list`）查询必须命中既定索引（`idx_usage_list_kscpno`），避免全表扫描。
+- 提交信息遵循 Conventional Commits：`<type>(<scope>): <subject>`（中文主题）。
+- `.secret_key`、`instance/`、`logs/`、`backups/`、`.venv/` 不得提交到代码仓库。
