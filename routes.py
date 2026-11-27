@@ -22721,3 +22721,92 @@ def api_label_template_delete(tid):
         db.session.rollback()
         current_app.logger.error(f"标签模版删除失败: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': '删除失败'}), 500
+
+
+# ============================================================
+#  关于页面 / 在线更新（从 GitHub 拉取 + 自动重启）
+# ============================================================
+
+@main_bp.route('/about')
+@login_required
+def about():
+    """关于页面：系统信息、版本检查与在线更新入口（更新操作仅管理员可见）。"""
+    if 'user_id' not in session:
+        return redirect(url_for('main.login', next=request.url))
+    return render_template('about.html')
+
+
+@main_bp.route('/api/about/info')
+@login_required
+def about_info():
+    """系统与版本信息（不访问外网，页面加载即时返回）。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    try:
+        from utils import updater
+        data = updater.get_system_info(current_app.config)
+        data['can_update'] = bool(session.get('is_admin'))
+        return jsonify({'success': True, **data})
+    except Exception as e:
+        current_app.logger.error(f'读取系统信息失败: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': '读取系统信息失败'}), 500
+
+
+@main_bp.route('/api/about/check')
+@login_required
+def about_check_update():
+    """检查远端是否有新版本（涉及网络请求，前端需显示加载状态）。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not session.get('is_admin'):
+        return jsonify({'success': False, 'error': '仅管理员可检查更新'}), 403
+    try:
+        from utils import updater
+        return jsonify({'success': True, **updater.check_update()})
+    except Exception as e:
+        current_app.logger.error(f'检查更新失败: {e}')
+        return jsonify({'success': False, 'error': f'检查更新失败：{e}'}), 502
+
+
+@main_bp.route('/api/about/update', methods=['POST'])
+@login_required
+def about_do_update():
+    """启动后台更新任务并立即返回，进度通过 /api/about/update/status 轮询。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not session.get('is_admin'):
+        return jsonify({'success': False, 'error': '仅管理员可执行更新'}), 403
+    try:
+        from utils import updater
+        updater.start_update_async()
+        return jsonify({'success': True, 'started': True})
+    except Exception as e:
+        current_app.logger.error(f'启动在线更新失败: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 409
+
+
+@main_bp.route('/api/about/update/status')
+@login_required
+def about_update_status():
+    """更新任务进度：阶段、百分比、说明、耗时与结果。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    try:
+        from utils import updater
+        return jsonify({'success': True, **updater.get_update_status()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/api/about/history')
+@login_required
+def about_history():
+    """变更修复历史：本地 Git 提交或远端 API 提交 + 本机更新记录。"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    try:
+        from utils import updater
+        return jsonify({'success': True, **updater.get_change_history()})
+    except Exception as e:
+        current_app.logger.error(f'获取变更历史失败: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500

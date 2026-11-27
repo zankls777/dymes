@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <title>关于 - 大焱资料管理系统</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/font-awesome.min.css') }}" rel="stylesheet">
+    {% include '_styles.html' %}
+    <style>
+        .info-label { color: #6c757d; white-space: nowrap; }
+        .info-value { word-break: break-all; }
+        .update-log {
+            max-height: 180px; overflow: auto; background: #0b1728; color: #cfe3ff;
+            border-radius: 6px; padding: 10px 12px; font-size: .82rem;
+            font-family: Consolas, Monaco, monospace; white-space: pre-wrap;
+        }
+        .commit-item { border-left: 3px solid #0d6efd; padding-left: 8px; }
+        .version-code { font-family: Consolas, Monaco, monospace; }
+        /* 更新进度：环形百分比 + 步骤卡片 */
+        .update-ring { width: 96px; height: 96px; transform: rotate(-90deg); }
+        .update-ring circle { fill: none; stroke-width: 8; }
+        .update-ring .ring-bg { stroke: #e9ecef; }
+        .update-ring .ring-fg { stroke: #0d6efd; stroke-linecap: round; transition: stroke-dashoffset .35s ease; }
+        .step-chip {
+            flex: 1 1 0; min-width: 96px; padding: 8px 6px; text-align: center;
+            font-size: .76rem; color: #6c757d; background: #fff;
+            border: 1px solid #dee2e6; border-radius: 8px;
+        }
+        .step-chip .step-no {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 22px; height: 22px; margin-bottom: 4px;
+            border: 1px solid #ced4da; border-radius: 50%; font-size: .72rem;
+        }
+        .step-chip.active { border-color: #0d6efd; color: #0d6efd; background: #eef4ff; font-weight: 600; }
+        .step-chip.active .step-no { border-color: #0d6efd; }
+        .step-chip.done { border-color: #198754; color: #198754; background: #f0fdf4; }
+        .step-chip.done .step-no { border-color: #198754; }
+        .step-chip.error { border-color: #dc3545; color: #dc3545; background: #fff5f5; }
+        .step-chip.error .step-no { border-color: #dc3545; }
+    </style>
+</head>
+<body>
+    {% include '_navbar.html' %}
+    {% set is_admin_user = session.get('is_admin') %}
+
+    <div class="container-fluid mt-4">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <h5 class="mb-0"><i class="fa fa-info-circle me-2 text-primary"></i>关于系统</h5>
+            <button class="btn btn-sm btn-outline-secondary" id="refreshInfoBtn" type="button">
+                <i class="fa fa-refresh me-1"></i>刷新信息
+            </button>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header bg-primary text-white py-2">
+                <h6 class="mb-0 small"><i class="fa fa-desktop me-2"></i>系统信息</h6>
+            </div>
+            <div class="card-body py-3">
+                <div class="row g-2 small">
+                    <div class="col-md-6"><span class="info-label">系统名称：</span><span class="info-value" id="appName">-</span></div>
+                    <div class="col-md-6"><span class="info-label">运行模式：</span><span class="info-value" id="runMode">-</span></div>
+                    <div class="col-md-6"><span class="info-label">服务端口：</span><span class="info-value" id="port">-</span></div>
+                    <div class="col-md-6"><span class="info-label">运行时长：</span><span class="info-value" id="uptime">-</span></div>
+                    <div class="col-md-6"><span class="info-label">Python 版本：</span><span class="info-value" id="pythonVersion">-</span></div>
+                    <div class="col-md-6"><span class="info-label">主机名：</span><span class="info-value" id="hostname">-</span></div>
+                    <div class="col-md-6"><span class="info-label">操作系统：</span><span class="info-value" id="platform">-</span></div>
+                    <div class="col-md-6"><span class="info-label">启动时间：</span><span class="info-value" id="startedAt">-</span></div>
+                    <div class="col-12"><span class="info-label">数据库：</span><span class="info-value version-code" id="dbPath">-</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header bg-success text-white py-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h6 class="mb-0 small"><i class="fa fa-code-fork me-2"></i>版本与在线更新</h6>
+                <span class="badge bg-light text-dark" id="updateModeBadge">-</span>
+            </div>
+            <div class="card-body py-3">
+                <div class="row g-2 small mb-3">
+                    <div class="col-md-6"><span class="info-label">当前版本：</span>
+                        <span class="info-value version-code" id="commitShort">-</span>
+                        <span class="text-muted ms-2" id="commitDate"></span>
+                    </div>
+                    <div class="col-md-6"><span class="info-label">分支：</span><span class="info-value" id="branchName">-</span></div>
+                    <div class="col-12"><span class="info-label">版本说明：</span><span class="info-value" id="commitMessage">-</span></div>
+                    <div class="col-12"><span class="info-label">远端仓库：</span>
+                        <a href="https://github.com/zankls777/dymes" id="repoLink"
+                           target="_blank" rel="noopener" class="info-value">https://github.com/zankls777/dymes</a>
+                    </div>
+                </div>
+
+                {% if is_admin_user %}
+                <div class="d-flex gap-2 flex-wrap mb-2">
+                    <button class="btn btn-outline-primary" id="checkBtn" type="button">
+                        <i class="fa fa-cloud-download me-1"></i>检查更新
+                    </button>
+                    <button class="btn btn-warning" id="updateBtn" type="button">
+                        <i class="fa fa-refresh me-1"></i>更新并重启
+                    </button>
+                </div>
+                <div class="small text-muted mb-2">
+                    更新会从 GitHub（不通时自动回退 Gitee）拉取最新代码；instance/、logs/、backups/ 等运行数据不受影响，
+                    完成后服务自动重启（约 5~15 秒），页面会自动刷新。
+                </div>
+                {% else %}
+                <div class="alert alert-light border small mb-2">
+                    <i class="fa fa-lock me-1"></i>在线更新仅管理员可操作。
+                </div>
+                {% endif %}
+
+                <div id="updateState" class="small mb-2"></div>
+
+                <!-- 更新进度：环形百分比 + 进度条 + 步骤 -->
+                <div class="border rounded-3 p-3 mb-3 d-none" id="progressPanel">
+                    <div class="d-flex align-items-center gap-3 flex-wrap">
+                        <div class="position-relative" style="width:96px;height:96px;">
+                            <svg class="update-ring" viewBox="0 0 100 100">
+                                <circle class="ring-bg" cx="50" cy="50" r="42"></circle>
+                                <circle class="ring-fg" id="ringFg" cx="50" cy="50" r="42"
+                                        stroke-dasharray="263.9" stroke-dashoffset="263.9"></circle>
+                            </svg>
+                            <div class="position-absolute top-50 start-50 translate-middle text-center">
+                                <div class="fw-bold" id="percentText" style="font-size:1.2rem;">0%</div>
+                                <div class="text-muted" id="stageText" style="font-size:.68rem;">准备中</div>
+                            </div>
+                        </div>
+                        <div class="flex-grow-1" style="min-width:220px;">
+                            <div class="fw-bold" id="progressTitle">正在更新系统</div>
+                            <div class="small text-muted" id="progressMsg">准备中...</div>
+                            <div class="mt-2 d-flex gap-2 flex-wrap small">
+                                <span class="badge bg-light text-dark">版本 <span id="verFrom">-</span> → <span id="verTo">最新</span></span>
+                                <span class="badge bg-light text-dark">已耗时 <span id="elapsed">0</span> 秒</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="progress mt-3" style="height:8px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" id="progressBar" style="width:0%"></div>
+                    </div>
+                    <div class="d-flex justify-content-between small text-muted mt-1">
+                        <span id="progressStage">等待开始</span><span id="progressPercent">0%</span>
+                    </div>
+                    <div class="d-flex gap-2 mt-3 flex-wrap" id="stepRow"></div>
+                </div>
+
+                <div id="commitList"></div>
+                <pre class="update-log mb-0" id="updateLog">等待操作...</pre>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header bg-dark text-white py-2 d-flex justify-content-between align-items-center">
+                <h6 class="mb-0 small"><i class="fa fa-history me-2"></i>变更修复历史</h6>
+                <button class="btn btn-sm btn-light py-0 px-2" id="refreshHistoryBtn" type="button" title="刷新历史">
+                    <i class="fa fa-refresh"></i>
+                </button>
+            </div>
+            <div class="card-body py-3">
+                <div class="table-responsive" style="max-height:340px;overflow:auto;">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead>
+                            <tr><th style="width:145px;">时间</th><th style="width:90px;">版本</th><th>变更内容</th></tr>
+                        </thead>
+                        <tbody id="historyBody">
+                            <tr><td colspan="3" class="text-center text-muted py-3">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="small text-muted mt-2" id="historyMeta"></div>
+                <div class="mt-3">
+                    <h6 class="small text-muted mb-1"><i class="fa fa-server me-1"></i>本机更新记录</h6>
+                    <ul class="small mb-0 ps-3" id="localUpdateList">
+                        <li class="text-muted">暂无</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header bg-secondary text-white py-2">
+                <h6 class="mb-0 small"><i class="fa fa-question-circle me-2"></i>更新说明</h6>
+            </div>
+            <div class="card-body py-3 small text-muted">
+                <ul class="mb-0 ps-3">
+                    <li>Git 仓库模式：执行 <code>git fetch</code> + 快进合并，保留本地提交历史。</li>
+                    <li>部署包模式：下载源码压缩包并覆盖源码文件，覆盖前自动备份到 <code>backups/auto_update_*</code>。</li>
+                    <li>数据库、密钥、日志、虚拟环境不会被覆盖；如更新失败，可按日志提示手动执行 <code>bash start.sh</code>。</li>
+                    <li>更新日志：<code>logs/update_restart.log</code>。</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+        const canUpdate = {{ 'true' if is_admin_user else 'false' }};
+        const $ = (id) => document.getElementById(id);
+
+        const stateBox = $('updateState');
+        const logBox = $('updateLog');
+        const checkBtn = $('checkBtn');
+        const updateBtn = $('updateBtn');
+
+        const RING_LEN = 2 * Math.PI * 42;   // 环形进度周长
+        let currentMode = 'archive';         // 当前更新模式（git / archive）
+        let currentCommit = '';              // 当前版本号
+        let updateTimer = null;
+        let elapsedTimer = null;
+        let updateStartTs = 0;
+        let lastStage = 'check';
+        let stepDefs = [];
+
+        function esc(v) {
+            return String(v == null ? '' : v)
+                .replace(/[<>&"]/g, s => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[s]));
+        }
+
+        // 追加一行带时间戳的日志，便于观察更新过程
+        function log(text) {
+            const t = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            logBox.textContent += (logBox.textContent === '等待操作...' ? '' : '\n') + `[${t}] ${text}`;
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        function setState(html, cls) {
+            stateBox.innerHTML = `<span class="${cls || 'text-muted'}">${html}</span>`;
+        }
+
+        // 秒 -> “x天x小时x分”
+        function fmtUptime(sec) {
+            sec = Number(sec) || 0;
+            const d = Math.floor(sec / 86400);
+            const h = Math.floor((sec % 86400) / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            return (d ? d + ' 天 ' : '') + (h ? h + ' 小时 ' : '') + m + ' 分';
+        }
+
+        async function loadInfo() {
+            try {
+                const resp = await fetch('/api/about/info', { headers: { 'Accept': 'application/json' } });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || '加载失败');
+                $('appName').textContent = data.app_name || '-';
+                $('runMode').textContent = (data.flask_config === 'production' ? '生产模式' : '开发模式');
+                $('port').textContent = data.port || '-';
+                $('uptime').textContent = fmtUptime(data.uptime_seconds);
+                $('pythonVersion').textContent = data.python_version || '-';
+                $('hostname').textContent = data.hostname || '-';
+                $('platform').textContent = data.platform || '-';
+                $('startedAt').textContent = data.started_at || '-';
+                $('dbPath').textContent = data.db_path || '-';
+                $('commitShort').textContent = data.commit_short || '未记录';
+                $('commitDate').textContent = data.commit_date || '';
+                $('commitMessage').textContent = data.commit_message || '-';
+                $('branchName').textContent = data.branch || '-';
+                $('updateModeBadge').textContent = data.mode_label || '-';
+                currentMode = data.mode || 'archive';
+                currentCommit = data.commit_short || '';
+                if (data.repo_url) {
+                    $('repoLink').href = data.repo_url;
+                    $('repoLink').textContent = data.repo_url;
+                }
+            } catch (e) {
+                setState('读取系统信息失败：' + e.message, 'text-danger');
+            }
+        }
+
+        async function checkUpdate() {
+            if (!canUpdate) return;
+            checkBtn.disabled = true;
+            setState('正在检查远端版本...', 'text-primary');
+            log('开始检查更新');
+            try {
+                const resp = await fetch('/api/about/check', { headers: { 'Accept': 'application/json' } });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || '检查失败');
+                const ok = data.update_available === true;
+                const color = data.update_available === null ? 'text-warning' : (ok ? 'text-danger' : 'text-success');
+                setState(data.message + (data.behind ? `（落后 ${data.behind} 个提交）` : ''), color);
+                log(data.message);
+                const list = $('commitList');
+                list.innerHTML = (data.commits || []).map(c =>
+                    `<div class="commit-item small mb-1"><span class="version-code">${c.short}</span>
+                     <span class="text-muted ms-2">${c.date || ''}</span>
+                     <div>${(c.message || '').replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</div></div>`
+                ).join('');
+            } catch (e) {
+                setState('检查更新失败：' + e.message, 'text-danger');
+                log('检查更新失败：' + e.message);
+            } finally {
+                checkBtn.disabled = false;
+            }
+        }
+
+        // ---- 更新进度：环形百分比 + 进度条 + 步骤 ----
+        const STAGE_LABELS = {
+            check: '校验环境', download: '下载更新包', extract: '解压校验',
+            apply: '后台替换', restart: '重启切换', done: '已完成', error: '更新失败'
+        };
+
+        function stageLabel(key) { return STAGE_LABELS[key] || '处理中'; }
+
+        function buildSteps(mode) {
+            stepDefs = (mode === 'git')
+                ? [['check', '校验环境'], ['download', '拉取代码'], ['apply', '后台合并'], ['restart', '等待上线']]
+                : [['check', '校验环境'], ['download', '下载更新包'], ['extract', '解压校验'],
+                   ['apply', '后台替换'], ['restart', '等待上线']];
+            $('stepRow').innerHTML = stepDefs.map((s, i) =>
+                `<div class="step-chip" data-stage="${s[0]}"><div class="step-no">${i + 1}</div><div>${s[1]}</div></div>`
+            ).join('');
+        }
+
+        function markSteps(current) {
+            const order = stepDefs.map(s => s[0]);
+            const idx = current === 'done' ? stepDefs.length : order.indexOf(current);
+            document.querySelectorAll('.step-chip').forEach(function (el, i) {
+                el.classList.remove('active', 'done', 'error');
+                if (current === 'error') {
+                    if (i === Math.max(0, order.indexOf(lastStage))) el.classList.add('error');
+                    return;
+                }
+                if (i < idx) el.classList.add('done');
+                else if (i === idx) el.classList.add('active');
+            });
+        }
+
+        function setProgress(percent, stageText, message, stageKey) {
+            percent = Math.max(0, Math.min(100, Math.round(percent || 0)));
+            $('ringFg').style.strokeDashoffset = RING_LEN * (1 - percent / 100);
+            $('percentText').textContent = percent + '%';
+            $('progressBar').style.width = percent + '%';
+            $('progressPercent').textContent = percent + '%';
+            if (stageText) $('stageText').textContent = stageText;
+            if (message) $('progressMsg').textContent = message;
+            if (stageKey) {
+                lastStage = stageKey;
+                $('progressStage').textContent = stageLabel(stageKey);
+                markSteps(stageKey);
+            }
+        }
+
+        function startElapsed() {
+            clearInterval(elapsedTimer);
+            elapsedTimer = setInterval(function () {
+                $('elapsed').textContent = Math.floor((Date.now() - updateStartTs) / 1000);
+            }, 500);
+        }
+
+        function resetButtons() {
+            clearInterval(elapsedTimer);
+            clearTimeout(updateTimer);
+            if (updateBtn) {
+                updateBtn.disabled = false;
+                updateBtn.innerHTML = '<i class="fa fa-refresh me-1"></i>更新并重启';
+            }
+            if (checkBtn) checkBtn.disabled = false;
+        }
+
+        function onUpdateError(message) {
+            resetButtons();
+            setProgress(0, '更新失败', message, 'error');
+            setState('更新失败：' + message, 'text-danger');
+            log('更新失败：' + message);
+        }
+
+        // 更新成功后轮询服务是否恢复；恢复即刷新页面
+        function waitServerBack(tries) {
+            updateTimer = setTimeout(async function () {
+                try {
+                    const resp = await fetch('/api/about/info?t=' + Date.now(), { cache: 'no-store' });
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        if (data.success) {
+                            clearInterval(elapsedTimer);
+                            setProgress(100, '已上线', '服务已重启，正在刷新页面...', 'done');
+                            setState('更新完成，服务已重启', 'text-success');
+                            setTimeout(() => window.location.reload(), 1200);
+                            return;
+                        }
+                    }
+                } catch (e) { /* 服务重启中，继续等待 */ }
+                if (tries >= 80) {
+                    onUpdateError('等待服务恢复超时，请手动刷新或检查 logs/update_restart.log');
+                    return;
+                }
+                waitServerBack(tries + 1);
+            }, 2000);
+        }
+
+        // 轮询更新进度；服务重启期间自动转入可用性探测
+        function pollStatus(tries) {
+            updateTimer = setTimeout(async function () {
+                try {
+                    const resp = await fetch('/api/about/update/status?t=' + Date.now(), { cache: 'no-store' });
+                    const data = await resp.json();
+                    if (!data.success) throw new Error(data.error || '读取进度失败');
+                    setProgress(data.percent, stageLabel(data.stage), data.message, data.stage);
+                    if (data.result) {
+                        const to = (data.result.to || data.result.commit || '').slice(0, 8);
+                        if (to) $('verTo').textContent = to;
+                    }
+                    if (data.stage === 'restart') {
+                        setState('更新完成，正在重启服务...', 'text-primary');
+                        log('更新完成，服务即将重启');
+                        waitServerBack(0);
+                        return;
+                    }
+                    if (!data.running) {
+                        if (data.stage === 'error') {
+                            onUpdateError(data.error || data.message || '更新失败');
+                            return;
+                        }
+                        setProgress(100, '已完成', data.message, 'done');
+                        setState(data.message || '更新完成', 'text-success');
+                        log(data.message || '更新完成');
+                        resetButtons();
+                        loadHistory();
+                        loadInfo();
+                        return;
+                    }
+                    if (tries > 300) {
+                        onUpdateError('更新超时，请查看 logs/update_restart.log');
+                        return;
+                    }
+                    pollStatus(tries + 1);
+                } catch (e) {
+                    // 接口不可达：可能已进入重启阶段
+                    setState('服务正在重启，请稍候...', 'text-primary');
+                    waitServerBack(0);
+                }
+            }, 900);
+        }
+
+        async function doUpdate() {
+            if (!canUpdate) return;
+            if (!window.confirm('确定从远端拉取最新代码并重启服务吗？\n更新期间约 10~30 秒无法访问。')) return;
+
+            updateBtn.disabled = true;
+            checkBtn.disabled = true;
+            updateBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-1"></i>更新中...';
+            $('progressPanel').classList.remove('d-none');
+            $('verFrom').textContent = currentCommit || '-';
+            $('verTo').textContent = '最新';
+            updateStartTs = Date.now();
+            startElapsed();
+            buildSteps(currentMode);
+            setProgress(2, '校验环境', '正在提交更新任务...', 'check');
+            setState('正在执行更新，请勿关闭页面...', 'text-primary');
+            log('开始执行更新');
+
+            try {
+                const resp = await fetch('/api/about/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: '{}'
+                });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || '更新启动失败');
+                pollStatus(0);
+            } catch (e) {
+                onUpdateError(e.message);
+            }
+        }
+
+        // ---- 变更修复历史 ----
+        async function loadHistory() {
+            try {
+                const resp = await fetch('/api/about/history', { headers: { 'Accept': 'application/json' } });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || '加载失败');
+                const rows = data.changes || [];
+                $('historyBody').innerHTML = rows.length
+                    ? rows.map(c => `<tr>
+                        <td class="text-nowrap small">${esc(c.date || '')}</td>
+                        <td class="version-code small">${esc(c.short || '')}</td>
+                        <td class="small">${esc(c.message || '')}</td></tr>`).join('')
+                    : '<tr><td colspan="3" class="text-center text-muted py-3">暂无变更记录</td></tr>';
+                $('historyMeta').textContent =
+                    (data.source_label ? '来源：' + data.source_label + '　' : '') + (data.message || '');
+                const ups = data.updates || [];
+                $('localUpdateList').innerHTML = ups.length
+                    ? ups.map(u => `<li>${esc(u.time)} ${esc(u.mode_label || '')}
+                        ${u.from ? '(' + esc(u.from) + ' → ' + esc(u.to || '最新') + ')' : ''}
+                        ${esc(u.message || '')}</li>`).join('')
+                    : '<li class="text-muted">暂无</li>';
+            } catch (e) {
+                $('historyBody').innerHTML =
+                    `<tr><td colspan="3" class="text-center text-danger py-3">${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        if (checkBtn) checkBtn.addEventListener('click', checkUpdate);
+        if (updateBtn) updateBtn.addEventListener('click', doUpdate);
+        $('refreshInfoBtn').addEventListener('click', loadInfo);
+        $('refreshHistoryBtn').addEventListener('click', loadHistory);
+
+        loadInfo();
+        loadHistory();
+    })();
+    </script>
+</body>
+</html>

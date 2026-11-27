@@ -160,6 +160,8 @@ def create_app():
     from config import config, ensure_sqlite_dir
     config_name = os.environ.get('FLASK_CONFIG', 'default')
     app.config.from_object(config[config_name])
+    # 记录进程启动时间，供“关于”页展示运行时长
+    app.config['APP_STARTED_AT'] = time.time()
 
     # 全新部署（git clone / 下载包）时 instance/ 目录可能不存在（已被 .gitignore 忽略），
     # SQLite 无法在缺失目录中创建库文件，会报 "unable to open database file"。

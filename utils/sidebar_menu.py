@@ -66,6 +66,7 @@ PAGE_DEFS = {
     'menu_management': {'title': '菜单管理', 'endpoint': 'main.menu_management', 'tab': '菜单管理', 'perm': 'can_page'},
     'shortcut_settings': {'title': '快捷键设置', 'endpoint': 'main.shortcut_settings', 'tab': '快捷键设置', 'perm': 'can_system_management'},
     'label_print': {'title': '标签打印', 'endpoint': 'main.label_print', 'tab': '标签打印', 'perm': None},
+    'about': {'title': '关于', 'endpoint': 'main.about', 'tab': '关于', 'perm': None},
 }
 
 # 一级条目定义：page=直接跳转页面；children=可展开的子菜单页面
@@ -111,6 +112,7 @@ ENTRY_DEFS = {
     'menu_management': {'title': '菜单管理', 'icon': 'fa-list', 'page': 'menu_management', 'flat': True},
     'shortcut_settings': {'title': '快捷键设置', 'icon': 'fa-link', 'page': 'shortcut_settings', 'flat': True},
     'label_print': {'title': '标签打印', 'icon': 'fa-tags', 'page': 'label_print', 'flat': True},
+    'about': {'title': '关于', 'icon': 'fa-info-circle', 'page': 'about', 'flat': True},
 }
 
 # 默认分组：按实际业务域归类（管理员可在菜单管理页拖拽调整）
@@ -135,7 +137,7 @@ DEFAULT_GROUPS = [
     ]},
     {'key': 'system', 'title': '系统管理', 'entries': [
         'user_management', 'operation_logs', 'data_management',
-        'menu_management', 'shortcut_settings',
+        'menu_management', 'shortcut_settings', 'about',
     ]},
 ]
 
