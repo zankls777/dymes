@@ -37,3 +37,4 @@ onnxruntime>=1.31.0   # rapidocr 推理后端，需与 rapidocr 版本匹配
 # 只用 imdecode/cvtColor/rotate，无 GUI 调用；headless 版在 Linux/NAS 上免装 libGL/libxcb
 opencv-python-headless>=4.10.0.84,<5.0.0
 Pillow>=13.0.0
+dulwich

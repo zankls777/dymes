@@ -63,6 +63,7 @@
     {% set can_edit = (can_edit if can_edit is defined else (is_admin or session.get('user_permissions', {}).get('can_material_inbound_daily_edit'))) %}
     {% set can_delete = (can_delete if can_delete is defined else (is_admin or session.get('user_permissions', {}).get('can_material_inbound_daily_delete'))) %}
     {% set can_download = (can_download if can_download is defined else (is_admin or session.get('user_permissions', {}).get('can_material_inbound_daily_download'))) %}
+    {% set can_submit = (can_submit if can_submit is defined else (is_admin or session.get('user_permissions', {}).get('can_material_inbound_submit'))) %}
 
     <div class="container-fluid mt-4">
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -142,6 +143,9 @@
         <div class="card">
             <div class="card-header bg-primary text-white py-2 text-center">
                 <span class="small text-dark"><i class="fa fa-list-ul me-2"></i>资材入库清单（可查看入库时间与操作人员）</span>
+                {% if can_submit %}
+                <button class="btn btn-success btn-sm py-0 ms-2" id="btnBatchInbound"><i class="fa fa-check-square-o me-1"></i>批量入库</button>
+                {% endif %}
                 {% if can_delete %}
                 <button class="btn btn-danger btn-sm py-0 ms-2" id="btnBatchDelete"><i class="fa fa-trash-o me-1"></i>批量删除</button>
                 {% endif %}
@@ -151,7 +155,7 @@
                     <table class="table table-hover table-sm align-middle text-center" id="listTable">
                         <thead>
                             <tr>
-                                {% if can_delete %}<th style="width:36px;"><input type="checkbox" id="checkAll"></th>{% endif %}
+                                {% if can_delete or can_submit %}<th style="width:36px;"><input type="checkbox" id="checkAll"></th>{% endif %}
                                 <th class="sortable" data-sort="part_no">京信PNO<i class="fa fa-sort text-muted"></i></th>
                                 <th class="sortable" data-sort="quantity">计划数量<i class="fa fa-sort text-muted"></i></th>
                                 <th class="sortable" data-sort="location">位置<i class="fa fa-sort text-muted"></i></th>
@@ -212,6 +216,28 @@
         </div>
     </div>
 
+    <!-- 批量入库模态框：勾选后逐行确认实收数量 -->
+    <div class="modal fade" id="batchInboundModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h5 class="modal-title small w-100 text-center">批量入库</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="small text-muted mb-2 text-center">
+                        实收数量默认为「计划数量 - 已入库」，可直接修改；实收不足会记为「入库不足」，可后续补录。
+                    </div>
+                    <div id="batchInboundList" style="max-height: 55vh; overflow: auto;"></div>
+                </div>
+                <div class="modal-footer py-2 justify-content-center">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-success btn-sm" id="btnConfirmBatchInbound">确认入库</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="../static/js/bootstrap.bundle.min.js"></script>
     <script>
     (function () {
@@ -219,6 +245,7 @@
         CSRF = CSRF ? CSRF.getAttribute('content') : '';
         var CAN_EDIT = {{ 'true' if can_edit else 'false' }};
         var CAN_DELETE = {{ 'true' if can_delete else 'false' }};
+        var CAN_SUBMIT = {{ 'true' if can_submit else 'false' }};
         var items = [];
         var sortKey = '';
         var sortDir = ''; // '' | 'asc' | 'desc'
@@ -346,8 +373,9 @@
                 var done = it.status === 'done';
                 var short = it.status === 'short';
                 buf += '<tr class="' + (done ? 'row-done' : (short ? 'row-short' : '')) + '">';
-                if (CAN_DELETE) {
-                    buf += '<td>' + (done || short ? '' : '<input type="checkbox" class="row-check" value="' + it.id + '">') + '</td>';
+                if (CAN_DELETE || CAN_SUBMIT) {
+                    // 已入库行不可勾选；未入库/入库不足可勾选，供批量入库或删除
+                    buf += '<td>' + (done ? '' : '<input type="checkbox" class="row-check" value="' + it.id + '">') + '</td>';
                 }
                 buf += '<td class="part-no">' + esc(it.part_no) + '</td>';
                 buf += '<td>' + it.quantity + '</td>';
@@ -523,20 +551,85 @@
             }
         });
 
-        // 批量删除
+        // 批量删除（仅未入库明细可删；勾选中的入库不足行自动忽略）
         var btnBatch = document.getElementById('btnBatchDelete');
         if (btnBatch) {
             btnBatch.addEventListener('click', function () {
                 var ids = [];
                 document.querySelectorAll('.row-check').forEach(function (c) {
-                    if (c.checked && c.value) { ids.push(c.value); }
+                    if (!c.checked || !c.value) { return; }
+                    var it = items.find(function (x) { return String(x.id) === String(c.value); });
+                    if (it && it.status === 'pending') { ids.push(c.value); }
                 });
-                if (!ids.length) { toast('请先勾选要删除的明细', false); return; }
+                if (!ids.length) { toast('请勾选未入库的明细（已入库/入库不足不可删除）', false); return; }
                 if (!confirm('确定删除选中的 ' + ids.length + ' 条明细？')) { return; }
                 postJSON('{{ url_for("main.material_inbound_daily_delete") }}', { ids: ids }).then(function (res) {
                     if (res.success) { toast('已删除 ' + res.deleted + ' 条', true); loadList(); }
                     else { toast(res.error || '删除失败', false); }
                 }).catch(function (err) { toast('删除失败：' + netErrText(err), false); });
+            });
+        }
+
+        // ---------------- 批量入库 ----------------
+        var batchModalEl = document.getElementById('batchInboundModal');
+        var batchModal = batchModalEl ? new bootstrap.Modal(batchModalEl) : null;
+        // 本次实收默认值：计划数量 - 已入库（入库不足的行即剩余待补数量）
+        function batchRemaining(it) {
+            return Math.max(0, (it.quantity || 0) - (it.inbound_qty || 0));
+        }
+        var btnBatchInbound = document.getElementById('btnBatchInbound');
+        if (btnBatchInbound) {
+            btnBatchInbound.addEventListener('click', function () {
+                var ids = [];
+                document.querySelectorAll('.row-check').forEach(function (c) {
+                    if (c.checked && c.value) { ids.push(String(c.value)); }
+                });
+                if (!ids.length) { toast('请先勾选要入库的明细', false); return; }
+                var rows = items.filter(function (x) {
+                    return ids.indexOf(String(x.id)) !== -1 && x.status !== 'done';
+                });
+                if (!rows.length) { toast('所选明细均已入库', false); return; }
+                var html = '<table class="table table-sm table-bordered align-middle text-center mb-0" style="font-size:0.85rem;">'
+                    + '<thead><tr><th>京信PNO</th><th>计划数量</th><th>已入库</th><th style="width:130px;">本次实收</th></tr></thead><tbody>';
+                rows.forEach(function (it) {
+                    html += '<tr><td class="part-no text-start">' + esc(it.part_no) + '</td>'
+                        + '<td>' + (it.quantity || 0) + '</td>'
+                        + '<td>' + (it.inbound_qty || 0) + '</td>'
+                        + '<td><input type="number" class="form-control form-control-sm bi-qty" min="0" step="1" '
+                        + 'data-id="' + it.id + '" value="' + batchRemaining(it) + '"></td></tr>';
+                });
+                html += '</tbody></table>';
+                document.getElementById('batchInboundList').innerHTML = html;
+                batchModal.show();
+            });
+        }
+        var btnConfirmBatch = document.getElementById('btnConfirmBatchInbound');
+        if (btnConfirmBatch) {
+            btnConfirmBatch.addEventListener('click', function () {
+                var payload = [];
+                var invalid = false;
+                document.querySelectorAll('.bi-qty').forEach(function (inp) {
+                    var v = String(inp.value).trim();
+                    var n = Number(v);
+                    if (v === '' || isNaN(n) || n < 0) { invalid = true; return; }
+                    payload.push({ id: inp.getAttribute('data-id'), inbound_qty: Math.floor(n) });
+                });
+                if (invalid) { toast('实收数量必须为非负整数', false); return; }
+                if (!payload.length) { toast('没有可提交的明细', false); return; }
+                btnConfirmBatch.disabled = true;
+                postJSON('{{ url_for("main.material_inbound_daily_batch_submit") }}', { items: payload })
+                    .then(function (res) {
+                        btnConfirmBatch.disabled = false;
+                        if (res.success) {
+                            batchModal.hide();
+                            toast(res.message || '批量入库完成', true);
+                            loadList();
+                        } else { toast(res.error || '批量入库失败', false); }
+                    })
+                    .catch(function (err) {
+                        btnConfirmBatch.disabled = false;
+                        toast('批量入库失败：' + netErrText(err), false);
+                    });
             });
         }
         var checkAll = document.getElementById('checkAll');

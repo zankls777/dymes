@@ -19979,6 +19979,8 @@ def material_inbound_daily():
         'can_edit': check_permission(uid, 'can_material_inbound_daily_edit'),
         'can_delete': check_permission(uid, 'can_material_inbound_daily_delete'),
         'can_download': check_permission(uid, 'can_material_inbound_daily_download'),
+        # 批量入库复用“提交入库”权限（与 /material/inbound 页面一致）
+        'can_submit': check_permission(uid, 'can_material_inbound_submit'),
     }
     return render_template('material_inbound_daily.html', **perms)
 
@@ -20290,6 +20292,95 @@ def material_inbound_daily_delete():
         db.session.rollback()
         current_app.logger.error(f"资材每日入库删除失败: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': '删除失败'}), 500
+
+
+@main_bp.route('/material/inbound_daily/batch_submit', methods=['POST'])
+@login_required
+@csrf_exempt_route
+def material_inbound_daily_batch_submit():
+    """批量入库：勾选多条明细一次提交实收数量（入库不足可累计补录）
+
+    请求体：{"items": [{"id": 1, "inbound_qty": 100}, ...]}
+    实收 >= 计划 → 已入库；实收 < 计划 → 入库不足（与单条提交规则一致）。
+    """
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not check_permission(session.get('user_id'), 'can_material_inbound_submit'):
+        return jsonify({'success': False, 'error': '您没有提交入库的权限'}), 403
+
+    try:
+        data = request.get_json(silent=True) or {}
+        rows = data.get('items') or []
+        if not isinstance(rows, list) or not rows:
+            return jsonify({'success': False, 'error': '请先勾选要入库的明细'}), 400
+        if len(rows) > 500:
+            return jsonify({'success': False, 'error': '单次批量入库不能超过 500 条'}), 400
+
+        now = get_utc8_time()
+        uid = session['user_id']
+        uname = session.get('username')
+        submitted, skipped = 0, 0
+        failed = []
+        part_nos = []
+
+        for row in rows:
+            try:
+                item_id = int(row.get('id'))
+            except (TypeError, ValueError):
+                failed.append({'id': row.get('id'), 'error': '明细ID无效'})
+                continue
+            item = db.session.get(MaterialInboundDaily, item_id)
+            if item is None:
+                failed.append({'id': item_id, 'error': '明细不存在'})
+                continue
+            if item.status == 'done':
+                skipped += 1        # 已入库不再重复提交
+                continue
+            qty = _mib_parse_qty(row.get('inbound_qty'))
+            if qty is None or qty < 0:
+                failed.append({'id': item_id, 'error': f'{item.part_no} 实收数量无效'})
+                continue
+
+            # 入库不足的明细：本次实收累加；未入库的：直接取本次实收
+            total_qty = int(item.inbound_qty or 0) + qty if item.status == 'short' else qty
+            item.inbound_qty = total_qty
+            item.status = 'done' if total_qty >= int(item.quantity or 0) else 'short'
+            item.inbound_date = item.plan_date or now.date()
+            item.inbound_at = now
+            item.inbound_by = uid
+            item.inbound_by_name = uname
+            submitted += 1
+            part_nos.append(item.part_no)
+
+        if not submitted:
+            db.session.rollback()
+            if failed:
+                error = '没有可入库的明细：' + '；'.join(x['error'] for x in failed[:3])
+            else:
+                error = '所选明细均已入库，无需重复提交'
+            return jsonify({'success': False, 'error': error}), 400
+
+        db.session.commit()
+        try:
+            from utils.operation_logger import log_action
+            from models.operation_log import OperationType, TargetType
+            log_action(OperationType.SUBMIT_INBOUND,
+                       f"批量入库 {submitted} 条（跳过已入库 {skipped} 条）",
+                       TargetType.INBOUND, None, '、'.join(part_nos[:20]))
+        except Exception as _le:
+            current_app.logger.warning(f"记录批量入库日志失败: {_le}")
+
+        msg = f'批量入库完成：成功 {submitted} 条'
+        if skipped:
+            msg += f'，跳过已入库 {skipped} 条'
+        if failed:
+            msg += f'，失败 {len(failed)} 条'
+        return jsonify({'success': True, 'submitted': submitted, 'skipped': skipped,
+                        'failed': failed, 'message': msg})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"批量入库失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'批量入库失败: {str(e)}'}), 500
 
 
 @main_bp.route('/material/inbound_daily/template')
