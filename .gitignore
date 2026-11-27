@@ -47,3 +47,5 @@ Thumbs.db
 # ---------- 临时文件 ----------
 _tmp_*
 *.tsbuildinfo
+
+.secret_key
