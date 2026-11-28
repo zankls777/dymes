@@ -586,10 +586,10 @@ public class MainActivity extends Activity {
 
     /** 4 个快捷入口的默认名称与路径，长按按钮即可自行修改 */
     private static final String[][] DEFAULT_SLOTS = {
-            {"首页", "/"},
-            {"资材入库", "/material/inbound"},
-            {"线束扫描", "/wire/scan_entry"},
-            {"数据下载", "/wire/data_download"}
+            {"sub_list", "/01"},
+            {"usage_list", "/03"},
+            {"资材入库", "/02"},
+            {"补线返回确认", "/04"}
     };
 
     /** 底部快捷按钮的文本控件（用于改完配置后刷新显示） */
