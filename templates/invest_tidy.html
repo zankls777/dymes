@@ -49,7 +49,13 @@
         .warn-icon { color: #fd7e14; }
         #fileListSection { scroll-margin-top: 20px; }
         .file-actions .btn { white-space: nowrap; }
-        .calendar-table td { height: 34px; vertical-align: middle; cursor: default; }
+        /* 内容区还要扣除侧边栏宽度：1200px 以下改为上下排列，避免日历被截断 */
+        .invest-main-layout > [class*="col-"] { min-width: 0; }
+        .calendar-nav { flex-wrap: wrap; gap: 6px; }
+        .calendar-nav h5 { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
+        .calendar-table { width: 100%; table-layout: fixed; }
+        .calendar-table .text-truncate { max-width: 100% !important; }
+        .calendar-table td { height: 34px; vertical-align: middle; cursor: default; overflow: hidden; }
         .calendar-table td[data-date] { cursor: pointer; }
         .calendar-table td.table-success { background-color: #d1e7dd; }
         .calendar-table td.table-warning { background-color: #fff3cd; }
@@ -90,8 +96,8 @@
         {% endwith %}
 
         <!-- 左侧批量上传区 + 右侧上传日历（同一排，日历位于右侧偏上，与上传插件对齐） -->
-        <div class="row g-3">
-            <div class="col-lg-8">
+        <div class="row g-3 invest-main-layout">
+            <div class="col-12 col-xl-8">
         <!-- 批量上传区 -->
         <div class="card">
             <div class="card-header bg-primary text-white py-2">
@@ -219,15 +225,15 @@
         </div>
             </div>
 
-            <div class="col-lg-4">
-                <!-- 上传日历：确认每日是否遗漏上传（右侧偏上，与上传插件一排） -->
+            <div class="col-12 col-xl-4">
+                <!-- 上传日历：确认每日是否遗漏上传（窄屏移到上传区下方，避免横向溢出） -->
                 {% if calendar_data %}
                 <div class="card">
                     <div class="card-header bg-info text-white">
                         <i class="fa fa-calendar me-1"></i> 上传日历（确认每日是否遗漏上传）
                     </div>
                     <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div class="d-flex justify-content-between align-items-center mb-2 calendar-nav">
                             <a href="{{ url_for('main.invest_tidy', cy=calendar_data.prev.year, cm=calendar_data.prev.month) }}"
                                class="btn btn-sm btn-outline-secondary"><i class="fa fa-chevron-left me-1"></i>上月</a>
                             <h5 class="mb-0">

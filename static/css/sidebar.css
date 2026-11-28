@@ -528,8 +528,8 @@ html.app-sidebar-nav-init .app-nav-submenu { transition: none; }
 /* 仅用户交互后启用过渡，首屏直接落位避免"滑下"动画 */
 body.app-sidebar-anim .app-nav-section-body { transition: max-height 0.25s ease; }
 
-/* 二级页面的图标仅在折叠成图标栏时显示，展开态保持圆点 + 文案的原样式 */
-.app-nav-flat-icon { display: none; }
+/* 二级页面在展开态也显示图标，并保留左侧圆点标记 */
+.app-nav-flat-icon { display: inline-block; }
 
 @media (min-width: 768px) {
     .app-sidebar.collapsed .app-nav-section-body { max-height: none; overflow: visible; }
