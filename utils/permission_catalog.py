@@ -19,16 +19,11 @@ MODULES = [
     ('sub_list', 'SubList', 40),
     ('usage_list', 'UsageList', 50),
     ('products', '成品管理', 60),
-    ('vehicle_types', '车种管理', 70),
     ('material_download', '资材量下载', 80),
     ('rw_comparison', 'RW对比', 90),
     ('material_calculator', '资材换算', 100),
     ('invest_tidy', '投入计划书', 110),
-    ('invest_summary', '投资汇总', 120),
     ('auto_loading', '汽车厂装车实际', 130),
-    ('data_management', '数据管理', 140),
-    ('corrugated_location', '瓦楞纸板位置', 150),
-    ('test_sheet', '测试表', 160),
     ('system_management', '系统管理', 170),
     ('user_management', '用户与权限管理', 180),
     ('wire_lot_login', '补线打端子 - LOT登录', 190),
@@ -116,16 +111,6 @@ PERMISSION_CATALOG = [
     _p('can_products_download', '下载成品', 'products', 'action', 70),
     _p('can_products_import', '导入成品', 'products', 'action', 80),
 
-    # ---------- 车种管理 ----------
-    _p('can_vehicle_types', '车种管理页面访问', 'vehicle_types', 'page', 10),
-    _p('can_vehicle_types_add', '添加车种', 'vehicle_types', 'action', 20),
-    _p('can_vehicle_types_batch_add', '批量添加', 'vehicle_types', 'action', 30),
-    _p('can_vehicle_types_edit', '编辑车种', 'vehicle_types', 'action', 40),
-    _p('can_vehicle_types_delete', '删除车种', 'vehicle_types', 'action', 50),
-    _p('can_vehicle_types_batch_delete', '批量删除', 'vehicle_types', 'action', 60),
-    _p('can_vehicle_types_download', '下载车种', 'vehicle_types', 'action', 70),
-    _p('can_vehicle_types_import_excel', '导入车种(Excel)', 'vehicle_types', 'action', 80),
-
     # ---------- 资材量下载 ----------
     _p('can_material_download', '资材量下载页面访问', 'material_download', 'page', 10),
     _p('can_material_download_download', '下载资材量', 'material_download', 'action', 20),
@@ -142,23 +127,11 @@ PERMISSION_CATALOG = [
     # ---------- 投入计划书 ----------
     _p('can_invest_tidy', '投入计划书页面访问', 'invest_tidy', 'page', 10),
 
-    # ---------- 投资汇总 ----------
-    _p('can_invest_summary', '投资汇总页面访问', 'invest_summary', 'page', 10),
-
     # ---------- 汽车厂装车实际 ----------
     _p('can_auto_loading', '装车实际页面访问', 'auto_loading', 'page', 10),
     _p('can_auto_loading_upload', '上传', 'auto_loading', 'action', 20),
     _p('can_auto_loading_delete', '删除', 'auto_loading', 'action', 30),
     _p('can_auto_loading_export', '导出', 'auto_loading', 'action', 40),
-
-    # ---------- 数据管理 ----------
-    _p('can_data_management', '数据管理页面访问', 'data_management', 'page', 10),
-
-    # ---------- 瓦楞纸板位置 ----------
-    _p('can_corrugated_location', '瓦楞纸板位置页面访问', 'corrugated_location', 'page', 10),
-
-    # ---------- 测试表 ----------
-    _p('can_test_sheet', '测试表页面访问', 'test_sheet', 'page', 10),
 
     # ---------- 系统管理 ----------
     _p('can_page', '系统管理菜单显示', 'system_management', 'page', 10),
