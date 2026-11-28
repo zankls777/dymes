@@ -24,7 +24,13 @@
         .kpi-card .label { font-size: 0.8rem; color: #6c757d; }
         #fileListSection { scroll-margin-top: 20px; }
         .file-actions .btn { white-space: nowrap; }
-        .calendar-table td { height: 34px; vertical-align: middle; cursor: default; }
+        /* 扣除侧边栏后空间不足时改为上下排列，避免生产终端出现横向滚动 */
+        .auto-loading-layout > [class*="col-"] { min-width: 0; }
+        .calendar-nav { flex-wrap: wrap; gap: 6px; }
+        .calendar-nav h5 { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
+        .calendar-table { width: 100%; table-layout: fixed; }
+        .calendar-table .text-truncate { max-width: 100% !important; }
+        .calendar-table td { height: 34px; vertical-align: middle; cursor: default; overflow: hidden; }
         .calendar-table td[data-date] { cursor: pointer; }
         .calendar-table td.table-success { background-color: #d1e7dd; }
         .calendar-table td.table-warning { background-color: #fff3cd; }
@@ -64,8 +70,8 @@
             {% endif %}
         {% endwith %}
 
-        <div class="row g-3">
-            <div class="col-lg-8">
+        <div class="row g-3 auto-loading-layout">
+            <div class="col-12 col-xl-8">
                 {% if can_upload %}
                 <!-- 批量上传区 -->
                 <div class="card">
@@ -184,14 +190,14 @@
                 </div>
             </div>
 
-            <div class="col-lg-4">
+            <div class="col-12 col-xl-4">
                 {% if calendar_data %}
                 <div class="card">
                     <div class="card-header bg-info text-white">
                         <i class="fa fa-calendar me-1"></i> 上传日历（确认每日是否遗漏上传）
                     </div>
                     <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div class="d-flex justify-content-between align-items-center mb-2 calendar-nav">
                             <a href="{{ url_for('main.auto_loading', cy=calendar_data.prev.year, cm=calendar_data.prev.month) }}"
                                class="btn btn-sm btn-outline-secondary"><i class="fa fa-chevron-left me-1"></i>上月</a>
                             <h5 class="mb-0">
